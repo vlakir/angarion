@@ -26,6 +26,8 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 ## [Unreleased]
 
 ### Added
+- Резервирование имени на PyPI (T011): метаданные пакета — classifiers,
+  keywords, `project.urls`; публикация каркасной версии 0.1.0.
 - Инфраструктура проекта (T001): структура из шаблона dreamteam,
   LICENSE (MIT), каркас пакета `src/angarion/` (py.typed),
   `pyproject.toml` под требования ТЗ — Python ≥ 3.12, packaging

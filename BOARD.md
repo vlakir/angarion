@@ -73,3 +73,7 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
   git-гигиена (.idea/ из индекса, .gitignore с секциями секретов),
   ветка `main`, каркас `src/angarion/`, CI [closed 2026-06-11,
   initial commit].
+
+- **T011** — Резервирование имени `angarion` на PyPI: PyPI-метаданные
+  пакета (classifiers, keywords, project.urls), публикация версии
+  0.1.0-каркаса [closed 2026-06-11, текущий PR].
