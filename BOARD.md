@@ -68,12 +68,4 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
 
-- **T001** — Инфраструктура проекта: LICENSE (MIT), pyproject под ТЗ
-  (Python ≥ 3.12, coverage ≥ 90, mypy strict, packaging hatchling),
-  git-гигиена (.idea/ из индекса, .gitignore с секциями секретов),
-  ветка `main`, каркас `src/angarion/`, CI [closed 2026-06-11,
-  initial commit].
-
-- **T011** — Резервирование имени `angarion` на PyPI: PyPI-метаданные
-  пакета (classifiers, keywords, project.urls), публикация версии
-  0.1.0-каркаса [closed 2026-06-11, текущий PR].
+<!-- T001, T011 перенесены в CHANGELOG.md [0.1.0] — 2026-06-11. -->
