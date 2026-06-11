@@ -34,7 +34,9 @@ log/
 
 # Secrets / config
 .env
+.secrets
 .secrets.*
+!.secrets.example
 .secrets.toml
 secrets.env
 

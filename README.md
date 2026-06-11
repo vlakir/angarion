@@ -92,6 +92,22 @@ uv run pytest
 `cp hooks/pre-push .git/hooks/ && chmod +x .git/hooks/pre-push`).
 Изменения — только через PR (один PR = один squash-коммит).
 
+### Интеграционные тесты (реальный Telegram)
+
+По умолчанию пропускаются (`-m 'not integration'` в конфиге pytest).
+Нужны реквизиты в git-ignored файле `.secrets` (образец —
+`.secrets.example`: api_id/api_hash с <https://my.telegram.org>, две
+тестовые группы) и одноразовая интерактивная авторизация:
+
+```bash
+cp .secrets.example .secrets            # заполнить значениями
+uv run python scripts/tg_login.py       # спросит код, создаст session
+uv run pytest -m integration            # запуск интеграционного набора
+```
+
+Session-файл — полноценные учётные данные аккаунта: живёт в `sessions/`
+(git-ignored), никогда не коммитится и не копируется в открытые места.
+
 ## Структура проекта
 
 - `src/angarion/` — корень исходников пакета.
