@@ -1,0 +1,195 @@
+"""
+Конфигурация angarion (§11 ТЗ; объём M1 — C-4 спеки T002, FR-16).
+
+Двухступенчатая валидация (plan 2.7): здесь — **структурная** стадия
+(pydantic-settings: TOML + env-override ``ANGARION_*`` с
+``__``-вложенностью, инвариант ретеншна §11/§17.3); **ссылочная и
+плагинная** стадия (модели аккаунтов плагинов, ссылки на аккаунты,
+реестр плагинов, матрица §12.10) — в ``angarion.bootstrap``.
+
+Секции ``[api*]`` появятся в M5 аддитивно (C-4).
+
+Модуль без ``from __future__ import annotations``: аннотации
+pydantic-моделей вычисляются в runtime.
+"""
+
+from pathlib import Path
+from typing import Any, Self
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
+)
+
+from angarion.domain.errors import ConfigError
+from angarion.domain.models import EventKind, Messenger
+
+
+class AccountConfig(BaseModel):
+    """
+    Секция ``[accounts.*]`` — структурно лишь ``messenger`` (FR-2);
+    остальные ключи — сырые: схема аккаунта принадлежит плагину
+    платформы и валидируется его ``account_config_model`` в bootstrap.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='allow')
+
+    messenger: Messenger
+
+
+class StorageConfig(BaseModel):
+    """
+    Секция ``[storage]``: резолв ``backend`` по реестру entry points +
+    общие параметры ретеншна §17.3 (``0`` = бессрочно).
+    Бэкенд-специфичные ключи (``path`` и т.п.) — сырые, их понимает
+    фабрика бэкенда.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='allow')
+
+    backend: str = 'memory'
+    dedup_ttl_days: int = Field(default=30, ge=0)
+    registry_window_days: int = Field(default=7, ge=0)
+    analytics_retention_days: int = Field(default=90, ge=0)
+
+    @model_validator(mode='after')
+    def _dedup_covers_registry_window(self) -> Self:
+        """
+        Инвариант §11: ``dedup_ttl_days ≥ registry_window_days`` (иначе
+        повторный catch-up ре-эмитировал бы события с уже вычищенными
+        dedup-ключами); ``0`` трактуется как бесконечность.
+        """
+        ttl_unbounded = self.dedup_ttl_days == 0
+        window_unbounded = self.registry_window_days == 0
+        if window_unbounded and not ttl_unbounded:
+            msg = (
+                'dedup_ttl_days должен быть бессрочным (0) при '
+                'registry_window_days = 0 (§11)'
+            )
+            raise ValueError(msg)
+        if (
+            not ttl_unbounded
+            and not window_unbounded
+            and self.dedup_ttl_days < self.registry_window_days
+        ):
+            msg = (
+                f'dedup_ttl_days ({self.dedup_ttl_days}) должен быть не меньше '
+                f'registry_window_days ({self.registry_window_days}) (§11)'
+            )
+            raise ValueError(msg)
+        return self
+
+
+class QueueConfig(BaseModel):
+    """
+    Секция ``[queue]``: резолв ``backend`` + общие поля. ``depth_warn``
+    — порог мониторинга глубины §17.5 (фоновая проверка — M3).
+    """
+
+    model_config = ConfigDict(frozen=True, extra='allow')
+
+    backend: str = 'memory'
+    depth_warn: int = Field(default=500, ge=1)
+
+
+class WorkerConfig(BaseModel):
+    """
+    Секция ``[worker]`` (plan 2.2, аддитивно к §11): retry/backoff
+    обработки и доставки + период опроса outbox у ``DeliveryWorker``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    max_retries: int = Field(default=5, ge=0)
+    backoff_base: float = Field(default=1.0, gt=0)
+    backoff_cap: float = Field(default=60.0, gt=0)
+    poll_interval: float = Field(default=1.0, gt=0)
+
+
+class CatchupConfig(BaseModel):
+    """Секция ``[catchup]`` (§9.3, §11); в M1 нужна ветке деградации FR-13."""
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    enabled: bool = True
+    max_messages_per_source: int = Field(default=2000, ge=1)
+    max_age_days: int = Field(default=7, ge=1)
+
+
+class EndpointConfig(BaseModel):
+    """Источник или цель пайплайна: ссылка на аккаунт + адрес чата (§11)."""
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    account: str
+    chat_id: str
+    thread_id: str | None = None
+
+
+class PipelineConfig(BaseModel):
+    """Секция ``[pipelines.*]`` (§11): подписка, маршрут, процессор."""
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    processor: str
+    events: frozenset[EventKind] = Field(min_length=1)
+    only_replies: bool = False
+    sources: tuple[EndpointConfig, ...] = Field(min_length=1)
+    targets: tuple[EndpointConfig, ...] = Field(min_length=1)
+    processor_config: dict[str, Any] = Field(default_factory=dict)
+
+
+class AngarionSettings(BaseSettings):
+    """
+    Корень конфигурации (§11, объём C-4). Источники: init-данные (TOML
+    из ``load_settings``) + env ``ANGARION_*`` поверх них.
+    """
+
+    model_config = SettingsConfigDict(
+        frozen=True,
+        extra='forbid',
+        env_prefix='ANGARION_',
+        env_nested_delimiter='__',
+    )
+
+    accounts: dict[str, AccountConfig] = Field(default_factory=dict)
+    storage: StorageConfig = StorageConfig()
+    queue: QueueConfig = QueueConfig()
+    worker: WorkerConfig = WorkerConfig()
+    catchup: CatchupConfig = CatchupConfig()
+    pipelines: dict[str, PipelineConfig] = Field(default_factory=dict)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        _settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Env поверх init: init-данные — это TOML из ``load_settings``."""
+        return (env_settings, dotenv_settings, init_settings, file_secret_settings)
+
+
+def load_settings(toml_file: str | Path) -> AngarionSettings:
+    """
+    Загрузить конфигурацию из TOML-файла с env-override (FR-16).
+
+    Структурные ошибки (включая инвариант ретеншна) — ``ConfigError``
+    (fail-fast §11); отсутствующий файл — тоже ошибка, а не пустые
+    default'ы.
+    """
+    path = Path(toml_file)
+    if not path.is_file():
+        msg = f'файл конфигурации не найден: {path}'
+        raise ConfigError(msg)
+    data = TomlConfigSettingsSource(AngarionSettings, toml_file=path)()
+    try:
+        return AngarionSettings(**data)
+    except ValidationError as exc:
+        msg = f'невалидная конфигурация {path}: {exc}'
+        raise ConfigError(msg) from exc

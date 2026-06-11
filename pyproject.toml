@@ -8,7 +8,11 @@ authors = [
     {name = "Vladimir Kirievskiy", email = "vlakir1234@gmail.com"},
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.1",
+    "structlog>=26.1.0",
+]
 keywords = ["messaging", "pipeline", "events", "telegram", "hexagonal-architecture"]
 classifiers = [
     "Development Status :: 1 - Planning",
@@ -22,6 +26,20 @@ classifiers = [
     "Topic :: Communications :: Chat",
     "Typing :: Typed",
 ]
+
+# InMemory-плагин — «нулевой пациент» механизма расширения (§12.11, FR-14):
+# библиотека регистрирует его теми же entry points, что и сторонние пакеты.
+[project.entry-points."angarion.adapters"]
+memory = "angarion.adapters.memory.plugin:PLUGIN"
+
+[project.entry-points."angarion.queues"]
+memory = "angarion.adapters.memory.plugin:QUEUE_BACKEND"
+
+[project.entry-points."angarion.storages"]
+memory = "angarion.adapters.memory.plugin:STORAGE_BACKEND"
+
+[project.entry-points."angarion.processors"]
+passthrough = "angarion.application.processors:PASSTHROUGH"
 
 [project.urls]
 Homepage = "https://github.com/vlakir/angarion"

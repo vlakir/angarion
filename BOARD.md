@@ -61,14 +61,25 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
      разработчика, иначе теряется фокус (классическое WIP-limit
      правило из Kanban). -->
 
-- ...
-
 ## Done
 
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
 
 <!-- T001, T011 перенесены в CHANGELOG.md [0.1.0] — 2026-06-11. -->
+
+- **T002** — **M1** — ядро: домен (события, `thread_id`, открытый
+  `Messenger`), порты (вкл. `AdapterCapabilities`, непрозрачный курсор,
+  контракт `AdapterPlugin`/`Listener`), application (ingest с fan-out,
+  worker, router, деградация по матрице), outbox исходящих +
+  `DeliveryWorker` (C-9), реестр плагинов через entry points,
+  InMemory-адаптеры как плагин («нулевой пациент»), конфиг
+  (pydantic-settings), хелперы ключей (`domain/keys`)
+  (`specs/T002-m1-core/`, ветка `T002-m1-core`).
+  Acceptance (§16 M1) выполнен: сквозной тест new/edited/deleted +
+  multicast in-memory; fail-fast/деградация по матрице покрыты;
+  InMemory-плагин загружается через entry point
+  [closed 2026-06-11, текущий PR].
 
 - **T013** — Осмысленный README.md: статус pre-alpha, ключевые идеи из
   ТЗ, дорожная карта M1–M7, бейджи, гайд разработчика

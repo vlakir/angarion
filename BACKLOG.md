@@ -28,16 +28,6 @@ BACKLOG.md, BOARD.md и CHANGELOG.md) + 1`. ID не переиспользует
      Каждая M-задача — крупная фича: перед взятием в Doing проходит
      ритуал spec/clarify/analyze (specs/T<NNN>-*/spec.md). -->
 
-- **T002** — [2026-06-11] **M1** — ядро: домен (события, `thread_id`,
-  открытый `Messenger`), порты (вкл. `AdapterCapabilities`, непрозрачный
-  курсор, контракт `AdapterPlugin`/`Listener`), application (ingest с
-  fan-out, worker, router, деградация по матрице), реестр плагинов через
-  entry points, InMemory-адаптеры как плагин («нулевой пациент»), конфиг
-  (pydantic-settings), хелперы ключей (`domain/keys`). Крупная фича — спека.
-  Acceptance (§16 M1): сквозной тест new/edited/deleted + multicast
-  in-memory; fail-fast/деградация по матрице покрыты; InMemory-плагин
-  загружается через entry point.
-
 - **T003** — [2026-06-11] **M2** — персистентность: PersistQueue-адаптер;
   SQLAlchemy-адаптеры (dedup, registry, cursors, state, analytics) +
   Alembic-миграции; DLQ; публикация `angarion.testing` (контрактные

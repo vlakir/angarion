@@ -26,6 +26,22 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 ## [Unreleased]
 
 ### Added
+- Ядро библиотеки, этап M1 (T002): доменные DTO событий (§4) и
+  публичные хелперы ключей дедупликации/идемпотентности
+  (`domain/keys`, нормализация — ADR 2026-06-11); Protocol-порты
+  ядра с контрактными наборами тестов; application-слой —
+  `IngestService` (дедуп → реестр с обогащением → multicast-роутер →
+  fan-out), `PipelineWorker` (retry с backoff через `not_before`,
+  DLQ), transactional outbox исходящих + `DeliveryWorker`
+  (ADR 2026-06-11); реестр процессоров (`@processor`, `passthrough`);
+  плагинная система через entry points (`angarion.adapters` /
+  `queues` / `storages` / `processors`) с InMemory-плагином — «нулевой
+  пациент»; конфиг pydantic-settings (TOML + env) с двухступенчатой
+  валидацией и деградацией по матрице возможностей §12.10;
+  composition root `build_app()` → `AngarionApp` (start/stop);
+  structlog-хелперы с маскированием секретов; сквозные
+  acceptance-тесты M1 (new/edited/deleted + обогащение + multicast,
+  ретраи до DLQ, дедуп повторной подачи).
 - Интеграционный контур Telegram (T014, предтеча M6): реквизиты в
   git-ignored `.secrets` (образец `.secrets.example`), одноразовая
   авторизация `scripts/tg_login.py`, pytest-маркер `integration`
