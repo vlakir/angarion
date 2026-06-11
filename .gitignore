@@ -1,0 +1,60 @@
+# IDE / Editors
+.idea/
+.zencoder/
+~*
+~*.*
+.~*
+*.kate-swp
+
+# Claude Code — служебные runtime-файлы (не для шаринга)
+.claude/*.lock
+.claude/settings.local.json
+
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.egg-info/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Logs
+*.log
+*.log.*
+log/
+
+# Secrets / config
+.env
+.secrets.*
+.secrets.toml
+secrets.env
+
+# Telethon sessions and local runtime data — секреты, никогда не коммитить
+*.session
+*.session-journal
+sessions/
+data/
+*.db
+
+# Local utilities
+copy_to_remote.sh
+vanilla_docker.sh
+
+# Caches
+.cache/
+
+# Local SQLite
+*.sqlite
+
+# Temp / docs builds
+temp/
+doc/
