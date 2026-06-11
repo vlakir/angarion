@@ -9,6 +9,25 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = []
+keywords = ["messaging", "pipeline", "events", "telegram", "hexagonal-architecture"]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Framework :: AsyncIO",
+    "Topic :: Communications :: Chat",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/vlakir/angarion"
+Repository = "https://github.com/vlakir/angarion"
+Issues = "https://github.com/vlakir/angarion/issues"
+Changelog = "https://github.com/vlakir/angarion/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]
