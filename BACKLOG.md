@@ -87,3 +87,9 @@ BACKLOG.md, BOARD.md и CHANGELOG.md) + 1`. ID не переиспользует
   скачивания/хранения) + второй мессенджер по приоритету §12.10
   (Matrix → MAX → VK) — подтверждение переносимости портов и механизма
   деградации. Крупная фича — спека (после стабилизации 1.0).
+
+- **T012** — [2026-06-11] Перенести из dreamteam механизм публикации:
+  `scripts/publish.sh` + `.secrets`/`.secrets.example` (PYPI_TOKEN,
+  twine check перед upload) — пригодится к следующему релизу на PyPI.
+  Заодно: завести project-scoped PyPI-токен для angarion (публикация
+  0.1.0 сделана account-scoped токеном из dreamteam).
