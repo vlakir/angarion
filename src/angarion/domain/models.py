@@ -1,0 +1,304 @@
+"""
+Доменные DTO angarion (§4 ТЗ) и вспомогательные формы конвейера.
+
+Все DTO: ``frozen=True``, ``extra='forbid'``, сериализуемы в JSON без
+потерь; время — строго UTC (``AwareDatetime``, §17.4).
+
+Модуль сознательно без ``from __future__ import annotations``:
+аннотации pydantic-моделей вычисляются в runtime.
+
+``ProcessorServices`` — НЕ DTO, а конструкция композиции (A-2 спеки
+T002): frozen pydantic-модель с ``arbitrary_types_allowed``,
+JSON-контракт на неё не распространяется.
+"""
+
+from collections.abc import Callable
+from enum import StrEnum
+from typing import Annotated, Any, Literal, Protocol, runtime_checkable
+from uuid import UUID
+
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SkipValidation,
+    StringConstraints,
+)
+from structlog.typing import FilteringBoundLogger
+
+Messenger = Annotated[str, StringConstraints(pattern=r'^[a-z][a-z0-9_]{1,31}$')]
+"""Открытый строковый идентификатор платформы (§4.1).
+
+Не enum: сторонние адаптеры регистрируют свои значения через entry
+points (§12.11). Валидация по реестру загруженных плагинов — при
+старте (fail-fast с перечнем известных).
+"""
+
+
+class DomainModel(BaseModel):
+    """База доменных DTO: иммутабельность и закрытая схема."""
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+
+class Address(DomainModel):
+    """Адрес чата/топика на платформе; thread_id входит в идентичность."""
+
+    messenger: Messenger
+    chat_id: str
+    thread_id: str | None = None
+    title: str | None = None
+
+
+class AccountRef(DomainModel):
+    """Ссылка на учётную запись, через которую идёт приём/отправка."""
+
+    messenger: Messenger
+    account_id: str
+
+
+class EventKind(StrEnum):
+    """Закрытый набор видов событий (§15.20); ответ — атрибут, не вид."""
+
+    MESSAGE_NEW = 'message_new'
+    MESSAGE_EDITED = 'message_edited'
+    MESSAGE_DELETED = 'message_deleted'
+
+
+class InboundEvent(DomainModel):
+    """Нормализованное входящее событие (§4.2)."""
+
+    uid: UUID
+    kind: EventKind
+    dedup_key: str
+    origin: Literal['live', 'catchup']
+    source: Address
+    received_by: AccountRef
+    external_id: str
+    sender_id: str | None = None
+    sender_name: str | None = None
+    text: str | None = None
+    previous_text: str | None = None
+    content_hash: str | None = None
+    reply_to_external_id: str | None = None
+    has_media: bool = False
+    event_at: AwareDatetime
+    received_at: AwareDatetime
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class OutboundMessage(DomainModel):
+    """Исходящее сообщение (§4.3); extra ядро не интерпретирует."""
+
+    idempotency_key: str
+    target: Address
+    send_via: AccountRef
+    text: str
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class Verdict(StrEnum):
+    """Решение процессора: доставлять или подавить."""
+
+    DELIVER = 'deliver'
+    DROP = 'drop'
+
+
+class AnalyticsEvent(DomainModel):
+    """Событие аналитики (§4.3); kind — открытая строка."""
+
+    uid: UUID
+    kind: str
+    event_uid: UUID | None = None
+    pipeline: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    at: AwareDatetime
+
+
+class ProcessingResult(DomainModel):
+    """Результат обработки события процессором (§4.3)."""
+
+    verdict: Verdict
+    outbound: list[OutboundMessage] = Field(default_factory=list)
+    events: list[AnalyticsEvent] = Field(default_factory=list)
+    note: str | None = None
+
+
+class TargetSpec(DomainModel):
+    """Цель пайплайна: адрес + аккаунт отправки (§4.4)."""
+
+    target: Address
+    send_via: AccountRef
+
+
+class PipelineContextData(DomainModel):
+    """Чистый DTO контекста пайплайна для процессора (§4.4)."""
+
+    pipeline: str
+    targets: list[TargetSpec]
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
+class QueueEnvelope(DomainModel):
+    """
+    Элемент очереди после fan-out (§6.1).
+
+    ``not_before`` — отложенная обработка (retry/defer-to-tail, C-8):
+    worker возвращает «ранний» envelope в хвост очереди.
+    """
+
+    pipeline: str
+    event: InboundEvent
+    attempt: int = 0
+    not_before: AwareDatetime | None = None
+
+
+class QueueItem(DomainModel):
+    """Выданный очередью элемент: envelope + непрозрачный receipt адаптера."""
+
+    envelope: QueueEnvelope
+    receipt: Any
+
+
+class QueueDepth(DomainModel):
+    """Диагностика очереди: ожидающие и выданные-неподтверждённые."""
+
+    pending: int
+    unacked: int
+
+
+class DeliveryReceipt(DomainModel):
+    """Подтверждение отправки: id у платформы (если сообщает) и время."""
+
+    external_id: str | None = None
+    delivered_at: AwareDatetime
+
+
+class OutboxStatus(StrEnum):
+    """Статус записи outbox исходящих (C-9)."""
+
+    PENDING = 'pending'
+    SENT = 'sent'
+    FAILED = 'failed'
+
+
+class OutboundRecord(DomainModel):
+    """
+    Запись outbox исходящих (C-9): журнал «что должно быть
+    отправлено». Ключ записи — ``msg.idempotency_key`` (insert-if-absent
+    в ``OutboxPort.put`` — выходная идемпотентность §7.3).
+
+    ``finished_at`` — момент перехода в терминальный статус
+    (sent/failed); по нему работает ``prune()``. ``pipeline`` и
+    ``event_uid`` — контекст наблюдаемости для аналитики доставки.
+    """
+
+    msg: OutboundMessage
+    status: OutboxStatus = OutboxStatus.PENDING
+    attempts: int = 0
+    next_attempt_at: AwareDatetime
+    created_at: AwareDatetime
+    finished_at: AwareDatetime | None = None
+    receipt: DeliveryReceipt | None = None
+    last_error: str | None = None
+    pipeline: str | None = None
+    event_uid: UUID | None = None
+
+
+class DeadLetter(DomainModel):
+    """
+    Запись DLQ (§8, C-2): полный дамп envelope после исчерпания
+    ретраев. Requeue (M5) ставит envelope обратно с ``attempt=0``.
+    """
+
+    uid: UUID
+    envelope: QueueEnvelope
+    error: str
+    failed_at: AwareDatetime
+
+
+class RegistryRecord(DomainModel):
+    """Текущее состояние сообщения в реестре источника (§9.2)."""
+
+    source_key: str
+    external_id: str
+    text: str | None = None
+    content_hash: str | None = None
+    sender_id: str | None = None
+    sender_name: str | None = None
+    event_at: AwareDatetime
+    edit_ts: AwareDatetime | None = None
+    deleted_at: AwareDatetime | None = None
+
+
+class RegistryVersion(DomainModel):
+    """Архивная версия текста, вытесненная редактированием (§9.2)."""
+
+    text: str | None = None
+    content_hash: str | None = None
+    recorded_at: AwareDatetime
+
+
+class RegistryOutcome(StrEnum):
+    """Исход ``MessageRegistryPort.upsert``/``mark_deleted`` (§5, A-3)."""
+
+    IS_NEW = 'is_new'
+    TEXT_CHANGED = 'text_changed'
+    UNCHANGED = 'unchanged'
+    STALE = 'stale'
+
+
+class RegistryDelta(DomainModel):
+    """Результат upsert реестра; previous_text — только при text_changed."""
+
+    outcome: RegistryOutcome
+    previous_text: str | None = None
+
+
+class SourceCursor(DomainModel):
+    """Курсор catch-up per source; payload непрозрачен для ядра (§9.2)."""
+
+    source_key: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    updated_at: AwareDatetime
+
+
+@runtime_checkable
+class ScopedState(Protocol):
+    """
+    Структурный вид state-хранилища процессора (§10.3).
+
+    Namespace (имя пайплайна) уже зафиксирован worker'ом; реализация —
+    ``ScopedStateStore`` application-слоя.
+    """
+
+    async def get(self, key: str) -> str | None: ...
+
+    async def set(self, key: str, value: str) -> None: ...
+
+    async def delete(self, key: str) -> None: ...
+
+    async def keys(self, prefix: str = '') -> list[str]: ...
+
+
+class ProcessorServices(BaseModel):
+    """
+    Сервисы, собираемые worker'ом для процессора (§4.4, не DTO).
+
+    ``log`` не валидируется (``SkipValidation``): конкретный класс
+    логгера зависит от конфигурации structlog в приложении, и прокси
+    (``BoundLoggerLazyProxy``) isinstance-проверку протокола не
+    проходит.
+
+    ``make_idempotency_key`` — частичное применение
+    ``domain.keys.make_idempotency_key`` с зафиксированным пайплайном
+    (A-9): процессор передаёт событие, цель и порядковый номер
+    исходящего.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='forbid', arbitrary_types_allowed=True)
+
+    log: SkipValidation[FilteringBoundLogger]
+    state: ScopedState
+    make_idempotency_key: Callable[[InboundEvent, Address, int], str]
