@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 import pytest
-from factories import NOW, SOURCE_KEY, make_record
 
 from angarion.domain.models import RegistryDelta, RegistryOutcome, RegistryVersion
-from angarion.domain.ports import MessageRegistryPort
+from angarion.testing.factories import NOW, SOURCE_KEY, make_record
+
+if TYPE_CHECKING:
+    from angarion.domain.ports import MessageRegistryPort
 
 
 class MessageRegistryContract:
@@ -17,6 +20,8 @@ class MessageRegistryContract:
     upsert (включая staleness-guard — A-3), архив вытесненных версий,
     мягкое удаление, ``known_ids`` и очистка окна ``prune()``.
     """
+
+    pytestmark = pytest.mark.asyncio
 
     @pytest.fixture
     def registry(self) -> MessageRegistryPort:
@@ -37,9 +42,7 @@ class MessageRegistryContract:
         self, registry: MessageRegistryPort
     ) -> None:
         await registry.upsert(make_record())
-        delta = await registry.upsert(
-            make_record(edit_ts=NOW + timedelta(seconds=5))
-        )
+        delta = await registry.upsert(make_record(edit_ts=NOW + timedelta(seconds=5)))
         assert delta == RegistryDelta(outcome=RegistryOutcome.UNCHANGED)
         assert await registry.versions(SOURCE_KEY, '42') == []
 
@@ -61,9 +64,7 @@ class MessageRegistryContract:
             RegistryVersion(text='hello', content_hash='hash-a', recorded_at=NOW)
         ]
 
-    async def test_upsert_stale_is_ignored(
-        self, registry: MessageRegistryPort
-    ) -> None:
+    async def test_upsert_stale_is_ignored(self, registry: MessageRegistryPort) -> None:
         current = make_record(text='hello!', content_hash='hash-b', edit_ts=NOW)
         await registry.upsert(current)
         late_original = make_record(event_at=NOW - timedelta(minutes=5))
@@ -82,18 +83,14 @@ class MessageRegistryContract:
                 text='v2', content_hash='hash-b', edit_ts=NOW + timedelta(minutes=1)
             )
         )
-        delta = await registry.upsert(
-            make_record(edit_ts=NOW + timedelta(minutes=2))
-        )
+        delta = await registry.upsert(make_record(edit_ts=NOW + timedelta(minutes=2)))
         assert delta == RegistryDelta(
             outcome=RegistryOutcome.TEXT_CHANGED, previous_text='v2'
         )
         versions = await registry.versions(SOURCE_KEY, '42')
         assert [v.text for v in versions] == ['hello', 'v2']
 
-    async def test_versions_oldest_first(
-        self, registry: MessageRegistryPort
-    ) -> None:
+    async def test_versions_oldest_first(self, registry: MessageRegistryPort) -> None:
         await registry.upsert(make_record())
         await registry.upsert(
             make_record(

@@ -28,14 +28,6 @@ BACKLOG.md, BOARD.md и CHANGELOG.md) + 1`. ID не переиспользует
      Каждая M-задача — крупная фича: перед взятием в Doing проходит
      ритуал spec/clarify/analyze (specs/T<NNN>-*/spec.md). -->
 
-- **T003** — [2026-06-11] **M2** — персистентность: PersistQueue-адаптер;
-  SQLAlchemy-адаптеры (dedup, registry, cursors, state, analytics) +
-  Alembic-миграции; DLQ; публикация `angarion.testing` (контрактные
-  наборы). Крупная фича — спека.
-  Acceptance (§16 M2): контрактные тесты зелёные на реальных реализациях
-  через `angarion.testing`; kill -9 в произвольный момент не теряет и не
-  дублирует доставку.
-
 - **T004** — [2026-06-11] Ревизия исходников tgcf (MIT) перед M3 (§15.18):
   FloodWait/реконнекты, пагинация истории, резолв сущностей, session
   string. Результат — конспект полезных решений + список заимствований
@@ -86,6 +78,14 @@ BACKLOG.md, BOARD.md и CHANGELOG.md) + 1`. ID не переиспользует
   Периодически пробовать форму снова. См. ADR 2026-06-11 в DECISIONS.md.
   Acceptance: в `.secrets` собственные ключи, `pytest -m integration`
   зелёный на них.
+
+- **T016** — [2026-06-12] Ретеншн acked-строк `queue.db`: persistqueue
+  не удаляет подтверждённые записи (status=acked копится бессрочно),
+  есть `clear_acked_data(max_delete, keep_latest)`. Решить политику и
+  место вызова (например, рядом с фоновыми prune-задачами M3, §17.3).
+  Всплыло при реализации persistqueue-адаптера (T003 фаза 2).
+  Acceptance: политика зафиксирована (ADR или вызов в коде), queue.db
+  не растёт бесконечно при штатной работе.
 
 - **T012** — [2026-06-11] Перенести из dreamteam механизм публикации:
   `scripts/publish.sh` + `.secrets`/`.secrets.example` (PYPI_TOKEN,

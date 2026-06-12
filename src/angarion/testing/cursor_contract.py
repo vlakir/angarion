@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 import pytest
-from factories import NOW, SOURCE_KEY, make_cursor
 
-from angarion.domain.ports import CursorStorePort
+from angarion.testing.factories import NOW, SOURCE_KEY, make_cursor
+
+if TYPE_CHECKING:
+    from angarion.domain.ports import CursorStorePort
 
 
 class CursorStoreContract:
@@ -15,6 +18,8 @@ class CursorStoreContract:
     Поведенческая спецификация хранилища курсоров catch-up:
     payload непрозрачен для ядра, ключ — ``source_key``.
     """
+
+    pytestmark = pytest.mark.asyncio
 
     @pytest.fixture
     def cursors(self) -> CursorStorePort:
@@ -37,9 +42,7 @@ class CursorStoreContract:
         await cursors.save(updated)
         assert await cursors.load(SOURCE_KEY) == updated
 
-    async def test_cursors_scoped_by_source_key(
-        self, cursors: CursorStorePort
-    ) -> None:
+    async def test_cursors_scoped_by_source_key(self, cursors: CursorStorePort) -> None:
         first = make_cursor()
         second = make_cursor(
             source_key='memory:acc1:-100999', payload={'sync_token': 's72594'}

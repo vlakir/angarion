@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from factories import FAR_FUTURE, LONG_AGO, NOW, make_outbound
 
 from angarion.domain.models import DeliveryReceipt, OutboxStatus
-from angarion.domain.ports import OutboxPort
+from angarion.testing.factories import FAR_FUTURE, LONG_AGO, NOW, make_outbound
+
+if TYPE_CHECKING:
+    from angarion.domain.ports import OutboxPort
 
 
 class OutboxContract:
@@ -20,6 +23,8 @@ class OutboxContract:
 
     Реализация подключается переопределением фикстуры ``outbox``.
     """
+
+    pytestmark = pytest.mark.asyncio
 
     @pytest.fixture
     def outbox(self) -> OutboxPort:
@@ -39,9 +44,7 @@ class OutboxContract:
         assert record.receipt is None
         assert record.last_error is None
 
-    async def test_put_duplicate_false_and_unchanged(
-        self, outbox: OutboxPort
-    ) -> None:
+    async def test_put_duplicate_false_and_unchanged(self, outbox: OutboxPort) -> None:
         msg = make_outbound()
         await outbox.put(msg)
         await outbox.reschedule(
@@ -52,9 +55,7 @@ class OutboxContract:
         assert record is not None
         assert record.attempts == 1  # повторный put не сбросил состояние
 
-    async def test_put_stores_observability_context(
-        self, outbox: OutboxPort
-    ) -> None:
+    async def test_put_stores_observability_context(self, outbox: OutboxPort) -> None:
         msg = make_outbound()
         event_uid = uuid4()
         await outbox.put(msg, pipeline='digest', event_uid=event_uid)
@@ -76,9 +77,7 @@ class OutboxContract:
         limited = await outbox.due(limit=1)
         assert [r.msg.idempotency_key for r in limited] == ['k1']
 
-    async def test_due_excludes_future_rescheduled(
-        self, outbox: OutboxPort
-    ) -> None:
+    async def test_due_excludes_future_rescheduled(self, outbox: OutboxPort) -> None:
         msg = make_outbound()
         await outbox.put(msg)
         await outbox.reschedule(
@@ -86,14 +85,10 @@ class OutboxContract:
         )
         assert await outbox.due() == []
 
-    async def test_reschedule_increments_attempts(
-        self, outbox: OutboxPort
-    ) -> None:
+    async def test_reschedule_increments_attempts(self, outbox: OutboxPort) -> None:
         msg = make_outbound()
         await outbox.put(msg)
-        await outbox.reschedule(
-            msg.idempotency_key, not_before=LONG_AGO, error='boom'
-        )
+        await outbox.reschedule(msg.idempotency_key, not_before=LONG_AGO, error='boom')
         record = await outbox.get(msg.idempotency_key)
         assert record is not None
         assert record.status is OutboxStatus.PENDING
@@ -103,9 +98,7 @@ class OutboxContract:
             msg.idempotency_key
         ]
 
-    async def test_mark_sent_terminal_and_idempotent(
-        self, outbox: OutboxPort
-    ) -> None:
+    async def test_mark_sent_terminal_and_idempotent(self, outbox: OutboxPort) -> None:
         msg = make_outbound()
         await outbox.put(msg)
         receipt = DeliveryReceipt(external_id='777', delivered_at=NOW)
@@ -160,8 +153,9 @@ class OutboxContract:
             'sent', DeliveryReceipt(external_id='1', delivered_at=NOW)
         )
         await outbox.mark_failed('failed', 'boom')
+        terminal_count = 2  # sent + failed; pending не прунится
         assert await outbox.prune(older_than=LONG_AGO) == 0
-        assert await outbox.prune(older_than=FAR_FUTURE) == 2
+        assert await outbox.prune(older_than=FAR_FUTURE) == terminal_count
         assert await outbox.get('sent') is None
         assert await outbox.get('failed') is None
         assert await outbox.get('pending') is not None

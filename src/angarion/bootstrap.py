@@ -102,10 +102,23 @@ class _NamedPluginObject(Protocol):
 
 
 def _load_group[T: _NamedPluginObject](group: str, expected: type[T]) -> dict[str, T]:
-    """Загрузить entry points группы в реестр по ``obj.name`` (FR-12)."""
+    """
+    Загрузить entry points группы в реестр по ``obj.name`` (FR-12).
+
+    Entry point с неустановленной зависимостью (опциональный extra,
+    C-1 T003) пропускается с предупреждением: библиотека регистрирует
+    бэкенды вроде ``persistqueue`` в собственном ``pyproject.toml``, и
+    без extra их модули не импортируются.
+    """
     registry: dict[str, T] = {}
     for ep in entry_points(group=group):
-        obj = ep.load()
+        try:
+            obj = ep.load()
+        except ModuleNotFoundError as exc:
+            _log.warning(
+                'entry_point_unavailable', group=group, name=ep.name, error=str(exc)
+            )
+            continue
         if not isinstance(obj, expected):
             msg = (
                 f'entry point {ep.name!r} группы {group!r} должен быть '

@@ -13,6 +13,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from angarion.adapters.registry_rules import effective_ts, id_at_least
 from angarion.domain.models import (
     OutboundRecord,
     OutboxStatus,
@@ -41,6 +42,10 @@ class MemoryDedupStore:
 
     def __init__(self) -> None:
         self._inbound: dict[str, datetime] = {}
+
+    async def seen(self, dedup_key: str) -> bool:
+        """True — ключ уже отмечен (чтение без записи, A-11 T003)."""
+        return dedup_key in self._inbound
 
     async def mark_inbound(self, dedup_key: str) -> bool:
         """True — ключ новый; False — дубль."""
@@ -151,18 +156,6 @@ class MemoryOutbox:
         return len(stale)
 
 
-def _effective_ts(rec: RegistryRecord) -> AwareDatetime:
-    """Время последней активности записи: удаление, правка или создание."""
-    return rec.deleted_at or rec.edit_ts or rec.event_at
-
-
-def _id_at_least(external_id: str, min_id: str) -> bool:
-    """Числовое сравнение для десятичных id, иначе лексикографика (§5)."""
-    if external_id.isdecimal() and min_id.isdecimal():
-        return int(external_id) >= int(min_id)
-    return external_id >= min_id
-
-
 class MemoryMessageRegistry:
     """``MessageRegistryPort``: записи + история версий per (source, id)."""
 
@@ -177,7 +170,7 @@ class MemoryMessageRegistry:
         if stored is None:
             self._records[key] = rec
             return RegistryDelta(outcome=RegistryOutcome.IS_NEW)
-        if _effective_ts(rec) < _effective_ts(stored):
+        if effective_ts(rec) < effective_ts(stored):
             return RegistryDelta(outcome=RegistryOutcome.STALE)
         if rec.content_hash == stored.content_hash:
             return RegistryDelta(outcome=RegistryOutcome.UNCHANGED)
@@ -213,7 +206,7 @@ class MemoryMessageRegistry:
             for (src, _), rec in self._records.items()
             if src == source_key
             and rec.deleted_at is None
-            and _id_at_least(rec.external_id, min_id)
+            and id_at_least(rec.external_id, min_id)
         }
 
     async def get(self, source_key: str, external_id: str) -> RegistryRecord | None:
@@ -229,7 +222,7 @@ class MemoryMessageRegistry:
     async def prune(self, older_than: AwareDatetime) -> int:
         """Удалить записи (с их версиями) и версии старше окна."""
         stale_keys = [
-            key for key, rec in self._records.items() if _effective_ts(rec) < older_than
+            key for key, rec in self._records.items() if effective_ts(rec) < older_than
         ]
         for key in stale_keys:
             del self._records[key]

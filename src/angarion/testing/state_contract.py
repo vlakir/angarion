@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
-from angarion.domain.ports import StateStorePort
+if TYPE_CHECKING:
+    from angarion.domain.ports import StateStorePort
 
 
 class StateStoreContract:
@@ -13,6 +16,8 @@ class StateStoreContract:
     значения — JSON-строки, ключи неймспейсятся по пайплайну,
     ``keys()`` — отсортированы и фильтруются префиксом.
     """
+
+    pytestmark = pytest.mark.asyncio
 
     @pytest.fixture
     def state(self) -> StateStorePort:

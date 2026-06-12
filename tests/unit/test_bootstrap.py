@@ -136,11 +136,16 @@ def stub_settings(pipeline: PipelineConfig) -> AngarionSettings:
 class FakeEntryPoint:
     """Минимальный duck-type entry point: bootstrap нужны name и load()."""
 
-    def __init__(self, name: str, obj: object) -> None:
+    def __init__(
+        self, name: str, obj: object, error: Exception | None = None
+    ) -> None:
         self.name = name
         self._obj = obj
+        self._error = error
 
     def load(self) -> object:
+        if self._error is not None:
+            raise self._error
         return self._obj
 
 
@@ -163,6 +168,22 @@ class TestPluginLoading:
     def test_load_processors_is_idempotent(self) -> None:
         load_processors()
         load_processors()
+
+    def test_entry_point_with_missing_extra_is_skipped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """
+        Entry point, чья зависимость не установлена (extra C-1 T003),
+        пропускается с предупреждением, а не роняет load_plugins().
+        """
+        broken = FakeEntryPoint(
+            'persistqueue',
+            None,
+            error=ModuleNotFoundError("No module named 'persistqueue'"),
+        )
+        patch_entry_points(monkeypatch, 'angarion.queues', [broken])
+        plugins = load_plugins()
+        assert 'persistqueue' not in plugins.queues
 
     def test_wrong_object_type_in_group_fails(
         self, monkeypatch: pytest.MonkeyPatch
@@ -234,8 +255,8 @@ class TestBackendResolution:
             build_app(settings)
 
     def test_unknown_storage_backend(self) -> None:
-        settings = make_settings(storage={'backend': 'sqlite'})
-        with pytest.raises(ConfigError, match='sqlite.*memory'):
+        settings = make_settings(storage={'backend': 'postgres'})
+        with pytest.raises(ConfigError, match='postgres.*memory'):
             build_app(settings)
 
 

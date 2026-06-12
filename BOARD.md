@@ -68,6 +68,16 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 
 <!-- T001, T011 перенесены в CHANGELOG.md [0.1.0] — 2026-06-11. -->
 
+- **T003** — **M2** — персистентность: PersistQueue-адаптер;
+  SQLAlchemy-адаптеры (dedup, registry, cursors, state, analytics,
+  outbox, DLQ) + Alembic-миграции; публикация `angarion.testing`
+  (контрактные наборы)
+  (`specs/T003-m2-persistence/`, ветка `T003-m2-persistence`).
+  Acceptance (§16 M2) выполнен: контрактные тесты зелёные на
+  sqlite/persistqueue через `angarion.testing`; kill-тест — потерь
+  нет, дубли только в остаточном окне C-9. По дороге закрыт крэш-фикс
+  ingest (A-11, ADR 2026-06-12) [closed 2026-06-12, PR #6].
+
 - **T002** — **M1** — ядро: домен (события, `thread_id`, открытый
   `Messenger`), порты (вкл. `AdapterCapabilities`, непрозрачный курсор,
   контракт `AdapterPlugin`/`Listener`), application (ingest с fan-out,

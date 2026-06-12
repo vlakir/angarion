@@ -73,10 +73,16 @@ class MessageSinkPort(Protocol):
 @runtime_checkable
 class DedupStorePort(Protocol):
     """
-    Идемпотентность входа (§7.2): атомарное «отметить, если не было».
-    Выходная идемпотентность после C-9 — первичный ключ outbox
-    (``OutboxPort.put``), не здесь.
+    Идемпотентность входа (§7.2): проверка ``seen()`` и отметка
+    ``mark_inbound()``. Ingest проверяет на входе, а отметку пишет
+    строго после fan-out (A-11 T003): падение между ``queue.put`` и
+    отметкой даёт повторную обработку envelope (дубль гасит outbox),
+    а не потерю события. Выходная идемпотентность после C-9 —
+    первичный ключ outbox (``OutboxPort.put``), не здесь.
     """
+
+    async def seen(self, dedup_key: str) -> bool:
+        """True — ключ уже отмечен; чистое чтение, без записи (A-11)."""
 
     async def mark_inbound(self, dedup_key: str) -> bool:
         """True — ключ новый; False — дубль (§7.2)."""

@@ -253,3 +253,99 @@ class TestRoutingAndFanOut:
         assert len(recorded) == 1
         assert recorded[0].event_uid == event.uid
         assert recorded[0].payload == {'pipelines': ['audit', 'digest']}
+
+
+class TestCrashSafety:
+    """A-11 спеки T003: отметка дедупа — строго после fan-out."""
+
+    def make_service(
+        self,
+        queue: MemoryQueue,
+        dedup: MemoryDedupStore,
+        registry: MemoryMessageRegistry,
+        analytics: MemoryAnalytics,
+    ) -> IngestService:
+        router = Router(
+            [
+                RouteSpec(
+                    pipeline='digest',
+                    events=frozenset(EventKind),
+                    sources=(make_address(),),
+                ),
+                RouteSpec(
+                    pipeline='audit',
+                    events=frozenset(EventKind),
+                    sources=(make_address(),),
+                ),
+            ]
+        )
+        return IngestService(
+            dedup=dedup,
+            registry=registry,
+            router=router,
+            queue=queue,
+            analytics=analytics,
+        )
+
+    async def test_mark_not_recorded_when_enqueue_fails(
+        self,
+        dedup: MemoryDedupStore,
+        registry: MemoryMessageRegistry,
+        analytics: MemoryAnalytics,
+    ) -> None:
+        """Падение до записи в очередь не оставляет отметки — ре-эмит примется."""
+
+        class ExplodingQueue(MemoryQueue):
+            async def put(self, item: QueueEnvelope) -> None:
+                raise RuntimeError('имитация падения до записи в очередь')
+
+        service = self.make_service(ExplodingQueue(), dedup, registry, analytics)
+        event = make_event()
+        with pytest.raises(RuntimeError):
+            await service.ingest(event)
+        assert await dedup.seen(event.dedup_key) is False
+
+    async def test_reemit_after_partial_fanout_reenqueues(
+        self,
+        dedup: MemoryDedupStore,
+        registry: MemoryMessageRegistry,
+        analytics: MemoryAnalytics,
+    ) -> None:
+        """Крэш посреди fan-out: ре-эмит дописывает очередь (дубль, не потеря)."""
+
+        class PartialFanoutQueue(MemoryQueue):
+            def __init__(self) -> None:
+                super().__init__()
+                self.puts = 0
+
+            async def put(self, item: QueueEnvelope) -> None:
+                self.puts += 1
+                if self.puts == 2:  # второй пайплайн первого захода
+                    raise RuntimeError('имитация kill посреди fan-out')
+                await super().put(item)
+
+        queue = PartialFanoutQueue()
+        service = self.make_service(queue, dedup, registry, analytics)
+        event = make_event()
+        with pytest.raises(RuntimeError):
+            await service.ingest(event)
+        assert (await queue.depth()).pending == 1  # частичный fan-out остался
+
+        await service.ingest(event)  # ре-эмит после «рестарта»
+        assert await dedup.seen(event.dedup_key) is True
+        # очередь дописана полностью; дубль envelope гасится outbox'ом на выходе
+        assert (await queue.depth()).pending == 3
+        assert 'ingested' in await kinds(analytics)
+
+    async def test_unrouted_event_is_marked(
+        self,
+        dedup: MemoryDedupStore,
+        registry: MemoryMessageRegistry,
+        analytics: MemoryAnalytics,
+    ) -> None:
+        """Unrouted-ветка тоже оставляет отметку: повтор — «duplicate»."""
+        service = self.make_service(MemoryQueue(), dedup, registry, analytics)
+        foreign = make_address(chat_id='-100777')
+        await service.ingest(make_event(source=foreign))
+        await service.ingest(make_event(source=foreign, uid=uuid4()))
+        assert await kinds(analytics) == ['duplicate', 'unrouted']
