@@ -6,16 +6,18 @@
 from __future__ import annotations
 
 import pytest
-from analytics_contract import AnalyticsContract
-from cursor_contract import CursorStoreContract
-from dead_letter_contract import DeadLetterContract
-from dedup_contract import DedupStoreContract
-from factories import make_outbound
-from outbox_contract import OutboxContract
-from queue_contract import EventQueueContract
-from registry_contract import MessageRegistryContract
-from sink_contract import MessageSinkContract
-from state_contract import StateStoreContract
+from angarion.testing import (
+    AnalyticsContract,
+    CursorStoreContract,
+    DeadLetterContract,
+    DedupStoreContract,
+    EventQueueContract,
+    MessageRegistryContract,
+    MessageSinkContract,
+    OutboxContract,
+    StateStoreContract,
+    make_outbound,
+)
 
 from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.sink import MemorySink

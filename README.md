@@ -19,8 +19,9 @@ N источников → нормализация в события → оче
 (catch-up по реестру сообщений).
 
 > **Статус: pre-alpha.** Версия 0.1.0 — каркас, опубликована для
-> резервирования имени. Ядро в разработке (этап M1). Публичный API
-> нестабилен до 1.0 — следите за [CHANGELOG](CHANGELOG.md).
+> резервирования имени. Ядро (M1) и персистентность (M2) готовы;
+> следующий этап — Telegram-адаптер (M3). Публичный API нестабилен
+> до 1.0 — следите за [CHANGELOG](CHANGELOG.md).
 
 ## Ключевые идеи
 
@@ -60,8 +61,8 @@ pip install angarion        # или: uv add angarion
 
 | Этап | Содержимое | Статус |
 |---|---|---|
-| M1 | Домен, порты, application-слой, InMemory-адаптеры, конфиг | 🔄 в работе |
-| M2 | Персистентность: persist-queue, SQLAlchemy + Alembic, DLQ, `angarion.testing` | ⏳ |
+| M1 | Домен, порты, application-слой, InMemory-адаптеры, конфиг | ✅ готов |
+| M2 | Персистентность: persist-queue, SQLAlchemy + Alembic, DLQ, `angarion.testing` | ✅ готов |
 | M3 | Telegram-адаптер (Telethon): live + catch-up + sender, CLI | ⏳ |
 | M4 | LLM-процессор, stateful-процессоры | ⏳ |
 | M5 | Web API + Web UI + Auth + админ-операции | ⏳ |

@@ -2,9 +2,17 @@
 IngestService (§6.1 ТЗ, FR-7): единая точка входа событий (live и
 catch-up).
 
-Порядок строго: дедуп (до любых записей в реестр) → поддержка реестра
-со staleness-guard и обогащением → router (multicast + фильтры) →
-fan-out (отдельный ``QueueEnvelope`` на каждый пайплайн) → аналитика.
+Порядок строго: проверка дедупа ``seen()`` (до любых записей в
+реестр) → поддержка реестра со staleness-guard и обогащением →
+router (multicast + фильтры) → fan-out (отдельный ``QueueEnvelope``
+на каждый пайплайн) → **отметка дедупа** → аналитика.
+
+Отметка пишется после fan-out сознательно (A-11 спеки T003,
+крэш-безопасность §7.1): kill между ``queue.put`` и отметкой даёт при
+ре-эмите повторную постановку envelope — дубль обработки гасится
+outbox'ом (insert-if-absent C-9), а отметка до постановки давала бы
+безвозвратную потерю (ре-эмит гасился бы как «дубль»). Повторный
+заход после падения переписывает реестр идемпотентно (``unchanged``).
 """
 
 from __future__ import annotations
@@ -34,7 +42,7 @@ if TYPE_CHECKING:
 
 
 class IngestService:
-    """Дедуп → реестр (+ обогащение) → маршрутизация → fan-out."""
+    """Проверка дедупа → реестр (+ обогащение) → fan-out → отметка."""
 
     def __init__(
         self,
@@ -53,16 +61,18 @@ class IngestService:
 
     async def ingest(self, event: InboundEvent) -> None:
         """Принять нормализованное событие от driving-адаптера (§6.1)."""
-        if not await self._dedup.mark_inbound(event.dedup_key):
+        if await self._dedup.seen(event.dedup_key):
             await self._record('duplicate', event)
             return
         event = await self._maintain_registry(event)
         pipelines = self._router.resolve(event.source, event.kind, event)
         if not pipelines:
+            await self._dedup.mark_inbound(event.dedup_key)
             await self._record('unrouted', event)
             return
         for pipeline in sorted(pipelines):
             await self._queue.put(QueueEnvelope(pipeline=pipeline, event=event))
+        await self._dedup.mark_inbound(event.dedup_key)  # строго после fan-out (A-11)
         await self._record('ingested', event, {'pipelines': sorted(pipelines)})
 
     async def _maintain_registry(self, event: InboundEvent) -> InboundEvent:

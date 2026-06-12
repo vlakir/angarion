@@ -27,6 +27,27 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+# Контрактные наборы тестов портов для авторов сторонних адаптеров
+# (§12.11, FR-9 спеки T003); pytest11-плагин — assert-rewriting (A-2).
+[project.optional-dependencies]
+testing = [
+    "pytest>=8.4",
+    "pytest-asyncio>=1.0",
+]
+persistqueue = [
+    "persist-queue>=1.0",
+]
+# SQLAlchemy/SQLite-хранилище + Alembic-миграции (§12.3, §14.9;
+# FR-3 спеки T003); greenlet — транзитивно от sqlalchemy[asyncio] (A-9).
+sqlite = [
+    "aiosqlite>=0.21",
+    "alembic>=1.16",
+    "sqlalchemy[asyncio]>=2.0.41",
+]
+
+[project.entry-points.pytest11]
+angarion_testing = "angarion._testing_plugin"
+
 # InMemory-плагин — «нулевой пациент» механизма расширения (§12.11, FR-14):
 # библиотека регистрирует его теми же entry points, что и сторонние пакеты.
 [project.entry-points."angarion.adapters"]
@@ -34,9 +55,11 @@ memory = "angarion.adapters.memory.plugin:PLUGIN"
 
 [project.entry-points."angarion.queues"]
 memory = "angarion.adapters.memory.plugin:QUEUE_BACKEND"
+persistqueue = "angarion.adapters.queue.persistqueue_:QUEUE_BACKEND"
 
 [project.entry-points."angarion.storages"]
 memory = "angarion.adapters.memory.plugin:STORAGE_BACKEND"
+sqlite = "angarion.adapters.storage.plugin:STORAGE_BACKEND"
 
 [project.entry-points."angarion.processors"]
 passthrough = "angarion.application.processors:PASSTHROUGH"
@@ -61,6 +84,10 @@ dev = [
     "pytest-cov>=7.0",
     "pytest-asyncio>=1.0",
     "telethon>=1.43.2",
+    "persist-queue>=1.0",
+    "sqlalchemy[asyncio]>=2.0.41",
+    "alembic>=1.16",
+    "aiosqlite>=0.21",
 ]
 
 
@@ -95,6 +122,13 @@ ignore = [
 ]
 fixable = ["ALL"]
 unfixable = []
+
+
+[tool.ruff.lint.per-file-ignores]
+# Контрактные тесты angarion.testing — публичный пакет в src (FR-9
+# спеки T003): assert — идиома pytest, замена на raise ломает
+# репортинг. Согласовано с Разработчиком 2026-06-12 (A-1 спеки T003).
+"src/angarion/testing/**" = ["S101"]
 
 
 [tool.ruff.lint.flake8-quotes]

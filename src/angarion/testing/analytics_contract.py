@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 import pytest
-from factories import NOW, make_analytics_event
 
-from angarion.domain.ports import AnalyticsPort
+from angarion.testing.factories import NOW, make_analytics_event
+
+if TYPE_CHECKING:
+    from angarion.domain.ports import AnalyticsPort
 
 
 class AnalyticsContract:
@@ -17,27 +20,24 @@ class AnalyticsContract:
     ретеншн-очистка ``prune()`` (A-7, §17.3).
     """
 
+    pytestmark = pytest.mark.asyncio
+
     @pytest.fixture
     def analytics(self) -> AnalyticsPort:
         raise NotImplementedError
 
-    async def test_recent_returns_newest_first(
-        self, analytics: AnalyticsPort
-    ) -> None:
+    async def test_recent_returns_newest_first(self, analytics: AnalyticsPort) -> None:
         first = make_analytics_event()
-        second = make_analytics_event(
-            kind='processed', at=NOW + timedelta(seconds=1)
-        )
+        second = make_analytics_event(kind='processed', at=NOW + timedelta(seconds=1))
         await analytics.record(first)
         await analytics.record(second)
         assert await analytics.recent() == [second, first]
 
     async def test_recent_respects_limit(self, analytics: AnalyticsPort) -> None:
         for n in range(3):
-            await analytics.record(
-                make_analytics_event(at=NOW + timedelta(seconds=n))
-            )
-        assert len(await analytics.recent(limit=2)) == 2
+            await analytics.record(make_analytics_event(at=NOW + timedelta(seconds=n)))
+        limit = 2
+        assert len(await analytics.recent(limit=limit)) == limit
 
     async def test_recent_filters_by_kind(self, analytics: AnalyticsPort) -> None:
         ingested = make_analytics_event()
@@ -45,9 +45,7 @@ class AnalyticsContract:
         await analytics.record(make_analytics_event(kind='processed'))
         assert await analytics.recent(kind='ingested') == [ingested]
 
-    async def test_recent_filters_by_pipeline(
-        self, analytics: AnalyticsPort
-    ) -> None:
+    async def test_recent_filters_by_pipeline(self, analytics: AnalyticsPort) -> None:
         digest = make_analytics_event(pipeline='digest')
         await analytics.record(digest)
         await analytics.record(make_analytics_event(pipeline='relay'))

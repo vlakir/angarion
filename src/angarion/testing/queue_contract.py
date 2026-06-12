@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 import pytest
-from factories import NOW, make_envelope
 
 from angarion.domain.models import QueueDepth
-from angarion.domain.ports import EventQueuePort
+from angarion.testing.factories import NOW, make_envelope
+
+if TYPE_CHECKING:
+    from angarion.domain.ports import EventQueuePort
 
 
 class EventQueueContract:
@@ -20,6 +23,8 @@ class EventQueueContract:
 
     Реализация подключается переопределением фикстуры ``queue``.
     """
+
+    pytestmark = pytest.mark.asyncio
 
     @pytest.fixture
     def queue(self) -> EventQueuePort:
@@ -37,11 +42,12 @@ class EventQueueContract:
         self, queue: EventQueuePort
     ) -> None:
         not_before = NOW + timedelta(seconds=8)
-        envelope = make_envelope(attempt=3, not_before=not_before)
+        attempt = 3
+        envelope = make_envelope(attempt=attempt, not_before=not_before)
         await queue.put(envelope)
         item = await queue.get()
         assert item.envelope == envelope
-        assert item.envelope.attempt == 3
+        assert item.envelope.attempt == attempt
         assert item.envelope.not_before == not_before
 
     async def test_get_waits_for_put(self, queue: EventQueuePort) -> None:
@@ -91,9 +97,10 @@ class EventQueueContract:
         second = make_envelope(pipeline='second')
         await queue.put(first)
         await queue.put(second)
+        unacked_count = 2
         await queue.get()
         await queue.get()
-        assert await queue.recover() == 2
+        assert await queue.recover() == unacked_count
         assert await queue.depth() == QueueDepth(pending=2, unacked=0)
         recovered = [(await queue.get()).envelope for _ in range(2)]
         assert sorted(recovered, key=lambda e: e.pipeline) == [first, second]

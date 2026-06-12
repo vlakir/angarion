@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from factories import NOW, make_dead_letter, make_envelope
 
-from angarion.domain.ports import DeadLetterPort
+from angarion.testing.factories import NOW, make_dead_letter, make_envelope
+
+if TYPE_CHECKING:
+    from angarion.domain.ports import DeadLetterPort
 
 
 class DeadLetterContract:
@@ -17,6 +20,8 @@ class DeadLetterContract:
     порядок поступления, фильтр по пайплайну; автоматической очистки
     нет (§17.3) — разбор ручной.
     """
+
+    pytestmark = pytest.mark.asyncio
 
     @pytest.fixture
     def dead_letters(self) -> DeadLetterPort:
@@ -34,9 +39,7 @@ class DeadLetterContract:
         await dead_letters.put(second)
         assert await dead_letters.list() == [first, second]
 
-    async def test_list_filters_by_pipeline(
-        self, dead_letters: DeadLetterPort
-    ) -> None:
+    async def test_list_filters_by_pipeline(self, dead_letters: DeadLetterPort) -> None:
         await dead_letters.put(
             make_dead_letter(envelope=make_envelope(pipeline='digest'))
         )
@@ -47,11 +50,10 @@ class DeadLetterContract:
     async def test_list_respects_limit(self, dead_letters: DeadLetterPort) -> None:
         for _ in range(3):
             await dead_letters.put(make_dead_letter())
-        assert len(await dead_letters.list(limit=2)) == 2
+        limit = 2
+        assert len(await dead_letters.list(limit=limit)) == limit
 
-    async def test_take_removes_and_returns(
-        self, dead_letters: DeadLetterPort
-    ) -> None:
+    async def test_take_removes_and_returns(self, dead_letters: DeadLetterPort) -> None:
         letter = make_dead_letter()
         await dead_letters.put(letter)
         assert await dead_letters.take(letter.uid) == letter
