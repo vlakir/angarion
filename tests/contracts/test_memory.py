@@ -15,6 +15,7 @@ from angarion.testing import (
     MessageRegistryContract,
     MessageSinkContract,
     OutboxContract,
+    SessionStoreContract,
     StateStoreContract,
     make_outbound,
 )
@@ -28,6 +29,7 @@ from angarion.adapters.memory.storage import (
     MemoryDedupStore,
     MemoryMessageRegistry,
     MemoryOutbox,
+    MemorySessionStore,
     MemoryStateStore,
 )
 from angarion.domain import ports
@@ -61,6 +63,12 @@ class TestMemoryCursorStore(CursorStoreContract):
     @pytest.fixture
     def cursors(self) -> MemoryCursorStore:
         return MemoryCursorStore()
+
+
+class TestMemorySessionStore(SessionStoreContract):
+    @pytest.fixture
+    def session_store(self) -> MemorySessionStore:
+        return MemorySessionStore()
 
 
 class TestMemoryStateStore(StateStoreContract):
@@ -108,6 +116,7 @@ PORT_CONFORMANCE = [
     (MemoryOutbox, ports.OutboxPort),
     (MemoryMessageRegistry, ports.MessageRegistryPort),
     (MemoryCursorStore, ports.CursorStorePort),
+    (MemorySessionStore, ports.SessionStorePort),
     (MemoryStateStore, ports.StateStorePort),
     (MemoryAnalytics, ports.AnalyticsPort),
     (MemoryDeadLetters, ports.DeadLetterPort),

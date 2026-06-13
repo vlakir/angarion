@@ -6,6 +6,8 @@ Bootstrap (FR-12, FR-13, FR-15): загрузка плагинов, двухст
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
+from typing import cast
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -19,6 +21,7 @@ from angarion.bootstrap import (
     AngarionApp,
     LoadedPlugins,
     _DispatchSink,
+    _maybe_dispose,
     build_app,
     load_plugins,
     load_processors,
@@ -414,6 +417,76 @@ class TestAppAssembly:
     async def test_stop_without_start_is_noop(self) -> None:
         app = build_app(make_settings())
         await app.stop()
+
+
+class _PruneSpy:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def prune(self, _older_than: object) -> int:
+        self.calls += 1
+        return 0
+
+
+class TestPruneAndDispose:
+    """§17.3: фоновая prune-задача рантайма + закрытие ресурсов хранилища."""
+
+    async def test_prune_once_skips_unbounded_retention(self) -> None:
+        spy = _PruneSpy()
+        await AngarionApp._prune_once(datetime.now(UTC), 0, spy)
+        assert spy.calls == 0
+
+    async def test_prune_once_runs_for_bounded_retention(self) -> None:
+        spy = _PruneSpy()
+        await AngarionApp._prune_once(datetime.now(UTC), 7, spy)
+        assert spy.calls == 1
+
+    async def test_no_prune_task_when_interval_zero(self) -> None:
+        app = build_app(make_settings())  # prune_interval = 0 по умолчанию
+        await app.start()
+        try:
+            assert len(app._tasks) == 2  # только worker + delivery
+        finally:
+            await app.stop()
+
+    async def test_prune_task_created_and_invokes_store(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        app = build_app(
+            make_settings(
+                worker=WorkerConfig(poll_interval=0.01, prune_interval=0.01)
+            )
+        )
+        calls: list[object] = []
+
+        async def spy(older_than: object) -> int:
+            calls.append(older_than)
+            return 0
+
+        monkeypatch.setattr(app.storage.dedup, 'prune', spy)
+        await app.start()
+        try:
+            assert len(app._tasks) == 3  # worker + delivery + prune
+            for _ in range(200):
+                if calls:
+                    break
+                await asyncio.sleep(0.01)
+        finally:
+            await app.stop()
+        assert calls
+
+    async def test_maybe_dispose_calls_dispose_when_present(self) -> None:
+        disposed: list[bool] = []
+
+        class _WithDispose:
+            async def dispose(self) -> None:
+                disposed.append(True)
+
+        await _maybe_dispose(cast('object', _WithDispose()))  # type: ignore[arg-type]
+        assert disposed == [True]
+
+    async def test_maybe_dispose_noop_without_method(self) -> None:
+        await _maybe_dispose(cast('object', object()))  # type: ignore[arg-type]
 
 
 class TestDispatchSink:

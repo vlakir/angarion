@@ -1,0 +1,165 @@
+"""
+Контракт и сборка telegram-плагина (T005): матрица возможностей, схема
+секции ``[accounts.*]`` (фаза 1) и фабрики listener/sender + общий пул
+(фаза 5).
+"""
+
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from angarion.adapters.memory.plugin import STORAGE_BACKEND
+from angarion.adapters.memory.queue import MemoryQueue
+from angarion.adapters.telegram.listener import TelegramListener
+from angarion.adapters.telegram.plugin import (
+    PLUGIN,
+    TELEGRAM_CAPABILITIES,
+    TelegramAccountConfig,
+)
+from angarion.adapters.telegram.registry import ClientRegistry
+from angarion.adapters.telegram.sender import TelegramSender
+from angarion.application.ingest import IngestService
+from angarion.application.router import Router
+from angarion.bootstrap import AdapterDeps
+from angarion.config import (
+    AngarionSettings,
+    EndpointConfig,
+    StorageConfig,
+)
+from angarion.domain.errors import ConfigError
+
+
+def _deps(settings: AngarionSettings | None = None) -> AdapterDeps:
+    storage = STORAGE_BACKEND.make(StorageConfig())
+    ingest = IngestService(
+        dedup=storage.dedup,
+        registry=storage.registry,
+        router=Router([]),
+        queue=MemoryQueue(),
+        analytics=storage.analytics,
+    )
+    return AdapterDeps(
+        ingest=ingest, storage=storage, settings=settings or AngarionSettings()
+    )
+
+
+def _account() -> TelegramAccountConfig:
+    return TelegramAccountConfig.model_validate(
+        {'messenger': 'telegram', 'api_id': 2040, 'api_hash': 'hash'}
+    )
+
+
+def test_capabilities_match_spec() -> None:
+    caps = TELEGRAM_CAPABILITIES
+    assert caps.user_account is True
+    assert caps.edit_events is True
+    assert caps.delete_events is True
+    assert caps.history_fetch is True
+    assert caps.threads is True
+    assert caps.push_transport == 'client'
+
+
+def test_account_config_valid() -> None:
+    cfg = TelegramAccountConfig.model_validate(
+        {'messenger': 'telegram', 'api_id': 2040, 'api_hash': 'abc123'}
+    )
+    assert cfg.api_id == 2040
+    assert cfg.api_hash == 'abc123'
+
+
+def test_account_config_coerces_api_id_from_env_string() -> None:
+    """Env-override даёт строки — int должен скоарситься (§11)."""
+    cfg = TelegramAccountConfig.model_validate(
+        {'messenger': 'telegram', 'api_id': '2040', 'api_hash': 'abc123'}
+    )
+    assert cfg.api_id == 2040
+
+
+def test_account_config_rejects_wrong_messenger() -> None:
+    with pytest.raises(ValidationError):
+        TelegramAccountConfig.model_validate(
+            {'messenger': 'memory', 'api_id': 2040, 'api_hash': 'abc123'}
+        )
+
+
+def test_account_config_requires_api_credentials() -> None:
+    with pytest.raises(ValidationError):
+        TelegramAccountConfig.model_validate({'messenger': 'telegram'})
+
+
+def test_account_config_rejects_nonpositive_api_id() -> None:
+    with pytest.raises(ValidationError):
+        TelegramAccountConfig.model_validate(
+            {'messenger': 'telegram', 'api_id': 0, 'api_hash': 'abc123'}
+        )
+
+
+def test_account_config_rejects_empty_api_hash() -> None:
+    with pytest.raises(ValidationError):
+        TelegramAccountConfig.model_validate(
+            {'messenger': 'telegram', 'api_id': 2040, 'api_hash': ''}
+        )
+
+
+def test_account_config_forbids_extra_keys() -> None:
+    with pytest.raises(ValidationError):
+        TelegramAccountConfig.model_validate(
+            {
+                'messenger': 'telegram',
+                'api_id': 2040,
+                'api_hash': 'abc123',
+                'unexpected': 'x',
+            }
+        )
+
+
+class TestPluginObject:
+    def test_plugin_shape(self) -> None:
+        assert PLUGIN.name == 'telegram'
+        assert PLUGIN.capabilities is TELEGRAM_CAPABILITIES
+        assert PLUGIN.account_config_model is TelegramAccountConfig
+
+    def test_factories_return_protocol_objects(self) -> None:
+        deps = _deps()
+        accounts = {'main': _account()}
+        listener = PLUGIN.make_listener(
+            deps, accounts, [EndpointConfig(account='main', chat_id='@g')]
+        )
+        sender = PLUGIN.make_sender(deps, accounts)
+        assert isinstance(listener, TelegramListener)
+        assert isinstance(sender, TelegramSender)
+
+    def test_listener_and_sender_share_one_registry(self) -> None:
+        """§12.1: один пул клиентов на listener+sender (мемо в deps.shared)."""
+        deps = _deps()
+        accounts = {'main': _account()}
+        listener = PLUGIN.make_listener(deps, accounts, [])
+        sender = PLUGIN.make_sender(deps, accounts)
+        assert listener._pool is sender._pool
+        assert isinstance(listener._pool, ClientRegistry)
+
+    def test_config_wired_into_adapters(self) -> None:
+        settings = AngarionSettings.model_validate(
+            {
+                'telegram': {'sender': {'chat_per_second': 5.0}},
+                'catchup': {'interval': 30},
+            }
+        )
+        deps = _deps(settings)
+        accounts = {'main': _account()}
+        listener = PLUGIN.make_listener(deps, accounts, [])
+        sender = PLUGIN.make_sender(deps, accounts)
+        assert listener._catchup_interval == 30
+        assert sender._chat_per_second == 5.0
+
+    async def test_empty_session_key_with_stored_session_fails_fast(self) -> None:
+        """Пустой ANGARION_SESSION_KEY + есть сессия → fail-fast при подключении."""
+        deps = _deps()  # settings.session_key == ''
+        await deps.storage.session.save('main', 'CIPHERTEXT')
+        accounts = {'main': _account()}
+        listener = PLUGIN.make_listener(
+            deps, accounts, [EndpointConfig(account='main', chat_id='@g')]
+        )
+        with pytest.raises(ConfigError, match='ANGARION_SESSION_KEY'):
+            await listener._pool.connect_all()

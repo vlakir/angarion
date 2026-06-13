@@ -20,6 +20,7 @@ CONTRACT_CLASSES = [
     'MessageRegistryContract',
     'MessageSinkContract',
     'OutboxContract',
+    'SessionStoreContract',
     'StateStoreContract',
 ]
 

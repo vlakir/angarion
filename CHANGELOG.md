@@ -26,6 +26,28 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 ## [Unreleased]
 
 ### Added
+- Telegram-адаптер, этап M3 (T005): первый боевой адаптер платформы
+  (Telethon, MTProto, пользовательские аккаунты) через тот же
+  plugin-контракт `AdapterPlugin`, что и InMemory (entry point
+  `angarion.adapters:telegram`, extra `angarion[telegram]`). Live-listener
+  (new/edited/deleted, мультиаккаунт, буфер), catch-up §9.3 (новые/правки/
+  удаления, усечение `catchup_truncated`, периодический фоновый прогон),
+  sender (token-bucket троттлинг per chat/account, FloodWait-повтор того же
+  сообщения, transient-ретраи, `extra`: parse_mode/silent/disable_preview),
+  резолв сущностей с прогревом `get_dialogs` и управляемой деградацией
+  источника (`source_unavailable`), сессии аккаунтов как зашифрованный
+  `StringSession` в `app.db` (`SessionStorePort`, Fernet, ключ из env
+  `ANGARION_SESSION_KEY`). CLI `angarion run / migrate / login` с graceful
+  shutdown (SIGINT/SIGTERM) и фоновой prune-задачей ретеншна §17.3. Границы
+  Telethon скрыты за тонким Protocol-портом — mapping/catch-up/sender/CLI
+  тестируются на фейках без сети (coverage ≥ 90%). Конфиг платформы —
+  секции `[telegram]`/`[telegram.sender]` и `[catchup].interval` (ADR
+  2026-06-13). Acceptance §16 M3: сквозной тест «простой → правки/удаления
+  → рестарт» через настоящий composition root (`build_app` на sqlite +
+  memory-queue, граница Telethon — на fake-клиенте) — catch-up на рестарте
+  даёт корректные edited (с previous_text) / deleted (с восстановленным
+  текстом) / new; гайд бэкапа §17.6 в README (сессии в `app.db`, ключ
+  `ANGARION_SESSION_KEY` бэкапится отдельно).
 - Ревизия исходников tgcf перед M3 (T004, §16 M3 / §15.18): конспект
   `specs/T004-tgcf-review/notes.md` по четырём темам (FloodWait/
   реконнекты, пагинация истории, резолв сущностей, session string) +

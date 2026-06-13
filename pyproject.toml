@@ -44,6 +44,17 @@ sqlite = [
     "alembic>=1.16",
     "sqlalchemy[asyncio]>=2.0.41",
 ]
+# Telegram-адаптер (M3, T005): Telethon (MTProto) + Fernet-шифрование
+# StringSession at-rest (Q2 спеки T005). Регистрируется entry point'ом
+# angarion.adapters:telegram (собирается в фазе 5 — composition root).
+telegram = [
+    "telethon>=1.43.2",
+    "cryptography>=43",
+    "tenacity>=9",
+]
+
+[project.scripts]
+angarion = "angarion.cli:main"
 
 [project.entry-points.pytest11]
 angarion_testing = "angarion._testing_plugin"
@@ -52,6 +63,7 @@ angarion_testing = "angarion._testing_plugin"
 # библиотека регистрирует его теми же entry points, что и сторонние пакеты.
 [project.entry-points."angarion.adapters"]
 memory = "angarion.adapters.memory.plugin:PLUGIN"
+telegram = "angarion.adapters.telegram.plugin:PLUGIN"
 
 [project.entry-points."angarion.queues"]
 memory = "angarion.adapters.memory.plugin:QUEUE_BACKEND"
@@ -84,6 +96,8 @@ dev = [
     "pytest-cov>=7.0",
     "pytest-asyncio>=1.0",
     "telethon>=1.43.2",
+    "cryptography>=43",
+    "tenacity>=9",
     "persist-queue>=1.0",
     "sqlalchemy[asyncio]>=2.0.41",
     "alembic>=1.16",

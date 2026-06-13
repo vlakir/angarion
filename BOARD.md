@@ -68,6 +68,18 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 
 <!-- T001, T011 перенесены в CHANGELOG.md [0.1.0] — 2026-06-11. -->
 
+- **T005** — **M3** — Telegram-адаптер: Telethon listener + catch-up (§9)
+  + sender через plugin-контракт §12.11, мультиаккаунт, троттлинг, CLI
+  (`run` / `migrate` / `login`) (`specs/T005-m3-telegram/spec.md`, ветка
+  `T005-m3-telegram`). Реализован по 6 фазам (Q7): SessionStorePort +
+  контракт плагина, граница Telethon + live-listener, catch-up §9.3,
+  sender (token-bucket + FloodWait), CLI + composition root + graceful
+  shutdown, acceptance. Acceptance (§16 M3) выполнен: e2e-тест «простой →
+  правки/удаления → рестарт» через настоящий `build_app` (sqlite-персист
+  + fake-граница Telethon) даёт корректные edited/deleted/new на
+  рестарте; суточный прогон — ручной на тестовом аккаунте (N4); гайд
+  бэкапа §17.6 в README [closed 2026-06-13, текущий PR].
+
 - **T004** — Ревизия исходников tgcf (MIT, v1.1.8) перед M3 (§15.18,
   §16 M3): FloodWait/реконнекты, пагинация истории, резолв сущностей,
   session string (`specs/T004-tgcf-review/notes.md`, ветка

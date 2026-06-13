@@ -31,6 +31,7 @@ from angarion.testing.factories import (
 from angarion.testing.outbox_contract import OutboxContract
 from angarion.testing.queue_contract import EventQueueContract
 from angarion.testing.registry_contract import MessageRegistryContract
+from angarion.testing.session_contract import SessionStoreContract
 from angarion.testing.sink_contract import MessageSinkContract
 from angarion.testing.state_contract import StateStoreContract
 
@@ -47,6 +48,7 @@ __all__ = [
     'MessageRegistryContract',
     'MessageSinkContract',
     'OutboxContract',
+    'SessionStoreContract',
     'StateStoreContract',
     'make_address',
     'make_analytics_event',

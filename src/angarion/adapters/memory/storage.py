@@ -1,6 +1,6 @@
 """
 InMemory-хранилища (§12.4): dedup, outbox исходящих (C-9), реестр,
-курсоры, state, аналитика, DLQ.
+курсоры, сессии аккаунтов (M3), state, аналитика, DLQ.
 
 Отметки времени, которые порты не принимают параметром (момент
 дедуп-отметки, ``deleted_at``), проставляются ``datetime.now(UTC)``
@@ -249,6 +249,25 @@ class MemoryCursorStore:
     async def save(self, cursor: SourceCursor) -> None:
         """Перезаписать курсор источника."""
         self._cursors[cursor.source_key] = cursor
+
+
+class MemorySessionStore:
+    """``SessionStorePort``: словарь строк сессий per account_id."""
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, str] = {}
+
+    async def load(self, account_id: str) -> str | None:
+        """Строка сессии аккаунта или None."""
+        return self._sessions.get(account_id)
+
+    async def save(self, account_id: str, session_string: str) -> None:
+        """Сохранить (перезаписать) строку сессии аккаунта."""
+        self._sessions[account_id] = session_string
+
+    async def account_ids(self) -> list[str]:
+        """Аккаунты с сохранённой сессией, отсортированы."""
+        return sorted(self._sessions)
 
 
 class MemoryStateStore:

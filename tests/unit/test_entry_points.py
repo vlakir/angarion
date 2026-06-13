@@ -36,6 +36,19 @@ def test_memory_adapter_plugin_loads_via_entry_point() -> None:
     assert plugin.capabilities.push_transport == 'client'
 
 
+def test_telegram_adapter_plugin_loads_via_entry_point() -> None:
+    """SC-3 (M3): telegram-плагин — наравне с InMemory, через entry point."""
+    plugin = load_single('angarion.adapters', 'telegram')
+    assert isinstance(plugin, AdapterPlugin)
+    assert plugin.name == 'telegram'
+    assert plugin.capabilities.history_fetch is True
+    assert plugin.capabilities.push_transport == 'client'
+    account = plugin.account_config_model.model_validate(
+        {'messenger': 'telegram', 'api_id': 2040, 'api_hash': 'h'}
+    )
+    assert account.model_dump()['api_id'] == 2040
+
+
 def test_memory_queue_backend_loads_and_builds_port() -> None:
     backend = load_single('angarion.queues', 'memory')
     assert isinstance(backend, QueueBackend)

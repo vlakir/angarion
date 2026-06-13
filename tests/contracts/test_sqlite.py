@@ -18,6 +18,7 @@ from angarion.testing import (
     DedupStoreContract,
     MessageRegistryContract,
     OutboxContract,
+    SessionStoreContract,
     StateStoreContract,
 )
 
@@ -65,6 +66,12 @@ class TestSqliteCursorStore(CursorStoreContract):
         return sqlite_storage.cursors
 
 
+class TestSqliteSessionStore(SessionStoreContract):
+    @pytest.fixture
+    def session_store(self, sqlite_storage: SqliteStorage) -> ports.SessionStorePort:
+        return sqlite_storage.session
+
+
 class TestSqliteStateStore(StateStoreContract):
     @pytest.fixture
     def state(self, sqlite_storage: SqliteStorage) -> ports.StateStorePort:
@@ -91,6 +98,7 @@ async def test_sqlite_adapters_satisfy_their_ports(
         (sqlite_storage.outbox, ports.OutboxPort),
         (sqlite_storage.registry, ports.MessageRegistryPort),
         (sqlite_storage.cursors, ports.CursorStorePort),
+        (sqlite_storage.session, ports.SessionStorePort),
         (sqlite_storage.state, ports.StateStorePort),
         (sqlite_storage.analytics, ports.AnalyticsPort),
         (sqlite_storage.dead_letters, ports.DeadLetterPort),

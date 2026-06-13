@@ -150,6 +150,23 @@ class SourceCursorRow(Base):
     updated_at: Mapped[datetime]
 
 
+class TelegramSessionRow(Base):
+    """
+    Сессия аккаунта платформы (M3, T005): ``account_id`` → строка
+    сессии. ``session_string`` хранится **зашифрованным** at-rest
+    (Fernet, Q2): шифрует декоратор ``EncryptedSessionStore``
+    telegram-адаптера, сюда строка приходит уже как ciphertext — само
+    хранилище криптографию не знает (порт оперирует непрозрачной
+    строкой).
+    """
+
+    __tablename__ = 'telegram_sessions'
+
+    account_id: Mapped[str] = mapped_column(primary_key=True)
+    session_string: Mapped[str]
+    updated_at: Mapped[datetime]
+
+
 class ProcessorStateRow(Base):
     """KV-состояние stateful-процессоров (§10.3): (namespace, key) → JSON."""
 
