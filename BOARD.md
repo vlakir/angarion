@@ -68,6 +68,14 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 
 <!-- T001, T011 перенесены в CHANGELOG.md [0.1.0] — 2026-06-11. -->
 
+- **T018** — [2026-06-13] Пример `examples/forward/`: пересылка новых
+  сообщений из группы A в B (passthrough) — `app.toml` + скрипт
+  «всё в одном» `run.sh` (idempotent login/migrate/run, рантайм в
+  git-ignored `angarion-data/`) + README с настройкой и
+  troubleshooting'ом авторизации. Документация §17.9 (quick start к M3).
+  Acceptance: пример воспроизводим по README; секреты и рантайм в репо
+  не попадают [closed 2026-06-13, текущий PR].
+
 - **T005** — **M3** — Telegram-адаптер: Telethon listener + catch-up (§9)
   + sender через plugin-контракт §12.11, мультиаккаунт, троттлинг, CLI
   (`run` / `migrate` / `login`) (`specs/T005-m3-telegram/spec.md`, ветка
