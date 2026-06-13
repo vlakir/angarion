@@ -192,6 +192,28 @@ class CursorStorePort(Protocol):
 
 
 @runtime_checkable
+class SessionStorePort(Protocol):
+    """
+    Сессии аккаунтов платформы per ``account_id`` (M3, T005): хранение
+    непрозрачной строки сессии (для Telegram — ``StringSession``).
+
+    Порт оперирует **открытой** строкой; шифрование at-rest (Q2 спеки
+    T005) — забота потребителя (декоратор ``EncryptedSessionStore``
+    telegram-адаптера), а не самого хранилища. ``account_id`` — имя
+    секции ``[accounts.*]``.
+    """
+
+    async def load(self, account_id: str) -> str | None:
+        """Строка сессии аккаунта или None (сессия не выпущена)."""
+
+    async def save(self, account_id: str, session_string: str) -> None:
+        """Сохранить (перезаписать) строку сессии аккаунта."""
+
+    async def account_ids(self) -> list[str]:
+        """Аккаунты с сохранённой сессией, отсортированы."""
+
+
+@runtime_checkable
 class StateStorePort(Protocol):
     """
     KV-состояние stateful-процессоров (§10.3): значения — JSON-строки,

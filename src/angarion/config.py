@@ -98,7 +98,8 @@ class QueueConfig(BaseModel):
 class WorkerConfig(BaseModel):
     """
     Секция ``[worker]`` (plan 2.2, аддитивно к §11): retry/backoff
-    обработки и доставки + период опроса outbox у ``DeliveryWorker``.
+    обработки и доставки + период опроса outbox у ``DeliveryWorker`` +
+    период фоновой prune-очистки ретеншна (§17.3; ``0`` — отключено).
     """
 
     model_config = ConfigDict(frozen=True, extra='forbid')
@@ -107,16 +108,62 @@ class WorkerConfig(BaseModel):
     backoff_base: float = Field(default=1.0, gt=0)
     backoff_cap: float = Field(default=60.0, gt=0)
     poll_interval: float = Field(default=1.0, gt=0)
+    prune_interval: float = Field(default=0.0, ge=0)
 
 
 class CatchupConfig(BaseModel):
-    """Секция ``[catchup]`` (§9.3, §11); в M1 нужна ветке деградации FR-13."""
+    """
+    Секция ``[catchup]`` (§9.3, §11); в M1 нужна ветке деградации FR-13.
+
+    ``interval`` (M3, фаза 5) — период фонового страхующего catch-up
+    (§9.3, Q9/N1) в секундах; ``None``/``0`` — фоновый catch-up выключен,
+    остаётся только прогон на старте процесса.
+    """
 
     model_config = ConfigDict(frozen=True, extra='forbid')
 
     enabled: bool = True
     max_messages_per_source: int = Field(default=2000, ge=1)
     max_age_days: int = Field(default=7, ge=1)
+    interval: float | None = Field(default=None, ge=0)
+
+
+class SenderConfig(BaseModel):
+    """
+    Секция ``[telegram.sender]`` (M3, фаза 4/5): пороги троттлинга и
+    устойчивой отправки Telegram-sender'а (§12.1, FR «Sender»).
+
+    Token-bucket per (account, chat): ≤ ``chat_per_second`` на чат,
+    ≤ ``account_per_minute`` на аккаунт. FloodWait → повтор того же
+    сообщения до ``flood_max_retries`` раз; transient (сеть/5xx) →
+    ретраи tenacity до ``transient_max_attempts`` с backoff.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    chat_per_second: float = Field(default=1.0, gt=0)
+    account_per_minute: float = Field(default=20.0, gt=0)
+    flood_max_retries: int = Field(default=5, ge=0)
+    transient_max_attempts: int = Field(default=3, ge=1)
+    backoff_base: float = Field(default=1.0, gt=0)
+    backoff_cap: float = Field(default=60.0, gt=0)
+
+
+class TelegramConfig(BaseModel):
+    """
+    Секция ``[telegram]`` (M3, фаза 5): платформенные runtime-тюнеры
+    Telegram-адаптера, сгруппированные под платформой (решение Владимира
+    2026-06-13, ADR; пересмотр с per-plugin config в M5).
+
+    ``live_buffer_soft_limit`` — мягкий лимит live-буфера (Q8/W3): при
+    превышении — warning + аналитика ``live_buffer_high``, ничего не
+    теряется. ``sender`` — секция ``[telegram.sender]``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    live_buffer_soft_limit: int = Field(default=1000, ge=1)
+    sender: SenderConfig = SenderConfig()
 
 
 class EndpointConfig(BaseModel):
@@ -160,7 +207,14 @@ class AngarionSettings(BaseSettings):
     queue: QueueConfig = QueueConfig()
     worker: WorkerConfig = WorkerConfig()
     catchup: CatchupConfig = CatchupConfig()
+    telegram: TelegramConfig = TelegramConfig()
     pipelines: dict[str, PipelineConfig] = Field(default_factory=dict)
+    session_key: str = ''
+    """
+    Ключ шифрования сессий Telegram at-rest (Q2 спеки T005, ADR
+    2026-06-13); из env ``ANGARION_SESSION_KEY`` (секрет, не в TOML).
+    Пустой при наличии сессий в БД — fail-fast в telegram-адаптере.
+    """
 
     @classmethod
     def settings_customise_sources(

@@ -20,12 +20,19 @@ pydantic-моделей вычисляются в runtime.
 
 import asyncio
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib.metadata import entry_points
 from typing import Final, Protocol
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, PrivateAttr, ValidationError
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationError,
+)
 
 from angarion.application import processors
 from angarion.application.delivery import DeliveryWorker
@@ -66,12 +73,21 @@ _log = get_logger('angarion.bootstrap')
 class AdapterDeps(BaseModel):
     """
     Зависимости, передаваемые фабрикам плагина (§12.11): listener
-    эмитит события в ``ingest``. Конструкция композиции (A-2).
+    эмитит события в ``ingest``; реальным адаптерам (Telegram, M3) нужны
+    ещё driven-порты (``storage``) и конфигурация (``settings``).
+
+    ``shared`` — скретчпад на одну сборку (общий для всех вызовов фабрик):
+    плагин мемоизирует в нём объекты, которые listener и sender обязаны
+    делить (Telegram — единый ``ClientRegistry``, §12.1). Конструкция
+    композиции (A-2); ``shared`` mutable, поэтому ``frozen`` не мешает.
     """
 
     model_config = ConfigDict(frozen=True, extra='forbid', arbitrary_types_allowed=True)
 
     ingest: IngestService
+    storage: StorageBundle
+    settings: AngarionSettings
+    shared: dict[str, object] = Field(default_factory=dict)
 
 
 class LoadedPlugins(BaseModel):
@@ -99,6 +115,20 @@ class _NamedPluginObject(Protocol):
 
     @property
     def name(self) -> str: ...
+
+
+class _Prunable(Protocol):
+    """Driven-порт с ретеншн-очисткой (§17.3): dedup/registry/analytics/outbox."""
+
+    async def prune(self, older_than: AwareDatetime) -> int:
+        """Удалить записи старше порога; вернуть число удалённых."""
+
+
+async def _maybe_dispose(storage: StorageBundle) -> None:
+    """Закрыть ресурсы хранилища, если бэкенд их держит (sqlite — пул движка)."""
+    dispose = getattr(storage, 'dispose', None)
+    if callable(dispose):
+        await dispose()
 
 
 def _load_group[T: _NamedPluginObject](group: str, expected: type[T]) -> dict[str, T]:
@@ -401,15 +431,21 @@ class AngarionApp(BaseModel):
             raise RuntimeError(msg)
         await self._announce_degradation()
         await self.queue.recover()
+        # listener'ы стартуют ДО циклов worker/delivery: реальные адаптеры
+        # (Telegram) на старте подключают клиентов, а catch-up кладёт в
+        # очередь — она работает без работающего worker'а, события копятся
+        for listener in self.listeners:
+            await listener.start()
         self._tasks = [
             asyncio.create_task(self.worker.run(), name='angarion-worker'),
             asyncio.create_task(self.delivery.run(), name='angarion-delivery'),
         ]
-        for listener in self.listeners:
-            await listener.start()
+        prune_task = self._make_prune_task()
+        if prune_task is not None:
+            self._tasks.append(prune_task)
 
     async def stop(self) -> None:
-        """Graceful-остановка: приём → циклы; идемпотентна."""
+        """Graceful-остановка: приём → циклы → закрытие хранилища; идемпотентна."""
         for listener in self.listeners:
             await listener.stop()
         for task in self._tasks:
@@ -418,6 +454,35 @@ class AngarionApp(BaseModel):
             with suppress(asyncio.CancelledError):
                 await task
         self._tasks = []
+        await _maybe_dispose(self.storage)
+
+    def _make_prune_task(self) -> asyncio.Task[None] | None:
+        """Фоновая prune-задача ретеншна §17.3 (``prune_interval`` = 0 → выкл.)."""
+        interval = self.settings.worker.prune_interval
+        if interval <= 0:
+            return None
+        return asyncio.create_task(self._prune_loop(interval), name='angarion-prune')
+
+    async def _prune_loop(self, interval: float) -> None:
+        """Периодическая очистка по окнам ретеншна (§17.3; ``0`` — бессрочно)."""
+        storage_cfg = self.settings.storage
+        while True:
+            await asyncio.sleep(interval)
+            now = datetime.now(UTC)
+            await self._prune_once(now, storage_cfg.dedup_ttl_days, self.storage.dedup)
+            await self._prune_once(
+                now, storage_cfg.registry_window_days, self.storage.registry
+            )
+            await self._prune_once(
+                now, storage_cfg.analytics_retention_days, self.storage.analytics
+            )
+            await self._prune_once(now, storage_cfg.dedup_ttl_days, self.storage.outbox)
+
+    @staticmethod
+    async def _prune_once(now: datetime, days: int, store: _Prunable) -> None:
+        if days <= 0:  # 0 = бессрочно (§17.3) → не чистим
+            return
+        await store.prune(now - timedelta(days=days))
 
     async def _announce_degradation(self) -> None:
         """§12.10: предупреждение в лог + ``catchup_unavailable`` в аналитику."""
@@ -431,6 +496,22 @@ class AngarionApp(BaseModel):
                     at=datetime.now(UTC),
                 )
             )
+
+
+def build_storage(
+    settings: AngarionSettings, *, plugins: LoadedPlugins | None = None
+) -> StorageBundle:
+    """
+    Собрать комплект хранилищ по ``[storage].backend`` (резолв по реестру).
+
+    Отдельная точка входа для CLI-команд, которым нужно только хранилище,
+    а не весь конвейер: ``angarion login`` пишет сессию через
+    ``SessionStorePort``. Sqlite-бэкенд применяет миграции при сборке (C-3).
+    """
+    registry = plugins if plugins is not None else load_plugins()
+    return _resolve_backend(
+        registry.storages, settings.storage.backend, 'хранилища'
+    ).make(settings.storage)
 
 
 def build_app(
@@ -462,7 +543,9 @@ def build_app(
         analytics=storage.analytics,
     )
     listeners, sinks = _make_platform_adapters(
-        settings, accounts, AdapterDeps(ingest=ingest)
+        settings,
+        accounts,
+        AdapterDeps(ingest=ingest, storage=storage, settings=settings),
     )
     worker = PipelineWorker(
         queue=queue,

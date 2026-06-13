@@ -32,6 +32,7 @@ from angarion.adapters.storage.orm import (
     OutboundRow,
     ProcessorStateRow,
     SourceCursorRow,
+    TelegramSessionRow,
 )
 from angarion.domain.models import (
     AnalyticsEvent,
@@ -398,6 +399,45 @@ class SqliteCursorStore:
         )
         async with self._sessions() as session, session.begin():
             await session.execute(stmt)
+
+
+class SqliteSessionStore:
+    """``SessionStorePort``: upsert строки сессии per account_id (M3)."""
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def load(self, account_id: str) -> str | None:
+        """Строка сессии аккаунта или None."""
+        async with self._sessions() as session:
+            row = await session.get(TelegramSessionRow, account_id)
+        return row.session_string if row is not None else None
+
+    async def save(self, account_id: str, session_string: str) -> None:
+        """Сохранить (перезаписать) строку сессии (insert-or-update)."""
+        stmt = sqlite_insert(TelegramSessionRow).values(
+            account_id=account_id,
+            session_string=session_string,
+            updated_at=datetime.now(UTC),
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[TelegramSessionRow.account_id],
+            set_={
+                'session_string': stmt.excluded.session_string,
+                'updated_at': stmt.excluded.updated_at,
+            },
+        )
+        async with self._sessions() as session, session.begin():
+            await session.execute(stmt)
+
+    async def account_ids(self) -> list[str]:
+        """Аккаунты с сохранённой сессией, отсортированы."""
+        stmt = select(TelegramSessionRow.account_id).order_by(
+            TelegramSessionRow.account_id
+        )
+        async with self._sessions() as session:
+            ids = (await session.scalars(stmt)).all()
+        return list(ids)
 
 
 class SqliteStateStore:

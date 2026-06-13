@@ -187,3 +187,54 @@ def test_settings_are_frozen() -> None:
     settings = AngarionSettings()
     with pytest.raises(ValidationError):
         setattr(settings, 'storage', StorageConfig())
+
+
+def test_telegram_runtime_defaults() -> None:
+    """Секция [telegram]/[telegram.sender] и prune/interval — рабочие default'ы."""
+    settings = AngarionSettings()
+    assert settings.telegram.live_buffer_soft_limit == 1000
+    assert settings.telegram.sender.chat_per_second == 1.0
+    assert settings.telegram.sender.account_per_minute == 20.0
+    assert settings.telegram.sender.flood_max_retries == 5
+    assert settings.telegram.sender.transient_max_attempts == 3
+    assert settings.catchup.interval is None
+    assert settings.worker.prune_interval == 0.0
+    assert settings.session_key == ''
+
+
+def test_telegram_section_parsed_from_toml(tmp_path: Path) -> None:
+    """[telegram]/[telegram.sender]/[catchup].interval разбираются из TOML."""
+    toml = (
+        '[telegram]\n'
+        'live_buffer_soft_limit = 50\n'
+        '[telegram.sender]\n'
+        'chat_per_second = 2.0\n'
+        'account_per_minute = 30.0\n'
+        'flood_max_retries = 2\n'
+        '[catchup]\n'
+        'interval = 900\n'
+        '[worker]\n'
+        'prune_interval = 3600\n'
+    )
+    settings = load_settings(write_toml(tmp_path, toml))
+    assert settings.telegram.live_buffer_soft_limit == 50
+    assert settings.telegram.sender.chat_per_second == 2.0
+    assert settings.telegram.sender.account_per_minute == 30.0
+    assert settings.telegram.sender.flood_max_retries == 2
+    assert settings.catchup.interval == 900
+    assert settings.worker.prune_interval == 3600
+
+
+def test_session_key_from_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """session_key читается из env ANGARION_SESSION_KEY (секрет, не в TOML)."""
+    monkeypatch.setenv('ANGARION_SESSION_KEY', 'secret-key-value')
+    settings = load_settings(write_toml(tmp_path))
+    assert settings.session_key == 'secret-key-value'
+
+
+def test_unknown_telegram_key_fails(tmp_path: Path) -> None:
+    """Неизвестный ключ в [telegram] — fail-fast (extra='forbid')."""
+    with pytest.raises(ConfigError):
+        load_settings(write_toml(tmp_path, '[telegram]\nbogus = 1\n'))

@@ -53,9 +53,20 @@ v2.1); принятые архитектурные решения — [DECISIONS
 pip install angarion        # или: uv add angarion
 ```
 
-Пока в пакете только каркас — практической пользы от установки нет.
-Рабочая версия с Telegram-адаптером появится к этапу M3 (см. дорожную
-карту), тогда же здесь появится реальный quick start.
+Telegram-адаптер требует extra: `uv add "angarion[telegram,sqlite]"`.
+
+Быстрый старт (этап M3):
+
+```bash
+export ANGARION_SESSION_KEY=...           # ключ шифрования сессий (Fernet)
+uv run angarion migrate --config app.toml # применить миграции БД
+uv run angarion login --config app.toml --account main  # авторизовать аккаунт
+uv run angarion run --config app.toml     # боевой запуск конвейера
+```
+
+`app.toml` — секции `[accounts.*]` / `[storage]` / `[queue]` /
+`[pipelines.*]` (пример полей — в [CONCEPT.md](CONCEPT.md) §11);
+`api_id`/`api_hash`/`ANGARION_SESSION_KEY` подаются через env, не в TOML.
 
 ## Дорожная карта
 
@@ -63,7 +74,7 @@ pip install angarion        # или: uv add angarion
 |---|---|---|
 | M1 | Домен, порты, application-слой, InMemory-адаптеры, конфиг | ✅ готов |
 | M2 | Персистентность: persist-queue, SQLAlchemy + Alembic, DLQ, `angarion.testing` | ✅ готов |
-| M3 | Telegram-адаптер (Telethon): live + catch-up + sender, CLI | ⏳ |
+| M3 | Telegram-адаптер (Telethon): live + catch-up + sender, CLI | ✅ готов |
 | M4 | LLM-процессор, stateful-процессоры | ⏳ |
 | M5 | Web API + Web UI + Auth + админ-операции | ⏳ |
 | M6 | Интеграционный тестовый контур на реальном аккаунте | ⏳ |
@@ -108,6 +119,29 @@ uv run pytest -m integration            # запуск интеграционн�
 
 Session-файл — полноценные учётные данные аккаунта: живёт в `sessions/`
 (git-ignored), никогда не коммитится и не копируется в открытые места.
+
+## Бэкапы
+
+Гайд §17.6 ТЗ с поправкой на хранение сессий в БД (ADR 2026-06-13 в
+[DECISIONS.md](DECISIONS.md)). Бэкапить:
+
+- **`app.db`** — горячая копия через SQLite backup API / `VACUUM INTO`,
+  **не** файловым копированием под нагрузкой (для непрерывной репликации
+  — Litestream). Содержит реестр сообщений, курсоры, аналитику, outbox
+  **и зашифрованные сессии аккаунтов** (`StringSession`).
+- **`ANGARION_SESSION_KEY`** — ключ шифрования сессий; хранить и
+  бэкапить **отдельно** от `app.db`. Ключ рядом с БД обесценивает
+  шифрование; потеря ключа = бэкап сессий бесполезен (потребуется
+  повторный `angarion login` для каждого аккаунта).
+- **TOML-конфиг** — параметры пайплайнов и аккаунтов (без секретов:
+  `api_id`/`api_hash`/`ANGARION_SESSION_KEY` — из env).
+- **`queue.db`** — по выбору: потеря очереди при живом catch-up
+  восстановима для сообщений в окне реестра (`registry_window_days`).
+
+Файловых session-файлов у боевого адаптера нет — сессия живёт в `app.db`
+(отступление от §11/§12.1/§17.6 ТЗ, ADR 2026-06-13). Файл
+`sessions/*.session` остаётся только у интеграционного контура тестов
+(см. ниже) и в бэкап боевого деплоя не входит.
 
 ## Структура проекта
 

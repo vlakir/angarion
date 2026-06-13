@@ -29,6 +29,7 @@ from angarion.adapters.storage.stores import (
     SqliteDedupStore,
     SqliteMessageRegistry,
     SqliteOutbox,
+    SqliteSessionStore,
     SqliteStateStore,
 )
 from angarion.domain.errors import ConfigError
@@ -82,6 +83,7 @@ def _make_storage(config: 'StorageConfig') -> SqliteStorage:
         state=SqliteStateStore(sessions),
         analytics=SqliteAnalytics(sessions),
         dead_letters=SqliteDeadLetters(sessions),
+        session=SqliteSessionStore(sessions),
         engine=engine,
     )
 

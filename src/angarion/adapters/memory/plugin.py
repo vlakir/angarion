@@ -27,6 +27,7 @@ from angarion.adapters.memory.storage import (
     MemoryDedupStore,
     MemoryMessageRegistry,
     MemoryOutbox,
+    MemorySessionStore,
     MemoryStateStore,
 )
 from angarion.domain.capabilities import AdapterCapabilities
@@ -93,6 +94,7 @@ def _make_storage(_config: 'StorageConfig') -> StorageBundle:
         state=MemoryStateStore(),
         analytics=MemoryAnalytics(),
         dead_letters=MemoryDeadLetters(),
+        session=MemorySessionStore(),
     )
 
 

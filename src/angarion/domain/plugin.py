@@ -27,6 +27,7 @@ from angarion.domain.ports import (
     MessageRegistryPort,
     MessageSinkPort,
     OutboxPort,
+    SessionStorePort,
     StateStorePort,
 )
 
@@ -83,6 +84,7 @@ class StorageBundle(BaseModel):
     """
     Комплект driven-портов хранения, который собирает storage-бэкенд
     (§12.11, plan 2.5). Объём M1 — порты C-1 (+ outbox после C-9);
+    ``session`` добавлен в M3 (T005) под сессии аккаунтов платформы;
     ``runtime_config`` придёт аддитивно в M5.
 
     Конструкция композиции (A-2): JSON-контракт DTO на неё не
@@ -98,6 +100,7 @@ class StorageBundle(BaseModel):
     state: StateStorePort
     analytics: AnalyticsPort
     dead_letters: DeadLetterPort
+    session: SessionStorePort
 
 
 QueueFactory = Callable[..., EventQueuePort]

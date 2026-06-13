@@ -13,6 +13,7 @@ from angarion.adapters.memory.storage import (
     MemoryDedupStore,
     MemoryMessageRegistry,
     MemoryOutbox,
+    MemorySessionStore,
     MemoryStateStore,
 )
 from angarion.domain.capabilities import AdapterCapabilities
@@ -143,6 +144,7 @@ def make_bundle(**overrides: object) -> StorageBundle:
         'state': MemoryStateStore(),
         'analytics': MemoryAnalytics(),
         'dead_letters': MemoryDeadLetters(),
+        'session': MemorySessionStore(),
     }
     fields.update(overrides)
     return StorageBundle.model_validate(fields)

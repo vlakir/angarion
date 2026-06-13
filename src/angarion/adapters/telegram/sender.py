@@ -1,0 +1,205 @@
+"""
+TelegramSender (FR «Sender», M3, фаза 4): ``MessageSinkPort`` поверх
+границы Telethon с троттлингом и устойчивой отправкой.
+
+Перед отправкой — token-bucket троттлинг per (account, chat): бакет чата
+(≤ 1 msg/s) и бакет аккаунта (≤ 20/min), пороги конфигурируемы, всё на
+``asyncio.sleep`` (event loop не блокируется). Отправка устойчива к двум
+видам ошибок границы (``client.py``):
+
+- ``FloodWaitError`` — честно пережидаем ``seconds`` и **повторяем то же
+  сообщение** (без пропуска, не как tgcf); число повторов ограничено
+  (страховка от вечного цикла), при исчерпании — пробрасываем.
+- ``TransientSendError`` (сеть/таймаут/5xx) — ретраи с экспоненциальным
+  backoff (tenacity); при исчерпании — пробрасываем.
+
+Проброшенное исключение ловит ``DeliveryWorker`` (§8): reschedule с
+backoff, после ``max_retries`` — терминальный ``failed``; сообщение не
+теряется. Telegram-специфику (``parse_mode``/``silent``/
+``disable_preview``) sender читает из ``OutboundMessage.extra`` — ядро
+поле не интерпретирует.
+
+Часы/сон инъектируются (тесты — детерминированно, без реальных пауз).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+from pydantic import BaseModel, ConfigDict
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+from angarion.adapters.telegram.client import (
+    FloodWaitError,
+    TransientSendError,
+    as_peer,
+)
+from angarion.adapters.telegram.throttle import TokenBucket
+from angarion.domain.models import DeliveryReceipt
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from structlog.typing import FilteringBoundLogger
+
+    from angarion.adapters.telegram.client import TelegramClientPort
+    from angarion.adapters.telegram.registry import ClientPool
+    from angarion.domain.models import OutboundMessage
+
+
+class TelegramSendOptions(BaseModel):
+    """
+    Telegram-специфика из ``OutboundMessage.extra`` (ядро не трактует).
+
+    ``extra='ignore'`` — незнакомые ключи extra не ломают отправку.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='ignore')
+
+    parse_mode: str | None = None
+    silent: bool = False
+    disable_preview: bool = False
+
+
+class TelegramSender:
+    """``MessageSinkPort``: троттлинг + FloodWait-повтор + transient-ретраи."""
+
+    def __init__(
+        self,
+        *,
+        pool: ClientPool,
+        log: FilteringBoundLogger,
+        chat_per_second: float = 1.0,
+        account_per_minute: float = 20.0,
+        flood_max_retries: int = 5,
+        transient_max_attempts: int = 3,
+        backoff_base: float = 1.0,
+        backoff_cap: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        if not pool.account_ids:
+            msg = 'нужен хотя бы один клиент Telegram'
+            raise ValueError(msg)
+        self._pool = pool
+        self._log = log
+        self._chat_per_second = chat_per_second
+        self._account_per_minute = account_per_minute
+        self._flood_max_retries = flood_max_retries
+        self._transient_max_attempts = transient_max_attempts
+        self._backoff_base = backoff_base
+        self._backoff_cap = backoff_cap
+        self._clock = clock
+        self._sleep = sleep
+        # клиенты пула подключаются позже (listener.start, §12.1); бакеты
+        # известны заранее по списку аккаунтов
+        self._account_buckets = {
+            account_id: TokenBucket(
+                rate=account_per_minute / 60.0,
+                capacity=max(account_per_minute, 1.0),
+                clock=clock,
+                sleep=sleep,
+            )
+            for account_id in pool.account_ids
+        }
+        self._chat_buckets: dict[tuple[str, str], TokenBucket] = {}
+
+    async def send(self, msg: OutboundMessage) -> DeliveryReceipt:
+        """Троттлинг → устойчивая отправка → ``DeliveryReceipt`` (UTC)."""
+        account_id = msg.send_via.account_id
+        client = self._pool.clients[account_id]
+        opts = TelegramSendOptions.model_validate(msg.extra)
+        await self._throttle(account_id, msg.target.chat_id)
+        reply_to = (
+            int(msg.target.thread_id) if msg.target.thread_id is not None else None
+        )
+        message_id = await self._send_resilient(
+            client=client,
+            peer=as_peer(msg.target.chat_id),
+            text=msg.text,
+            reply_to=reply_to,
+            opts=opts,
+        )
+        return DeliveryReceipt(
+            external_id=str(message_id), delivered_at=datetime.now(UTC)
+        )
+
+    async def _throttle(self, account_id: str, chat_id: str) -> None:
+        await self._chat_bucket(account_id, chat_id).acquire()
+        await self._account_buckets[account_id].acquire()
+
+    def _chat_bucket(self, account_id: str, chat_id: str) -> TokenBucket:
+        key = (account_id, chat_id)
+        bucket = self._chat_buckets.get(key)
+        if bucket is None:
+            bucket = TokenBucket(
+                rate=self._chat_per_second,
+                capacity=max(self._chat_per_second, 1.0),
+                clock=self._clock,
+                sleep=self._sleep,
+            )
+            self._chat_buckets[key] = bucket
+        return bucket
+
+    async def _send_resilient(
+        self,
+        *,
+        client: TelegramClientPort,
+        peer: int | str,
+        text: str,
+        reply_to: int | None,
+        opts: TelegramSendOptions,
+    ) -> int:
+        """FloodWait-повтор поверх transient-ретраев (tenacity)."""
+        floods = 0
+        while True:
+            try:
+                return await self._send_with_transient_retry(
+                    client=client,
+                    peer=peer,
+                    text=text,
+                    reply_to=reply_to,
+                    opts=opts,
+                )
+            except FloodWaitError as exc:
+                floods += 1
+                if floods > self._flood_max_retries:
+                    raise
+                self._log.warning(
+                    'flood_wait', seconds=exc.seconds, attempt=floods, peer=str(peer)
+                )
+                await self._sleep(exc.seconds)
+
+    async def _send_with_transient_retry(
+        self,
+        *,
+        client: TelegramClientPort,
+        peer: int | str,
+        text: str,
+        reply_to: int | None,
+        opts: TelegramSendOptions,
+    ) -> int:
+        retryer = AsyncRetrying(
+            retry=retry_if_exception_type(TransientSendError),
+            stop=stop_after_attempt(self._transient_max_attempts),
+            wait=wait_exponential(multiplier=self._backoff_base, max=self._backoff_cap),
+            sleep=self._sleep,
+            reraise=True,
+        )
+        return await retryer(
+            client.send_message,
+            peer,
+            text,
+            reply_to=reply_to,
+            parse_mode=opts.parse_mode,
+            silent=opts.silent,
+            link_preview=not opts.disable_preview,
+        )
