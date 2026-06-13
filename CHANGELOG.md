@@ -26,6 +26,12 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 ## [Unreleased]
 
 ### Added
+- Пример `examples/forward/` (T018): пересылка новых сообщений из одной
+  группы Telegram в другую процессором `passthrough` — конфиг `app.toml`,
+  скрипт «всё в одном» `run.sh` (идемпотентные migrate/login/run, рантайм
+  и ключ сессии в git-ignored `angarion-data/`) и README с настройкой и
+  troubleshooting'ом авторизации (канал доставки кода / VPN). Первый
+  воспроизводимый quick start на реальном аккаунте (§17.9, к M3).
 - Telegram-адаптер, этап M3 (T005): первый боевой адаптер платформы
   (Telethon, MTProto, пользовательские аккаунты) через тот же
   plugin-контракт `AdapterPlugin`, что и InMemory (entry point

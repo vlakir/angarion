@@ -46,6 +46,8 @@ secrets.env
 sessions/
 data/
 *.db
+*.key
+examples/**/angarion-data/
 
 # Local utilities
 copy_to_remote.sh
