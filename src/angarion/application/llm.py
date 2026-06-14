@@ -278,8 +278,9 @@ class LlmProcessor(BaseModel):
     детерминированно, без реальных пауз. Конфиг разбирается и промпты
     **компилируются** один раз на пайплайн, результат кэшируется (W1:
     worker конкурентен = 1, процессор-синглтон, конфиг фиксирован при
-    старте); ошибка структуры конфига или синтаксиса промпта всплывает на
-    первом событии как ``ConfigError``.
+    старте). Структура конфига валидируется на старте через
+    ``config_model`` (FR-0 T021, ``build_app``); синтаксис Jinja2-промпта
+    всплывает ``ConfigError`` лениво, на первом событии.
 
     Конструкция композиции (A-2): JSON-контракт DTO не действует.
     """
@@ -292,6 +293,15 @@ class LlmProcessor(BaseModel):
     backoff_cap: float = 60.0
     sleep: SkipValidation[Callable[[float], Awaitable[None]]] = asyncio.sleep
     _prepared: dict[str, _CompiledLlm] = PrivateAttr(default_factory=dict)
+
+    def config_model(self) -> type[BaseModel] | None:
+        """
+        Схема ``processor_config`` для fail-fast на старте (FR-0 T021).
+
+        Валидируется структура; синтаксис Jinja2-промптов компилируется
+        лениво на первом событии (см. ``_config``, W1).
+        """
+        return LlmProcessorConfig
 
     def _config(self, ctx: PipelineContextData) -> _CompiledLlm:
         """Разобрать, скомпилировать промпты и закэшировать по пайплайну (W1)."""

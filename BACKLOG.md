@@ -33,27 +33,6 @@ BACKLOG.md, BOARD.md и CHANGELOG.md) + 1`. ID не переиспользует
   пополняется как deliverable каждого этапа.
   Acceptance: сайт собирается; quick start воспроизводим на чистой машине.
 
-- **T021** — [2026-06-14] Валидация `processor_config` на старте через
-  хук `config_model` в контракте `ProcessorPort` (по образцу
-  `account_config_model` адаптера §12.11). Сейчас (M4, T007, W1)
-  процессоры `template`/`llm` валидируют `ctx.settings` лениво — ошибка
-  конфига всплывает на первом событии как `ConfigError`, а не на старте
-  (расхождение с §11 fail-fast). Требует расширения `ProcessorPort` +
-  bootstrap-валидации → отдельный ADR.
-  Acceptance: невалидный `processor_config` падает `ConfigError` при
-  `build_app`, до приёма событий; покрыто тестом; ADR в `DECISIONS.md`.
-
-- **T008** — [2026-06-11] **M5** — Web API + Web UI + Auth + Admin:
-  `create_app`, DI поверх портов, диагностика и журнал, визуализация
-  `/ui/pipelines`, fastapi-users (саморегистрация с одобрением,
-  `/ui/users`, bootstrap админа, уведомления о заявках), динамические
-  настройки + `/ui/settings`, админ-операции с аудитом, командный outbox
-  (§12.5–12.9). Самый крупный этап — спека обязательна, вероятно
-  дробление на под-задачи при планировании.
-  Acceptance (§16 M5): ASGI-тесты зелёные — auth-матрица, цикл
-  «регистрация → notify → done», пауза без потерь, requeue с attempt=0,
-  контракты RuntimeConfigPort и CommandOutboxPort.
-
 - **T009** — [2026-06-11] **M6** — интеграционный тестовый контур на
   реальном аккаунте (§13.2): маркер `integration`, реквизиты из env,
   сценарии live/multicast/рестарт/catch-up/дедуп, самоочистка.

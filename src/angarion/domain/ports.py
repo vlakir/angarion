@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from pydantic import AwareDatetime
+    from pydantic import AwareDatetime, BaseModel
 
     from angarion.domain.models import (
         AnalyticsEvent,
@@ -284,6 +284,16 @@ class ProcessorPort(Protocol):
     """Контракт процессора (§10.1)."""
 
     name: str
+
+    def config_model(self) -> type[BaseModel] | None:
+        """
+        Pydantic-схема ``processor_config`` для валидации на старте
+        (FR-0 T021; по образцу ``account_config_model`` адаптера §12.11),
+        либо ``None`` — процессор без конфигурации (валидация
+        пропускается). ``build_app`` валидирует конфиг до приёма событий:
+        невалидный → ``ConfigError`` при старте, а не на первом событии.
+        """
+        ...
 
     async def process(
         self,

@@ -18,6 +18,7 @@ from angarion.application.llm import (
     HttpxLlmClient,
     LlmHttpResult,
     LlmProcessor,
+    LlmProcessorConfig,
     LlmTransportError,
 )
 from angarion.domain.errors import ConfigError, ProcessingError
@@ -92,6 +93,10 @@ class TestLlmProcessor:
     def test_registered_object_is_processor(self) -> None:
         assert isinstance(LLM, ProcessorPort)
         assert LLM.name == 'llm'
+
+    def test_config_model_returns_schema(self) -> None:
+        """FR-0 (T021): хук отдаёт ``LlmProcessorConfig`` для валидации на старте."""
+        assert LLM.config_model() is LlmProcessorConfig
 
     async def test_delivers_to_all_targets(self) -> None:
         proc, fake = make_proc([ok('сводка')])

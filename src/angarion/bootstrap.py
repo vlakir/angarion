@@ -279,6 +279,27 @@ def _check_subscription(pipeline: str, cfg: PipelineConfig, account: _Account) -
             raise ConfigError(msg)
 
 
+def _validate_processor_config(
+    pipeline: str, cfg: PipelineConfig, processor: ProcessorPort
+) -> None:
+    """
+    FR-0 (T021): валидировать ``processor_config`` на старте через хук
+    ``config_model`` процессора — невалидный конфиг падает ``ConfigError``
+    при ``build_app``, до приёма событий, а не на первом событии.
+    """
+    model = processor.config_model()
+    if model is None:
+        return
+    try:
+        model.model_validate(cfg.processor_config)
+    except ValidationError as exc:
+        msg = (
+            f'пайплайн {pipeline!r}: processor_config процессора '
+            f'{cfg.processor!r} не проходит схему: {exc}'
+        )
+        raise ConfigError(msg) from exc
+
+
 def _build_pipelines(
     settings: AngarionSettings, accounts: dict[str, _Account]
 ) -> tuple[list[RouteSpec], dict[str, PipelineBinding]]:
@@ -287,6 +308,7 @@ def _build_pipelines(
     bindings: dict[str, PipelineBinding] = {}
     for name, cfg in settings.pipelines.items():
         processor = processors.get_processor(cfg.processor)
+        _validate_processor_config(name, cfg, processor)
         sources: list[Address] = []
         for ep in cfg.sources:
             account = _endpoint_account(name, 'источник', ep, accounts)

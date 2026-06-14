@@ -51,6 +51,10 @@ class FunctionProcessor(BaseModel):
     name: str
     fn: ProcessorFn
 
+    def config_model(self) -> type[BaseModel] | None:
+        """Функция-процессор не объявляет схему конфига (FR-0 T021)."""
+        return None
+
     async def process(
         self,
         event: InboundEvent,
@@ -175,9 +179,10 @@ class TemplateProcessor(BaseModel):
 
     ``processor_config`` разбирается и шаблоны **компилируются** один раз
     на пайплайн, результат кэшируется (W1: worker конкурентен = 1,
-    процессор — синглтон, конфиг фиксирован при старте). Ошибка структуры
-    конфига или синтаксиса шаблона всплывает на первом событии как
-    ``ConfigError`` (не на старте — см. W1/Out of Scope).
+    процессор — синглтон, конфиг фиксирован при старте). Структура конфига
+    валидируется на старте через ``config_model`` (FR-0 T021,
+    ``build_app``); синтаксис Jinja2-шаблона всплывает ``ConfigError`` уже
+    лениво, на первом событии (компиляция в ``_config``).
 
     Конструкция композиции (A-2): JSON-контракт DTO не действует.
     """
@@ -186,6 +191,15 @@ class TemplateProcessor(BaseModel):
 
     name: str = 'template'
     _compiled: dict[str, _CompiledTemplates] = PrivateAttr(default_factory=dict)
+
+    def config_model(self) -> type[BaseModel] | None:
+        """
+        Схема ``processor_config`` для fail-fast на старте (FR-0 T021).
+
+        Валидируется структура; синтаксис Jinja2-шаблонов по-прежнему
+        компилируется лениво на первом событии (см. ``_config``, W1).
+        """
+        return TemplateProcessorConfig
 
     def _config(self, ctx: PipelineContextData) -> _CompiledTemplates:
         """Разобрать, скомпилировать и закэшировать шаблоны по пайплайну (W1)."""

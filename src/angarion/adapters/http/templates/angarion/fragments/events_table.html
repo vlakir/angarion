@@ -1,0 +1,17 @@
+<table>
+  <thead>
+    <tr><th>Время</th><th>Вид</th><th>Пайплайн</th><th>event_uid</th></tr>
+  </thead>
+  <tbody>
+    {% for event in events %}
+    <tr>
+      <td>{{ event.at.isoformat() }}</td>
+      <td>{{ event.kind }}</td>
+      <td>{{ event.pipeline or '—' }}</td>
+      <td>{{ event.event_uid or '—' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4"><em>событий нет</em></td></tr>
+    {% endfor %}
+  </tbody>
+</table>
