@@ -1,0 +1,46 @@
+# Пример angarion: stateful-процессор «дайджест» с LLM-саммари.
+#
+# Дайджест накапливает входящие сообщения из группы-источника и при
+# срабатывании условия сброса (по числу n или возрасту накопления
+# max_age_s) прогоняет батч через локальную OpenAI-совместимую модель
+# (Ollama) и единой сводкой шлёт в группу-цель.
+#
+# Скопируй и подставь свои значения. Секреты (api_id/api_hash, ключ
+# шифрования сессии) — НЕ здесь, а через переменные окружения (см.
+# README.md). В TOML — только не-секретные параметры.
+
+[accounts.main]
+messenger = "telegram"
+# api_id / api_hash подаются через env:
+#   ANGARION_ACCOUNTS__MAIN__API_ID, ANGARION_ACCOUNTS__MAIN__API_HASH
+
+[storage]
+backend = "sqlite"               # обязателен: сюда login кладёт сессию
+path = "angarion-data/app.db"    # рантайм-каталог (git-ignored)
+
+[queue]
+backend = "memory"               # для примера; боевой — persistqueue
+
+[pipelines.digest]
+processor = "digest"             # кастомный процессор примера (processor.py)
+events = ["message_new"]         # дайджест собирает только новые сообщения
+# Источник и цель — числовые id супергрупп (вида -100…) или @username.
+# Аккаунт должен состоять в обеих группах.
+sources = [{ account = "main", chat_id = "-100AAAAAAAAAA" }]
+targets = [{ account = "main", chat_id = "-100BBBBBBBBBB" }]
+
+# Конфиг дайджеста (processor_config). Сброс — по числу n ИЛИ возрасту
+# накопления max_age_s (что наступит раньше). Возраст проверяется только
+# на приходящем событии: worker событийный, без фонового шедулера — при
+# затишье дайджест ждёт следующего сообщения.
+[pipelines.digest.processor_config]
+n = 5                            # сброс после 5 накопленных сообщений
+max_age_s = 300                  # …или если батчу больше 5 минут
+recent_cap = 100                 # окно дедупа сброшенных ключей (at-least-once)
+base_url = "http://localhost:11434/v1"
+model = "qwen2.5:3b"
+system_prompt = "Ты — редактор. Кратко и по делу суммируй переписку в группе на русском."
+user_prompt = "Сделай связный дайджест из сообщений ниже (по пунктам, без воды):"
+# api_key_env = "OLLAMA_API_KEY"  # имя env с ключом; для локальной Ollama не нужно
+# temperature = 0.3
+# timeout_s = 60
