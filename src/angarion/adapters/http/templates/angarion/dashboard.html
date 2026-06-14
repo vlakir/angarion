@@ -1,0 +1,35 @@
+{% extends "angarion/base.html" %}
+{% block title %}angarion — dashboard{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Dashboard</h2>
+  <p>Состояние конвейера; блоки обновляются автоматически.</p>
+</hgroup>
+
+<div class="grid">
+  <article hx-get="/ui/fragments/queue" hx-trigger="every 5s">
+    {% include "angarion/fragments/queue.html" %}
+  </article>
+  <article hx-get="/ui/fragments/event-counts" hx-trigger="every 5s">
+    {% include "angarion/fragments/event_counts.html" %}
+  </article>
+</div>
+
+<article hx-get="/ui/fragments/cursors" hx-trigger="every 10s">
+  {% include "angarion/fragments/cursors.html" %}
+</article>
+
+<article>
+  <h3>Пайплайны</h3>
+  <table>
+    <thead><tr><th>Pipeline</th></tr></thead>
+    <tbody>
+      {% for pipeline in pipelines %}
+      <tr><td>{{ pipeline }}</td></tr>
+      {% else %}
+      <tr><td><em>нет пайплайнов</em></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endblock %}

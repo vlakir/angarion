@@ -305,6 +305,42 @@ class TestReferentialIntegrity:
             build_app(settings)
 
 
+class TestProcessorConfigValidation:
+    """FR-0 (T021): ``processor_config`` валидируется на старте, до событий."""
+
+    def test_invalid_processor_config_fails_fast(self) -> None:
+        """Лишний ключ в config процессора ``template`` (extra='forbid')."""
+        pipeline = make_pipeline(
+            processor='template',
+            processor_config={'template': '{{ text }}', 'bogus': 1},
+        )
+        with pytest.raises(ConfigError, match='processor_config.*template'):
+            build_app(make_settings(pipelines={'digest': pipeline}))
+
+    def test_missing_required_key_fails_fast(self) -> None:
+        """Отсутствие обязательного ``template`` → падение при build_app."""
+        pipeline = make_pipeline(
+            processor='template', processor_config={'edited': '{{ text }}'}
+        )
+        with pytest.raises(ConfigError, match='processor_config'):
+            build_app(make_settings(pipelines={'digest': pipeline}))
+
+    def test_valid_processor_config_builds(self) -> None:
+        pipeline = make_pipeline(
+            processor='template', processor_config={'template': '{{ text }}'}
+        )
+        app = build_app(make_settings(pipelines={'digest': pipeline}))
+        assert isinstance(app, AngarionApp)
+
+    def test_processor_without_config_model_skips_validation(self) -> None:
+        """``passthrough`` (config_model() → None): любой config игнорируется."""
+        pipeline = make_pipeline(
+            processor='passthrough', processor_config={'anything': 'goes'}
+        )
+        app = build_app(make_settings(pipelines={'digest': pipeline}))
+        assert isinstance(app, AngarionApp)
+
+
 class TestCapabilitiesMatrix:
     """SC-2: четыре ветки деградации §12.10 (webhook-ветка — M5, A-1)."""
 

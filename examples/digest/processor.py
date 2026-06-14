@@ -147,6 +147,10 @@ class DigestProcessor(BaseModel):
     now: SkipValidation[Callable[[], datetime]] = _now_utc
     _config_cache: dict[str, DigestConfig] = PrivateAttr(default_factory=dict)
 
+    def config_model(self) -> type[BaseModel] | None:
+        """Схема ``processor_config`` для fail-fast на старте (FR-0 T021)."""
+        return DigestConfig
+
     def _config(self, ctx: PipelineContextData) -> DigestConfig:
         """Разобрать и закэшировать ``processor_config`` по пайплайну."""
         cached = self._config_cache.get(ctx.pipeline)

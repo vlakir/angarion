@@ -121,10 +121,14 @@ class TestAdapterPlugin:
         with pytest.raises(ValidationError):
             plugin.name = 'other'
 
-    def test_no_webhook_router_in_m1(self) -> None:
-        """A-1: поле webhook_router отложено до M5 — extra=forbid её отвергает."""
-        with pytest.raises(ValidationError):
-            make_plugin(webhook_router=object())
+    def test_webhook_router_defaults_none(self) -> None:
+        """M5 (T022): поле есть, по умолчанию None (адаптеры без webhook)."""
+        assert make_plugin().webhook_router is None
+
+    def test_webhook_router_accepts_arbitrary_object(self) -> None:
+        """Типизировано Any (а не APIRouter) ради §14.9 — ядро fastapi-free."""
+        sentinel = object()
+        assert make_plugin(webhook_router=sentinel).webhook_router is sentinel
 
     def test_account_config_model_validates_accounts(self) -> None:
         """Схема секции [accounts.*] принадлежит плагину (§12.11)."""

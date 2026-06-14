@@ -61,7 +61,25 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
      разработчика, иначе теряется фокус (классическое WIP-limit
      правило из Kanban). -->
 
+- **T008** — **M5** — Web API + Web UI + Auth + Admin (умбрелла этапа;
+  `specs/T008-m5-web/`). [взят 2026-06-14] Spec/plan/analyze готовы
+  (статус Analyzed, 🔴 нет). Дроблён на 4 группы (plan.md §1):
+  **T022** Web core (+spec/plan, +свёрнутый T021 `config_model`) →
+  **T023** Auth → **T024** Ops (динамика+outbox) → **T025** Viz+Docs.
+  Каждая — своя ветка/PR/сессия; поднимается в `Doing` при взятии.
+  При релизе 1.0.0 CHANGELOG содержит «T008 (вкл. бывш. T021),
+  T022–T025» (уникальность T-ID).
+
 ## Done
+
+- **T022** — **M5/A** — Web core (ветка `T022-web-core`). [closed
+  2026-06-14, PR #16] Все три фазы готовы: (1) T021 `config_model`
+  fail-fast → (2) API core (`create_app`, `AngarionDeps`, DI, `/api/v1`,
+  webhook-роутеры) → (3) UI core (SSR Jinja2+htmx+Pico, `/ui`,
+  `/ui/events`, `/ui/fragments/*`, офлайн-ассеты, контракт страниц
+  `Page`/`create_app(pages=…)`). Один squash-PR на всю группу.
+  Acceptance spec §4 в части A закрыт (bootstrap fail-fast
+  `config_model`; auth-матрица и реестр — в T023). Дальше **T023** Auth.
 
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->

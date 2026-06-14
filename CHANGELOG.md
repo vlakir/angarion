@@ -27,6 +27,47 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 <!-- Здесь накапливаются изменения для следующего milestone (M5). -->
 
+### Added
+- Web UI core (**T022**/M5, §12.6, фаза 3): SSR-дашборд на Jinja2 + htmx
+  + Pico.css, **без Node и сборки**. Страницы `GET /ui` (дашборд:
+  глубина очереди, события за 24 ч по видам, курсоры источников, таблица
+  пайплайнов — блоки автообновляются htmx-поллингом), `GET /ui/events`
+  (журнал аналитики с фильтрами `kind`/`pipeline`), `GET /ui/fragments/*`
+  (партиалы для поллинга). Ассеты `pico.min.css` (2.1.1) и `htmx.min.js`
+  (2.0.10) упакованы и отдаются `StaticFiles` по `/ui/static/*` —
+  офлайн-режим, без CDN (провенанс/лицензии в `static/README.md`).
+  Контракт расширения: базовый layout `angarion/base.html`,
+  `ChoiceLoader` для пользовательских шаблонов, дескриптор
+  `Page(title, path, router)` + `create_app(deps, pages=[Page(...)])` —
+  страница монтируется и автоматически появляется в навигации
+  (ADR 2026-06-14). `/ui/pipelines` и auth — последующие фазы M5.
+- Web API core (**T022**/M5, §12.5, фаза 2): HTTP — второй
+  driving-адаптер, симметричный Telethon-listener'у. Пакет
+  `angarion.adapters.http` (extra `web`, FastAPI вне ядра §14.9):
+  фабрика `create_app(deps, *, routers, title)` кладёт контейнер портов
+  `AngarionDeps` в `app.state`; встроенный read-only роутер `/api/v1`
+  (`GET /health` без портов, `GET /diagnostics` — глубина очереди,
+  события за 24 ч по видам, курсоры источников, список пайплайнов,
+  uptime; `GET /events` с фильтрами `kind`/`pipeline`/`limit`).
+  Опубликованы типизированные DI-зависимости поверх портов
+  (`AnalyticsDep`, `RegistryDep`, `StateDep`, `QueueDep`, `CursorsDep`)
+  как публичный API для пользовательских ручек. ASGI-тесты на
+  InMemory-портах (`httpx.ASGITransport`), без сети/БД/Telegram.
+- Поле `webhook_router` в контракт `AdapterPlugin` (§12.11): роутеры
+  адаптеров `push_transport="webhook"` монтируются `create_app` из
+  `deps.webhook_routers` (закрыт долг M3). Типизировано `Any`, чтобы
+  ядро осталось fastapi-free (§14.9, ADR 2026-06-14).
+
+### Changed
+- Контракт `ProcessorPort` получил хук `config_model` (бывш. **T021**, в
+  составе **T022**/M5, по образцу `account_config_model` адаптера §12.11):
+  `processor_config` каждого пайплайна валидируется на старте
+  (`build_app`), до приёма событий — невалидный конфиг падает
+  `ConfigError` при сборке, а не на первом событии (fail-fast §12.7,
+  FR-0). Встроенные `template`/`llm` объявляют схему; `passthrough` и
+  функция-процессоры — без схемы (валидация пропускается). Синтаксис
+  Jinja2-шаблонов/промптов по-прежнему компилируется лениво.
+
 ## [0.2.0] — 2026-06-14
 
 Первый функциональный релиз: ядро библиотеки и конвейер этапов M1–M4

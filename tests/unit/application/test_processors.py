@@ -8,6 +8,7 @@ from app_factories import make_context, make_event, make_services, make_target
 from angarion.application import processors
 from angarion.application.processors import (
     FunctionProcessor,
+    TemplateProcessorConfig,
     get_processor,
     processor,
     register,
@@ -202,3 +203,18 @@ class TestTemplate:
         second = await proc.process(make_event(text='b'), ctx, svc)
         assert first.outbound[0].text == 'a'
         assert second.outbound[0].text == 'b'
+
+    def test_config_model_returns_schema(self) -> None:
+        """FR-0 (T021): хук отдаёт модель для валидации на старте."""
+        assert get_processor('template').config_model() is TemplateProcessorConfig
+
+
+class TestConfigModelHook:
+    """FR-0 (T021): хук ``config_model`` контракта ``ProcessorPort``."""
+
+    def test_passthrough_has_no_config_model(self) -> None:
+        assert get_processor('passthrough').config_model() is None
+
+    def test_function_processor_has_no_config_model(self) -> None:
+        proc = FunctionProcessor(name='noop', fn=echo)
+        assert proc.config_model() is None

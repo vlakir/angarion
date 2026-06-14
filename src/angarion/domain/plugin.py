@@ -2,17 +2,18 @@
 Контракты плагинов (§12.11 ТЗ): адаптер платформы, альтернативные
 очереди и хранилища.
 
-Поле ``webhook_router`` сознательно отсутствует в M1 (A-1 спеки
-T002): оно типизировано классом FastAPI и появится аддитивно в M5
-вместе с HTTP-адаптером; ядро остаётся без инфраструктурных
-зависимостей (§14.9).
+Поле ``webhook_router`` добавлено в M5 (T022) аддитивно: типизировано
+``Any`` (а не классом FastAPI), чтобы ядро осталось без
+инфраструктурных зависимостей (§14.9) — http-адаптер приводит его к
+``APIRouter`` при монтировании (ADR 2026-06-14, продолжение решения
+2026-06-11).
 
 Модуль без ``from __future__ import annotations``: аннотации
 pydantic-моделей вычисляются в runtime.
 """
 
 from collections.abc import Callable
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
@@ -78,6 +79,13 @@ class AdapterPlugin(BaseModel):
     """Pydantic-схема секции ``[accounts.*]`` этой платформы."""
     make_listener: ListenerFactory
     make_sender: SenderFactory
+    webhook_router: Any = None
+    """
+    Роутер webhook-listener'а платформы (``push_transport="webhook"``,
+    §12.11): монтируется ``create_app`` http-адаптера. Тип — ``Any``
+    (фактически ``fastapi.APIRouter | None``): ядро не зависит от FastAPI
+    (§14.9, ADR 2026-06-14), потребитель приводит к ``APIRouter``.
+    """
 
 
 class StorageBundle(BaseModel):
