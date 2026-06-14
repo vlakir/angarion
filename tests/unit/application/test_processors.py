@@ -98,3 +98,107 @@ class TestPassthrough:
         assert result.verdict is Verdict.DROP
         assert result.outbound == []
         assert result.note is not None
+
+
+class TestTemplate:
+    """Встроенный процессор ``template`` (§10.2, FR §3 спеки T007).
+
+    Каждый тест использует своё имя пайплайна: процессор — синглтон с
+    кэшем конфига по пайплайну (W1), один пайплайн = один конфиг.
+    """
+
+    def test_registered_as_builtin(self) -> None:
+        proc = get_processor('template')
+        assert isinstance(proc, ProcessorPort)
+        assert proc.name == 'template'
+
+    async def test_delivers_rendered_text_to_all_targets(self) -> None:
+        """§10.2: рендер базового шаблона → OutboundMessage по ключу на цель."""
+        proc = get_processor('template')
+        event = make_event(text='мир')
+        targets = [make_target('-100111'), make_target('-100222')]
+        ctx = make_context(
+            pipeline='tmpl_deliver',
+            targets=targets,
+            settings={'template': 'Эхо: {{ text }}'},
+        )
+        result = await proc.process(event, ctx, make_services('tmpl_deliver'))
+        assert result.verdict is Verdict.DELIVER
+        assert [msg.text for msg in result.outbound] == ['Эхо: мир', 'Эхо: мир']
+        expected_keys = [
+            make_idempotency_key('tmpl_deliver', event, spec.target, n)
+            for n, spec in enumerate(targets)
+        ]
+        assert [msg.idempotency_key for msg in result.outbound] == expected_keys
+
+    async def test_edited_uses_edited_template(self) -> None:
+        proc = get_processor('template')
+        event = make_event(
+            kind=EventKind.MESSAGE_EDITED, text='новый', previous_text='старый'
+        )
+        ctx = make_context(
+            pipeline='tmpl_edited',
+            settings={
+                'template': 'NEW {{ text }}',
+                'edited': '{{ previous_text }} → {{ text }}',
+            },
+        )
+        result = await proc.process(event, ctx, make_services('tmpl_edited'))
+        assert result.outbound[0].text == 'старый → новый'
+
+    async def test_edited_falls_back_to_base_template(self) -> None:
+        proc = get_processor('template')
+        event = make_event(kind=EventKind.MESSAGE_EDITED, text='t')
+        ctx = make_context(
+            pipeline='tmpl_fallback', settings={'template': 'base {{ text }}'}
+        )
+        result = await proc.process(event, ctx, make_services('tmpl_fallback'))
+        assert result.outbound[0].text == 'base t'
+
+    async def test_deleted_uses_deleted_template(self) -> None:
+        """N1: для DELETED рендерится свой шаблон, если задан."""
+        proc = get_processor('template')
+        event = make_event(
+            kind=EventKind.MESSAGE_DELETED, text=None, external_id='7'
+        )
+        ctx = make_context(
+            pipeline='tmpl_deleted',
+            settings={'template': '{{ text }}', 'deleted': 'удалено #{{ external_id }}'},
+        )
+        result = await proc.process(event, ctx, make_services('tmpl_deleted'))
+        assert result.verdict is Verdict.DELIVER
+        assert result.outbound[0].text == 'удалено #7'
+
+    async def test_empty_render_dropped(self) -> None:
+        """N1: пустой рендер (DELETED без deleted-шаблона) → DROP."""
+        proc = get_processor('template')
+        event = make_event(kind=EventKind.MESSAGE_DELETED, text=None)
+        ctx = make_context(pipeline='tmpl_empty', settings={'template': '{{ text }}'})
+        result = await proc.process(event, ctx, make_services('tmpl_empty'))
+        assert result.verdict is Verdict.DROP
+        assert result.outbound == []
+        assert result.note is not None
+
+    async def test_invalid_config_raises_config_error(self) -> None:
+        """W1: некорректный processor_config → ConfigError на первом событии."""
+        proc = get_processor('template')
+        ctx = make_context(pipeline='tmpl_invalid', settings={})
+        with pytest.raises(ConfigError, match='processor_config'):
+            await proc.process(make_event(), ctx, make_services('tmpl_invalid'))
+
+    async def test_bad_template_syntax_raises_config_error(self) -> None:
+        """Битый синтаксис Jinja2 в конфиге → ConfigError (не TemplateSyntaxError)."""
+        proc = get_processor('template')
+        ctx = make_context(pipeline='tmpl_syntax', settings={'template': '{{ text '})
+        with pytest.raises(ConfigError, match='processor_config'):
+            await proc.process(make_event(), ctx, make_services('tmpl_syntax'))
+
+    async def test_config_cached_per_pipeline(self) -> None:
+        """W1: повторное событие пайплайна берёт конфиг из кэша."""
+        proc = get_processor('template')
+        ctx = make_context(pipeline='tmpl_cache', settings={'template': '{{ text }}'})
+        svc = make_services('tmpl_cache')
+        first = await proc.process(make_event(text='a'), ctx, svc)
+        second = await proc.process(make_event(text='b'), ctx, svc)
+        assert first.outbound[0].text == 'a'
+        assert second.outbound[0].text == 'b'

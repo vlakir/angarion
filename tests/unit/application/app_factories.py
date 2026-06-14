@@ -85,11 +85,15 @@ def make_target(chat_id: str = '-100999') -> TargetSpec:
 
 
 def make_context(
-    pipeline: str = 'digest', targets: list[TargetSpec] | None = None
+    pipeline: str = 'digest',
+    targets: list[TargetSpec] | None = None,
+    settings: dict[str, object] | None = None,
 ) -> PipelineContextData:
     if targets is None:
         targets = [make_target()]
-    return PipelineContextData(pipeline=pipeline, targets=targets)
+    return PipelineContextData(
+        pipeline=pipeline, targets=targets, settings=settings or {}
+    )
 
 
 def make_outbound(**overrides: object) -> OutboundMessage:

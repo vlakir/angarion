@@ -26,6 +26,19 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 ## [Unreleased]
 
 ### Added
+- LLM-процессор и `template`-процессор, этап M4 (T007): первые
+  **трансформирующие** встроенные процессоры. `llm` обрабатывает текст
+  события через OpenAI-совместимый endpoint (`/v1/chat/completions`,
+  `httpx`): Jinja2-промпты `system`/`user` (+ опц. пер-видовые `user`),
+  ключ из env по имени `api_key_env` (не в TOML, §17.7), tenacity-ретраи
+  на сети/`5xx`/`429` с уважением `Retry-After` (потолок `timeout_s`),
+  `4xx≠429` без ретраев → `ProcessingError`; HTTP-вызов за тонкой
+  границей (`LlmHttpClientPort`) — тестируется без сети. `template`
+  детерминированно переписывает событие Jinja2-шаблоном по его полям
+  (база + опц. `edited`/`deleted`), закрывая долг C-3 из M2. Оба — под
+  entry points `angarion.processors`; `llm` — extra `angarion[llm]`
+  (`httpx`+`tenacity`), `jinja2` — core (`template` доступен из коробки).
+  Дайджест (§10.3) и user-facing примеры — отдельная задача T019.
 - Пример `examples/forward/` (T018): пересылка новых сообщений из одной
   группы Telegram в другую процессором `passthrough` — конфиг `app.toml`,
   скрипт «всё в одном» `run.sh` (идемпотентные migrate/login/run, рантайм

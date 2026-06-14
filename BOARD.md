@@ -68,6 +68,17 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 
 <!-- T001, T011 перенесены в CHANGELOG.md [0.1.0] — 2026-06-11. -->
 
+- **T007** — **M4** — процессоры `llm` (OpenAI-совместимый endpoint,
+  httpx, Jinja2-промпты, `api_key_env`, tenacity-ретраи) + `template`
+  (Jinja2, закрывает долг C-3) (`specs/T007-m4-llm-processor/spec.md`,
+  ветка `T007-m4-llm-processor`). Реализован 3 фазами (Q8): Jinja2-хелпер
+  + `template`, `llm` (тонкая граница `LlmHttpClientPort` + httpx +
+  tenacity), entry points + Update. Acceptance (§16 M4): unit-тесты
+  `llm`/`template` без сети зелёные (coverage llm.py 99%, всего 96%);
+  ручной прогон через локальную модель (Ollama) — N5. Дайджест и примеры
+  вынесены в T019; startup-валидация `processor_config` (W1) — в T021
+  [closed 2026-06-14, текущий PR].
+
 - **T018** — [2026-06-13] Пример `examples/forward/`: пересылка новых
   сообщений из группы A в B (passthrough) — `app.toml` + скрипт
   «всё в одном» `run.sh` (idempotent login/migrate/run, рантайм в

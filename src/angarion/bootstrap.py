@@ -176,12 +176,26 @@ def load_processors() -> None:
     Зарегистрировать процессоры из entry points (§10.1, FR-17).
 
     Идемпотентно: объект, уже зарегистрированный под своим именем
-    (например, встроенный ``passthrough``, регистрируемый при импорте
+    (встроенные ``passthrough``/``template``, регистрируемые при импорте
     модуля), пропускается; чужой объект под занятым именем —
     ``ConfigError`` из реестра.
+
+    Entry point с неустановленной зависимостью (опциональный extra,
+    например ``llm`` без ``angarion[llm]``) пропускается с
+    предупреждением, как в ``_load_group`` (C-1 T003): модуль процессора
+    без extra не импортируется.
     """
     for ep in entry_points(group=PROCESSORS_GROUP):
-        obj = ep.load()
+        try:
+            obj = ep.load()
+        except ModuleNotFoundError as exc:
+            _log.warning(
+                'entry_point_unavailable',
+                group=PROCESSORS_GROUP,
+                name=ep.name,
+                error=str(exc),
+            )
+            continue
         if not isinstance(obj, ProcessorPort):
             msg = (
                 f'entry point {ep.name!r} группы {PROCESSORS_GROUP!r} '

@@ -209,6 +209,23 @@ class TestPluginLoading:
         with pytest.raises(ConfigError, match='дубликат'):
             load_plugins()
 
+    def test_processor_entry_point_with_missing_extra_is_skipped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Процессор-entry point без extra (llm без httpx) — skip + warning."""
+        registry = {
+            name: proc
+            for name, proc in processors.registered().items()
+            if name != 'llm'
+        }
+        monkeypatch.setattr(processors, '_registry', registry)
+        broken = FakeEntryPoint(
+            'llm', None, error=ModuleNotFoundError("No module named 'httpx'")
+        )
+        patch_entry_points(monkeypatch, 'angarion.processors', [broken])
+        load_processors()  # не падает
+        assert 'llm' not in processors.registered()
+
     def test_processor_entry_point_wrong_type_fails(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
