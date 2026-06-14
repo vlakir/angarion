@@ -75,12 +75,55 @@ uv run angarion run --config app.toml     # боевой запуск конве
 | M1 | Домен, порты, application-слой, InMemory-адаптеры, конфиг | ✅ готов |
 | M2 | Персистентность: persist-queue, SQLAlchemy + Alembic, DLQ, `angarion.testing` | ✅ готов |
 | M3 | Telegram-адаптер (Telethon): live + catch-up + sender, CLI | ✅ готов |
-| M4 | LLM-процессор, stateful-процессоры | ⏳ |
+| M4 | LLM-процессор + `template`-процессор | ✅ готов |
 | M5 | Web API + Web UI + Auth + админ-операции | ⏳ |
 | M6 | Интеграционный тестовый контур на реальном аккаунте | ⏳ |
 | M7 | Медиа; второй мессенджер (Matrix) | ⏳ |
 
 Текущая очередь задач — [BOARD.md](BOARD.md) и [BACKLOG.md](BACKLOG.md).
+
+## Встроенные процессоры
+
+Процессор пайплайна задаётся в `[pipelines.*]`: `processor = "<имя>"`,
+параметры — в `[pipelines.*.processor_config]`. Встроенные:
+
+- **`passthrough`** — ретранслирует текст события как есть; `text=None`
+  (удаление без восстановления) → drop.
+- **`template`** — детерминированно переписывает событие Jinja2-шаблоном
+  по его полям; `jinja2` в core, доступен из коробки. `processor_config`:
+  `template` (базовый) + опц. `edited`/`deleted` (fallback на базовый).
+  Пустой результат рендера → drop. Контекст шаблона — поля события
+  (`text`, `previous_text`, `kind`, `origin`, `sender_name`, `external_id`,
+  `event_at`, вложенные `source.chat_id` и др.; полный список полей —
+  `CONCEPT.md` §4, модель `InboundEvent`); `None` → пустая строка, без
+  HTML-экранирования.
+- **`llm`** — обрабатывает текст через OpenAI-совместимую модель
+  (Ollama / LM Studio / vLLM / облако). Требует extra:
+  `uv add "angarion[llm]"`. `processor_config`:
+
+  ```toml
+  [pipelines.summarize.processor_config]
+  base_url = "http://localhost:11434/v1"   # OpenAI-совместимый endpoint
+  model = "qwen2.5:3b"
+  system_prompt = "Ты — редактор. Делай краткую выжимку."
+  user_prompt = "Сократи до одного абзаца:\n\n{{ text }}"
+  # user_prompt_edited / user_prompt_deleted — опц. пер-видовые промпты
+  # api_key_env = "OPENAI_API_KEY"  # ИМЯ env-переменной с ключом (не сам ключ);
+  #                                 # без поля — запрос без авторизации (локальные модели)
+  timeout_s = 60
+  max_attempts = 3
+  # temperature / max_tokens — опц.
+  ```
+
+  Промпты — те же Jinja2-поля события, что у `template`. Ключ берётся из
+  env по имени `api_key_env` — **в TOML секрет не пишется** (§17.7).
+  Сеть/`5xx`/`429` ретраятся (уважая `Retry-After`); `text=None` и пустой
+  ответ модели → drop. Под at-least-once повторная обработка может вызвать
+  модель повторно (иной ответ, расход токенов) — дублирующую доставку
+  гасит идемпотентность выхода.
+
+Пользовательские процессоры регистрируются через entry point
+`angarion.processors` (та же механика, что у встроенных).
 
 ## Разработка
 
