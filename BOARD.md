@@ -68,6 +68,15 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 
 <!-- T001, T011 перенесены в CHANGELOG.md [0.1.0] — 2026-06-11. -->
 
+- **T019** — **M4-пример** — stateful-процессор «дайджест» с LLM-саммари
+  (`examples/digest/`): накопление в `svc.state` + сброс по `n`/`max_age_s`
+  (событийный) → LLM-сводка на цели; идемпотентность под at-least-once
+  (`seen` + хвост `recent`). Кастомный процессор регистрируется
+  in-process через `run.py` (entry-point-путь в README); ruff
+  `namespace-packages` для одиночных скриптов примера (ADR 2026-06-14).
+  Unit-тест в `tests/unit/examples/` (вне `--cov=src`), `examples/forward`
+  сверён. Одна фаза, один PR [closed 2026-06-14, текущий PR].
+
 - **T007** — **M4** — процессоры `llm` (OpenAI-совместимый endpoint,
   httpx, Jinja2-промпты, `api_key_env`, tenacity-ретраи) + `template`
   (Jinja2, закрывает долг C-3) (`specs/T007-m4-llm-processor/spec.md`,

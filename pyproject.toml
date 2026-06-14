@@ -125,6 +125,9 @@ unsafe-fixes = true
 line-length = 88
 indent-width = 4
 target-version = "py312"
+# Каталог примера — намеренно НЕ пакет (одиночные скрипты processor.py /
+# run.py без __init__.py): подавляет ложный INP001 на них, не трогая остальное.
+namespace-packages = ["examples/digest"]
 exclude = [
     "**/migrations",
     ".git",
