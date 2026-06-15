@@ -24,14 +24,19 @@ Pydantic здесь не применим: декларативный маппи
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Final
 
-from sqlalchemy import ForeignKeyConstraint, Index, String, TypeDecorator
+from sqlalchemy import ForeignKeyConstraint, Index, String, TypeDecorator, Uuid
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Dialect
+
+_ROLE_ADMIN: Final = 'admin'
+_ROLE_VIEWER: Final = 'viewer'
+"""Значения роли в ``UserRow.role`` (контракт с auth-слоём §12.7)."""
 
 
 class UTCDateTime(TypeDecorator[datetime]):
@@ -207,3 +212,75 @@ class DeadLetterRow(Base):
     envelope: Mapped[str]
     error: Mapped[str]
     failed_at: Mapped[datetime]
+
+
+class UserRow(Base):
+    """
+    Пользователь web-доступа (§12.7, M5/B T023): саморегистрация +
+    одобрение администратором.
+
+    ``id`` — UUID (нативный ``sa.Uuid``: CHAR(32) в SQLite); ``login`` —
+    уникальный логин входа (fastapi-users оперирует им как «email»-полем
+    через адаптер, фаза 2). ``hashed_password``/``is_active`` названы по
+    контракту fastapi-users; ``is_active=False`` — заявка ждёт одобрения
+    (войти нельзя). ``role`` — ``admin``/``viewer`` строкой (значения
+    валидирует auth-слой, БД хранит как TEXT). ``approved_at``/
+    ``approved_by`` — аудит одобрения (NULL у заявки и у bootstrap-админа).
+    """
+
+    __tablename__ = 'users'
+
+    # Соответствие протоколу fastapi-users (``UserProtocol[Any]``) под
+    # mypy --strict требует плоских аннотаций членов протокола — дескриптор
+    # ``Mapped`` под ``Any``-параметром bound-проверку не проходит (тот же
+    # приём в самой fastapi-users: ``SQLAlchemyBaseUserTable``). Поэтому
+    # ``id``/``hashed_password``/``is_active`` и мост-алиасы ``email``/
+    # ``is_superuser``/``is_verified`` объявлены здесь как простые типы для
+    # type-checker'а, а runtime-определения (Mapped-колонки и property без
+    # импорта fastapi-users — storage ниже web-слоя, ADR 2026-06-14) —
+    # в ветке ``else``. ``email`` = ``login``; ``superuser`` ↔ роль
+    # ``admin``; ``verified`` ↔ одобренный (``is_active``). Сеттеры — для
+    # соответствия (mutable) протоколу; в наших потоках не вызываются.
+    if TYPE_CHECKING:
+        id: uuid.UUID
+        hashed_password: str
+        is_active: bool
+        email: str
+        is_superuser: bool
+        is_verified: bool
+    else:
+        id: Mapped[uuid.UUID] = mapped_column(
+            Uuid, primary_key=True, default=uuid.uuid4
+        )
+        hashed_password: Mapped[str]
+        is_active: Mapped[bool]
+
+        @property
+        def email(self) -> str:
+            return self.login
+
+        @email.setter
+        def email(self, value: str) -> None:
+            self.login = value
+
+        @property
+        def is_superuser(self) -> bool:
+            return self.role == _ROLE_ADMIN
+
+        @is_superuser.setter
+        def is_superuser(self, value: bool) -> None:
+            self.role = _ROLE_ADMIN if value else _ROLE_VIEWER
+
+        @property
+        def is_verified(self) -> bool:
+            return self.is_active
+
+        @is_verified.setter
+        def is_verified(self, value: bool) -> None:
+            self.is_active = value
+
+    login: Mapped[str] = mapped_column(unique=True)
+    role: Mapped[str]
+    registered_at: Mapped[datetime]
+    approved_at: Mapped[datetime | None]
+    approved_by: Mapped[str | None]

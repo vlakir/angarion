@@ -1,0 +1,21 @@
+{% extends "angarion/base.html" %}
+{% block title %}angarion — регистрация{% endblock %}
+{% block content %}
+<article>
+  <h2>Заявка на регистрацию</h2>
+  {% if submitted %}
+  <p role="status">Заявка отправлена, дождитесь одобрения администратора.</p>
+  <p><a href="/ui/login">К входу</a></p>
+  {% else %}
+  {% if error %}
+  <p role="alert">{{ error }}</p>
+  {% endif %}
+  <form method="post" action="/ui/register">
+    <input type="text" name="username" placeholder="Логин" required autofocus>
+    <input type="password" name="password" placeholder="Пароль" required>
+    <button type="submit">Отправить заявку</button>
+  </form>
+  <p>Уже есть аккаунт? <a href="/ui/login">Войти</a>.</p>
+  {% endif %}
+</article>
+{% endblock %}

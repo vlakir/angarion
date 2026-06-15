@@ -35,6 +35,8 @@ class AngarionDeps(BaseModel):
     аддитивно в группе C (§12.8/§12.9). ``webhook_routers`` — собранные
     composition root'ом роутеры адаптеров (``push_transport="webhook"``,
     §12.11), которые ``create_app`` монтирует поверх встроенных.
+    ``auth_sessionmaker`` (T023) — ``async_sessionmaker`` user store
+    fastapi-users (§12.7); ``None`` при ``auth="none"``.
 
     Конструкция композиции (A-2): JSON-контракт DTO не действует; frozen
     с ``arbitrary_types_allowed`` — как у ``StorageBundle``.
@@ -49,6 +51,7 @@ class AngarionDeps(BaseModel):
     cursors: CursorStorePort
     settings: AngarionSettings
     webhook_routers: tuple[Any, ...] = ()
+    auth_sessionmaker: Any = None
 
 
 def get_deps(request: Request) -> AngarionDeps:

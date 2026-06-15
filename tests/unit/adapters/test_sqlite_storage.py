@@ -29,7 +29,7 @@ from angarion.testing import (
 )
 
 from angarion.adapters.storage.engine import apply_migrations
-from angarion.adapters.storage.orm import Base, UTCDateTime
+from angarion.adapters.storage.orm import Base, UserRow, UTCDateTime
 from angarion.adapters.storage.plugin import STORAGE_BACKEND, SqliteStorage
 from angarion.config import StorageConfig
 from angarion.domain.errors import ConfigError
@@ -115,6 +115,79 @@ def test_migrations_create_full_m2_schema(db_path: Path) -> None:
     for table in Base.metadata.sorted_tables:
         db_columns = {col['name'] for col in inspector.get_columns(table.name)}
         assert db_columns == {col.name for col in table.columns}, table.name
+    engine.dispose()
+
+
+def test_users_table_roundtrip(db_path: Path) -> None:
+    """M5/B (T023): UserRow переживает миграцию 0003 — UUID/bool/время."""
+    apply_migrations(db_path)
+    engine = sa.create_engine(f'sqlite:///{db_path}')
+    uid = uuid4()
+    registered = datetime.now(UTC)
+    with closing(engine.connect()) as conn:
+        conn.execute(
+            sa.insert(UserRow).values(
+                id=uid,
+                login='root',
+                hashed_password='$argon2$hash',
+                role='admin',
+                is_active=True,
+                registered_at=registered,
+                approved_at=None,
+                approved_by=None,
+            )
+        )
+        conn.commit()
+        row = conn.execute(
+            sa.select(UserRow).where(UserRow.login == 'root')
+        ).one()
+    assert row.id == uid
+    assert row.role == 'admin'
+    assert row.is_active is True
+    assert row.registered_at == registered
+    assert row.approved_at is None
+    engine.dispose()
+
+
+def test_userrow_fastapi_users_bridge() -> None:
+    """Алиасы протокола fastapi-users (email/superuser/verified) — оба конца."""
+    user = UserRow(
+        login='x',
+        hashed_password='h',
+        role='viewer',
+        is_active=False,
+        registered_at=datetime.now(UTC),
+    )
+    assert user.email == 'x'
+    assert user.is_superuser is False
+    assert user.is_verified is False
+    user.email = 'y'
+    assert user.login == 'y'
+    user.is_superuser = True
+    assert user.role == 'admin'
+    user.is_superuser = False
+    assert user.role == 'viewer'
+    user.is_verified = True
+    assert user.is_active is True
+
+
+def test_users_login_is_unique(db_path: Path) -> None:
+    """login уникален — повторная регистрация занятого логина невозможна."""
+    apply_migrations(db_path)
+    engine = sa.create_engine(f'sqlite:///{db_path}')
+    stmt = sa.insert(UserRow).values(
+        login='dup',
+        hashed_password='h',
+        role='viewer',
+        is_active=False,
+        registered_at=datetime.now(UTC),
+    )
+    with closing(engine.connect()) as conn:
+        conn.execute(stmt.values(id=uuid4()))
+        conn.commit()
+        with pytest.raises(sa.exc.IntegrityError):
+            conn.execute(stmt.values(id=uuid4()))
+            conn.commit()
     engine.dispose()
 
 

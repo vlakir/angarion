@@ -14,7 +14,7 @@ pydantic-моделей вычисляются в runtime.
 """
 
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pydantic_settings import (
@@ -166,6 +166,35 @@ class TelegramConfig(BaseModel):
     sender: SenderConfig = SenderConfig()
 
 
+class ApiConfig(BaseModel):
+    """
+    Секция ``[api]`` (M5, §12.5/§12.7): web-адаптер и аутентификация.
+
+    ``host``/``port`` — bind встроенного раннера (uvicorn придёт с
+    ролями процессов §12.9, T024); по умолчанию строго локальный
+    ``127.0.0.1``. ``auth`` — режим: ``"users"`` (fastapi-users, default)
+    или ``"none"`` (dev/локально — синтетический админ; при bind ≠
+    ``127.0.0.1`` bootstrap пишет громкое предупреждение). ``secret`` —
+    ключ подписи JWT, кладётся из env ``ANGARION_API__SECRET`` (секрет,
+    не в TOML); обязателен при ``auth="users"`` — иначе fail-fast в
+    bootstrap (§12.7, FR-0). ``jwt_lifetime`` — срок access-токена (сек).
+    ``cookie_secure`` — флаг ``Secure`` cookie UI (включить за TLS-прокси).
+    ``registration_enabled`` — саморегистрация; ``max_pending_registrations``
+    — лимит заявок, ждущих одобрения (защита от замусоривания).
+    """
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    host: str = '127.0.0.1'
+    port: int = Field(default=8000, ge=1, le=65535)
+    auth: Literal['users', 'none'] = 'users'
+    secret: str = ''
+    jwt_lifetime: int = Field(default=3600, ge=1)
+    cookie_secure: bool = False
+    registration_enabled: bool = True
+    max_pending_registrations: int = Field(default=20, ge=1)
+
+
 class EndpointConfig(BaseModel):
     """Источник или цель пайплайна: ссылка на аккаунт + адрес чата (§11)."""
 
@@ -208,12 +237,22 @@ class AngarionSettings(BaseSettings):
     worker: WorkerConfig = WorkerConfig()
     catchup: CatchupConfig = CatchupConfig()
     telegram: TelegramConfig = TelegramConfig()
+    api: ApiConfig = ApiConfig()
     pipelines: dict[str, PipelineConfig] = Field(default_factory=dict)
     session_key: str = ''
     """
     Ключ шифрования сессий Telegram at-rest (Q2 спеки T005, ADR
     2026-06-13); из env ``ANGARION_SESSION_KEY`` (секрет, не в TOML).
     Пустой при наличии сессий в БД — fail-fast в telegram-адаптере.
+    """
+    admin_login: str = ''
+    admin_password: str = ''
+    """
+    Bootstrap первого администратора (§12.7, FR-0): из env
+    ``ANGARION_ADMIN_LOGIN`` / ``ANGARION_ADMIN_PASSWORD`` (секреты, не в
+    TOML). На пустой таблице пользователей при включённом api создаётся
+    админ; при ``api.auth="users"`` и отсутствии этих env — fail-fast в
+    bootstrap (реализация — T023, фаза 2).
     """
 
     @classmethod

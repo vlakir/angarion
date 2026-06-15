@@ -72,6 +72,19 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 
 ## Done
 
+- **T023** — **M5/B** — Auth (ветка `T023-auth`). [closed 2026-06-15,
+  PR #17] fastapi-users (+`-db-sqlalchemy`), §12.7. Все три фазы:
+  (1) identity data layer — `[api]`/`ApiConfig`, `UserRow` ORM +
+  миграция 0003 → (2) fastapi-users core — JWT-логин, свой register-
+  эндпоинт, `CurrentUser`/`AdminUser` (auth на уровне роутеров),
+  `auth="none"` синтетический админ, bootstrap + fail-fast → (3)
+  регистрация-одобрение, лимит `max_pending_registrations`, JSON-ручки
+  `/api/v1/users` (admin-only), cookie-вход `/ui/login`/`/ui/logout`/
+  `/ui/register`, админка `/ui/users` (htmx). Один squash-PR на группу.
+  Acceptance spec §4 закрыт: auth-матрица, цикл регистрация→одобрение→
+  вход, bootstrap, лимит pending, cookie login/logout. **Notify-заявки —
+  в T024** (outbox). Дальше **T025** Viz+Docs (последняя группа M5).
+
 - **T022** — **M5/A** — Web core (ветка `T022-web-core`). [closed
   2026-06-14, PR #16] Все три фазы готовы: (1) T021 `config_model`
   fail-fast → (2) API core (`create_app`, `AngarionDeps`, DI, `/api/v1`,

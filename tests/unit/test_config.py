@@ -238,3 +238,65 @@ def test_unknown_telegram_key_fails(tmp_path: Path) -> None:
     """Неизвестный ключ в [telegram] — fail-fast (extra='forbid')."""
     with pytest.raises(ConfigError):
         load_settings(write_toml(tmp_path, '[telegram]\nbogus = 1\n'))
+
+
+def test_api_defaults() -> None:
+    """Секция [api] (M5/B): рабочие default'ы auth/JWT/регистрации (§12.7)."""
+    settings = AngarionSettings()
+    assert settings.api.host == '127.0.0.1'
+    assert settings.api.port == 8000
+    assert settings.api.auth == 'users'
+    assert settings.api.secret == ''
+    assert settings.api.jwt_lifetime == 3600
+    assert settings.api.cookie_secure is False
+    assert settings.api.registration_enabled is True
+    assert settings.api.max_pending_registrations == 20
+    assert settings.admin_login == ''
+    assert settings.admin_password == ''
+
+
+def test_api_section_parsed_from_toml(tmp_path: Path) -> None:
+    """[api] разбирается из TOML; auth='none' допустим."""
+    toml = (
+        '[api]\n'
+        'host = "0.0.0.0"\n'
+        'port = 9000\n'
+        'auth = "none"\n'
+        'jwt_lifetime = 900\n'
+        'cookie_secure = true\n'
+        'registration_enabled = false\n'
+        'max_pending_registrations = 5\n'
+    )
+    settings = load_settings(write_toml(tmp_path, toml))
+    assert settings.api.host == '0.0.0.0'
+    assert settings.api.port == 9000
+    assert settings.api.auth == 'none'
+    assert settings.api.jwt_lifetime == 900
+    assert settings.api.cookie_secure is True
+    assert settings.api.registration_enabled is False
+    assert settings.api.max_pending_registrations == 5
+
+
+def test_api_secret_and_admin_from_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """secret и admin-credentials — из env (секреты, не в TOML; §12.7, FR-0)."""
+    monkeypatch.setenv('ANGARION_API__SECRET', 'jwt-secret')
+    monkeypatch.setenv('ANGARION_ADMIN_LOGIN', 'root')
+    monkeypatch.setenv('ANGARION_ADMIN_PASSWORD', 'pw')
+    settings = load_settings(write_toml(tmp_path))
+    assert settings.api.secret == 'jwt-secret'
+    assert settings.admin_login == 'root'
+    assert settings.admin_password == 'pw'
+
+
+def test_api_rejects_unknown_auth_mode(tmp_path: Path) -> None:
+    """auth вне {users,none} — fail-fast."""
+    with pytest.raises(ConfigError):
+        load_settings(write_toml(tmp_path, '[api]\nauth = "ldap"\n'))
+
+
+def test_unknown_api_key_fails(tmp_path: Path) -> None:
+    """Неизвестный ключ в [api] — fail-fast (extra='forbid')."""
+    with pytest.raises(ConfigError):
+        load_settings(write_toml(tmp_path, '[api]\nbogus = 1\n'))

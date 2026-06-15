@@ -12,13 +12,24 @@ htmx-автообновление бесплатно. Каталоги поль�
 
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, select_autoescape
 from pydantic import BaseModel, ConfigDict
 
 _BUILTIN_TEMPLATES = Path(__file__).parent / 'templates'
+
+
+def _user_context(request: Request) -> dict[str, Any]:
+    """
+    Текущий пользователь в каждый шаблон (``None`` на публичных страницах).
+
+    ``require_user`` кладёт пользователя в ``request.state.user`` — навигация
+    рисует ``/ui/users`` и logout по роли (§12.7); здесь — безопасное чтение.
+    """
+    return {'current_user': getattr(request.state, 'user', None)}
 
 
 class Page(BaseModel):
@@ -29,6 +40,9 @@ class Page(BaseModel):
     ``title``/``path`` — пункт навигации, автоматически появляющийся в
     шапке дашборда. Передаётся в ``create_app(pages=[Page(...)])``.
 
+    ``public`` (§12.7) — по умолчанию страница закрыта ``CurrentUser``;
+    ``public=True`` — осознанно открытая (например, своя страница входа).
+
     Композиция (не DTO): ``frozen`` с ``arbitrary_types_allowed`` —
     ``APIRouter`` не сериализуется (как у ``AngarionDeps``).
     """
@@ -38,6 +52,7 @@ class Page(BaseModel):
     title: str
     path: str
     router: APIRouter
+    public: bool = False
 
 
 class NavItem(BaseModel):
@@ -78,4 +93,4 @@ def build_templates(
         lstrip_blocks=True,
     )
     env.globals['nav'] = list(nav)
-    return Jinja2Templates(env=env)
+    return Jinja2Templates(env=env, context_processors=[_user_context])
