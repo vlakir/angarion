@@ -1,0 +1,38 @@
+{% extends "angarion/base.html" %}
+{% block title %}angarion — activity{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Activity</h2>
+  <p>Custom example page: analytics summary for the last day and recent events.</p>
+</hgroup>
+
+<article>
+  <header>Events by kind (last 24 hours)</header>
+  {% if counts %}
+  <div class="grid">
+    {% for kind, n in counts.items() %}
+    <div><strong>{{ kind }}</strong>: {{ n }}</div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p>Empty so far — push an event through the pipeline.</p>
+  {% endif %}
+</article>
+
+<figure>
+  <table>
+    <thead><tr><th>Time</th><th>Kind</th><th>Pipeline</th></tr></thead>
+    <tbody>
+      {% for ev in recent %}
+      <tr>
+        <td>{{ ev.at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+        <td>{{ ev.kind }}</td>
+        <td>{{ ev.pipeline or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3">No events yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</figure>
+{% endblock %}

@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from angarion.adapters.http._data import source_keys
 from angarion.adapters.http.deps import AnalyticsDep, CursorsDep, QueueDep, get_deps
+from angarion.adapters.http.viz import build_pipeline_graph
 
 router = APIRouter(prefix='/ui', tags=['ui'])
 
@@ -64,6 +65,37 @@ async def dashboard(
         'pipelines': sorted(deps.settings.pipelines),
     }
     return templates.TemplateResponse(request, 'angarion/dashboard.html', context)
+
+
+async def render_pipelines_fragment(
+    request: Request, templates: Jinja2Templates
+) -> HTMLResponse:
+    """
+    Отрендерить фрагмент графа топологии (``#pipeline-graph``).
+
+    Переиспользуется htmx-поллингом ``/ui/fragments/pipelines`` и
+    админским pause/resume по узлу (``ops_pages``) — клик подменяет тот
+    же корень обновлённым графом.
+    """
+    graph = await build_pipeline_graph(get_deps(request))
+    return templates.TemplateResponse(
+        request, 'angarion/fragments/pipelines.html', {'graph': graph}
+    )
+
+
+@router.get('/pipelines', response_class=HTMLResponse)
+async def pipelines_page(request: Request, templates: TemplatesDep) -> HTMLResponse:
+    """Трёхдольный граф «источники → пайплайны → получатели» (§12.6)."""
+    graph = await build_pipeline_graph(get_deps(request))
+    return templates.TemplateResponse(
+        request, 'angarion/pipelines.html', {'graph': graph}
+    )
+
+
+@router.get('/fragments/pipelines', response_class=HTMLResponse)
+async def fragment_pipelines(request: Request, templates: TemplatesDep) -> HTMLResponse:
+    """htmx-партиал графа топологии (поллинг и подмена после pause/resume)."""
+    return await render_pipelines_fragment(request, templates)
 
 
 @router.get('/events', response_class=HTMLResponse)

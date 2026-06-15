@@ -2,10 +2,14 @@
 # Пример angarion «всё в одном»: пересылка новых сообщений из группы A в B.
 #
 # Запуск из любого места: examples/forward/run.sh
-# Перед первым запуском задай в окружении api-реквизиты (см. README.md):
+#
+# Dev (есть git-ignored `.secrets` в корне репо): реквизиты, группы A/B и
+# сессия подхватываются автоматически — ни export, ни login не нужны.
+#
+# Внешний пользователь (без `.secrets`) — задай в окружении api-реквизиты
+# (см. README.md) и подставь id групп в app.toml:
 #   export ANGARION_ACCOUNTS__MAIN__API_ID=...
 #   export ANGARION_ACCOUNTS__MAIN__API_HASH=...
-# и подставь id групп в app.toml.
 #
 # Первый запуск попросит авторизацию (телефон → код → 2FA), последующие —
 # сразу запуск конвейера. Рантайм (БД, ключ сессии) — в ./angarion-data/
@@ -13,6 +17,22 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"  # каталог примера (uv найдёт проект выше по дереву)
+ROOT="$(cd ../.. && pwd)"  # корень репо (subshell — cwd примера не меняется)
+
+# Dev-удобство: подхватить постоянные тестовые реквизиты из `.secrets`
+# (если есть), чтобы не экспортировать руками. Внешний пользователь без
+# `.secrets` идёт обычным путём (export + login по README).
+# shellcheck source=../../scripts/example_dev.sh
+source "$ROOT/scripts/example_dev.sh"
+
+# dev: подставить тестовые группы в источник/цель пайплайна через env
+# (env приоритетнее app.toml — сам app.toml с плейсхолдерами не трогаем).
+if [[ -n "${TG_TEST_GROUP_A:-}" && -z "${ANGARION_PIPELINES__FORWARD__SOURCES:-}" ]]; then
+  export ANGARION_PIPELINES__FORWARD__SOURCES="[{\"account\":\"main\",\"chat_id\":\"$TG_TEST_GROUP_A\"}]"
+fi
+if [[ -n "${TG_TEST_GROUP_B:-}" && -z "${ANGARION_PIPELINES__FORWARD__TARGETS:-}" ]]; then
+  export ANGARION_PIPELINES__FORWARD__TARGETS="[{\"account\":\"main\",\"chat_id\":\"$TG_TEST_GROUP_B\"}]"
+fi
 
 CONFIG=app.toml
 DATA_DIR=angarion-data
@@ -29,16 +49,21 @@ if [[ ! -f $KEY_FILE ]]; then
   uv run python -c \
     "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" \
     >"$KEY_FILE"
-  chmod 600 "$KEY_FILE"
   echo "→ Сгенерён ключ шифрования сессии: $KEY_FILE (храни отдельно от app.db!)"
 fi
+chmod 600 "$KEY_FILE"  # безусловно: права не должны «дрейфовать» при повторных запусках
 ANGARION_SESSION_KEY=$(cat "$KEY_FILE")
 export ANGARION_SESSION_KEY
 
 # 3. БД + миграции (идемпотентно)
 uv run angarion migrate --config "$CONFIG"
 
-# 4. авторизация — только если сессии аккаунта ещё нет (идемпотентно)
+# 4. dev: засеять сессию тестового аккаунта из sessions/integration.session
+#    (если есть `.secrets` и файл) — обходит интерактивный login. Без них
+#    скрипт ничего не делает, и ниже сработает обычная авторизация.
+uv run python "$ROOT/scripts/seed_session.py" "$CONFIG" main
+
+# 5. авторизация — только если сессии аккаунта ещё нет (идемпотентно)
 if uv run python - "$CONFIG" <<'PY'
 import asyncio
 import sys
@@ -67,6 +92,6 @@ else
   uv run angarion login --config "$CONFIG" --account main
 fi
 
-# 5. запуск конвейера
+# 6. запуск конвейера
 echo "→ Запуск. Пиши в группу A — текст прилетит в B. Ctrl+C — остановка."
 uv run angarion run --config "$CONFIG"

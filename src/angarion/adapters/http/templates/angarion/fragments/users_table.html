@@ -1,13 +1,13 @@
 <table>
   <thead>
-    <tr><th>Логин</th><th>Роль</th><th>Статус</th><th>Действия</th></tr>
+    <tr><th>Username</th><th>Role</th><th>Status</th><th>Actions</th></tr>
   </thead>
   <tbody>
     {% for user in users %}
     <tr>
       <td>{{ user.login }}</td>
       <td>{{ user.role }}</td>
-      <td>{{ 'активен' if user.is_active else 'заявка' }}</td>
+      <td>{{ 'active' if user.is_active else 'pending' }}</td>
       <td>
         {% if not user.is_active %}
         <form hx-post="/ui/users/{{ user.id }}/approve" hx-target="#users-table">
@@ -16,21 +16,21 @@
             <option value="{{ role }}">{{ role }}</option>
             {% endfor %}
           </select>
-          <button type="submit">Одобрить</button>
+          <button type="submit">Approve</button>
         </form>
         {% else %}
         <button hx-post="/ui/users/{{ user.id }}/deactivate" hx-target="#users-table">
-          Деактивировать
+          Deactivate
         </button>
         {% endif %}
         <button hx-post="/ui/users/{{ user.id }}/delete" hx-target="#users-table"
-                hx-confirm="Удалить {{ user.login }}?">
-          Удалить
+                hx-confirm="Delete {{ user.login }}?">
+          Delete
         </button>
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="4"><em>пользователей нет</em></td></tr>
+    <tr><td colspan="4"><em>no users</em></td></tr>
     {% endfor %}
   </tbody>
 </table>

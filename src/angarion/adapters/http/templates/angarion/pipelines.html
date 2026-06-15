@@ -1,0 +1,12 @@
+{% extends "angarion/base.html" %}
+{% block title %}angarion — pipelines{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Pipeline topology</h2>
+  <p>Graph “sources → pipelines → targets”; refreshes automatically.</p>
+</hgroup>
+
+<article hx-get="/ui/fragments/pipelines" hx-trigger="every 10s">
+  {% include "angarion/fragments/pipelines.html" %}
+</article>
+{% endblock %}

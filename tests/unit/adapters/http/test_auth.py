@@ -512,7 +512,7 @@ async def test_ui_register_submit_shows_pending_message(
             '/ui/register', data={'username': 'x', 'password': 'pw'}
         )
         assert resp.status_code == 200
-        assert 'дождитесь одобрения' in resp.text
+        assert 'wait for administrator approval' in resp.text
 
 
 @pytest.mark.asyncio
@@ -525,7 +525,7 @@ async def test_ui_register_submit_shows_error(users_db: async_sessionmaker) -> N
             '/ui/register', data={'username': 'taken', 'password': 'pw'}
         )
         assert resp.status_code == 400
-        assert 'дождитесь одобрения' not in resp.text
+        assert 'wait for administrator approval' not in resp.text
 
 
 @pytest.mark.asyncio

@@ -1,11 +1,11 @@
-<h3>События за 24 ч</h3>
+<h3>Events (last 24h)</h3>
 <table>
-  <thead><tr><th>Вид</th><th>Кол-во</th></tr></thead>
+  <thead><tr><th>Kind</th><th>Count</th></tr></thead>
   <tbody>
     {% for kind, count in counts.items() %}
     <tr><td>{{ kind }}</td><td>{{ count }}</td></tr>
     {% else %}
-    <tr><td colspan="2"><em>событий нет</em></td></tr>
+    <tr><td colspan="2"><em>no events</em></td></tr>
     {% endfor %}
   </tbody>
 </table>

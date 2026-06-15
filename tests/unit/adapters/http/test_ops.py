@@ -206,7 +206,7 @@ async def test_api_restart_and_catchup(
 async def test_ui_settings_renders(client: AsyncClient) -> None:
     resp = await client.get('/ui/settings')
     assert resp.status_code == 200
-    assert 'Настройки и операции' in resp.text
+    assert 'Settings and operations' in resp.text
     assert 'api.secret' in resp.text
 
 

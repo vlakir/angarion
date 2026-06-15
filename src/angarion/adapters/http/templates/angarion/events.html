@@ -2,15 +2,15 @@
 {% block title %}angarion — events{% endblock %}
 {% block content %}
 <hgroup>
-  <h2>Журнал событий</h2>
-  <p>Аналитика с фильтрами по виду и пайплайну.</p>
+  <h2>Event log</h2>
+  <p>Analytics, filterable by kind and pipeline.</p>
 </hgroup>
 
 <form hx-get="/ui/fragments/events-table" hx-target="#events-table" hx-trigger="submit">
   <div class="grid">
-    <input type="search" name="kind" placeholder="вид (kind)" value="{{ kind }}">
-    <input type="search" name="pipeline" placeholder="пайплайн" value="{{ pipeline }}">
-    <button type="submit">Фильтр</button>
+    <input type="search" name="kind" placeholder="kind" value="{{ kind }}">
+    <input type="search" name="pipeline" placeholder="pipeline" value="{{ pipeline }}">
+    <button type="submit">Filter</button>
   </div>
 </form>
 
