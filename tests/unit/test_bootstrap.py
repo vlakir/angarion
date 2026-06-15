@@ -498,7 +498,7 @@ class TestPruneAndDispose:
         app = build_app(make_settings())  # prune_interval = 0 по умолчанию
         await app.start()
         try:
-            assert len(app._tasks) == 2  # только worker + delivery
+            assert len(app._tasks) == 3  # worker + delivery + outbox-consumer
         finally:
             await app.stop()
 
@@ -519,7 +519,7 @@ class TestPruneAndDispose:
         monkeypatch.setattr(app.storage.dedup, 'prune', spy)
         await app.start()
         try:
-            assert len(app._tasks) == 3  # worker + delivery + prune
+            assert len(app._tasks) == 4  # worker + delivery + outbox + prune
             for _ in range(200):
                 if calls:
                     break

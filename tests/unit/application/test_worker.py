@@ -18,6 +18,7 @@ from angarion.adapters.memory.storage import (
     MemoryAnalytics,
     MemoryDeadLetters,
     MemoryOutbox,
+    MemoryRuntimeConfig,
     MemoryStateStore,
 )
 from angarion.application import worker as worker_module
@@ -35,6 +36,7 @@ from angarion.domain.errors import ProcessingError
 from angarion.domain.keys import make_idempotency_key
 from angarion.domain.models import (
     AnalyticsEvent,
+    DynamicSettings,
     InboundEvent,
     OutboxStatus,
     PipelineContextData,
@@ -93,6 +95,7 @@ class WorkerHarness:
         self.analytics = MemoryAnalytics()
         self.dead_letters = MemoryDeadLetters()
         self.state = MemoryStateStore()
+        self.runtime_config = MemoryRuntimeConfig()
         binding = PipelineBinding(
             processor=FunctionProcessor(name='test', fn=fn),
             ctx=make_context(targets=targets),
@@ -103,10 +106,16 @@ class WorkerHarness:
             analytics=self.analytics,
             dead_letters=self.dead_letters,
             state=self.state,
+            runtime_config=self.runtime_config,
             pipelines={'digest': binding},
             max_retries=max_retries,
             backoff_base=backoff_base,
             backoff_cap=backoff_cap,
+        )
+
+    async def pause(self, *pipelines: str) -> None:
+        await self.runtime_config.save(
+            DynamicSettings(paused_pipelines=frozenset(pipelines))
         )
 
     async def kinds(self) -> list[str]:
@@ -263,6 +272,77 @@ class TestDefer:
         await harness.queue.put(make_envelope(not_before=not_before))
         await harness.worker.process_one()
         assert len(await harness.outbox.due()) == 1
+
+
+class TestPause:
+    """FR-4 (§12.8): пауза пайплайна на лету — defer-to-tail + `deferred`."""
+
+    @staticmethod
+    def _patch_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+        sleeps: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        monkeypatch.setattr(worker_module.asyncio, 'sleep', fake_sleep)
+        return sleeps
+
+    async def test_paused_pipeline_deferred_not_processed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Паузнутый пайплайн: envelope в хвост + ack, процессор не вызван."""
+        sleeps = self._patch_sleep(monkeypatch)
+        harness = WorkerHarness(passthrough)
+        await harness.pause('digest')
+        await harness.queue.put(make_envelope())
+        await harness.worker.process_one()
+        assert await harness.outbox.due() == []  # процессор не вызывался
+        assert harness.queue.calls == ['put', 'put', 'ack']  # initial + defer
+        assert (await harness.queue.depth()).pending == 1  # копится, не теряется
+        assert 'deferred' in await harness.kinds()
+        assert len(sleeps) == 1  # притормозили цикл, чтобы не крутить вхолостую
+
+    async def test_deferred_event_marks_pause_reason(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._patch_sleep(monkeypatch)
+        harness = WorkerHarness(passthrough)
+        await harness.pause('digest')
+        await harness.queue.put(make_envelope())
+        await harness.worker.process_one()
+        events = await harness.analytics.recent(kind='deferred', limit=10)
+        assert len(events) == 1
+        assert events[0].pipeline == 'digest'
+        assert events[0].payload == {'reason': 'paused'}
+
+    async def test_other_pipeline_pause_does_not_block(self) -> None:
+        """Пауза чужого пайплайна не задевает обработку нашего."""
+        harness = WorkerHarness(passthrough)
+        await harness.pause('other')
+        await harness.queue.put(make_envelope())
+        await harness.worker.process_one()
+        assert len(await harness.outbox.due()) == 1
+        assert 'deferred' not in await harness.kinds()
+
+    async def test_resume_processes_accumulated_without_loss(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Пауза → события копятся → resume → доставка без потерь и дублей."""
+        self._patch_sleep(monkeypatch)
+        harness = WorkerHarness(passthrough)
+        await harness.pause('digest')
+        await harness.queue.put(make_envelope())
+        await harness.queue.put(make_envelope(event=make_event(external_id='43')))
+        await harness.worker.process_one()  # оба откладываются
+        await harness.worker.process_one()
+        assert await harness.outbox.due() == []
+        assert (await harness.queue.depth()).pending == 2
+        await harness.runtime_config.save(
+            DynamicSettings(paused_pipelines=frozenset())
+        )  # снятие с паузы
+        await harness.worker.process_one()
+        await harness.worker.process_one()
+        assert len(await harness.outbox.due(limit=10)) == 2  # без потерь, без дублей
 
 
 class TestProcessorServicesWiring:

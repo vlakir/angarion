@@ -11,11 +11,15 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from angarion.adapters.registry_rules import effective_ts, id_at_least
 from angarion.domain.models import (
+    CommandStatus,
+    DynamicSettings,
     OutboundRecord,
+    OutboxCommand,
     OutboxStatus,
     RegistryDelta,
     RegistryOutcome,
@@ -29,6 +33,7 @@ if TYPE_CHECKING:
 
     from angarion.domain.models import (
         AnalyticsEvent,
+        CommandKind,
         DeadLetter,
         DeliveryReceipt,
         OutboundMessage,
@@ -342,6 +347,110 @@ class MemoryAnalytics:
         removed = len(self._events) - len(kept)
         self._events = kept
         return removed
+
+
+class MemoryRuntimeConfig:
+    """``RuntimeConfigPort``: словарь override'ов динамических настроек."""
+
+    def __init__(self) -> None:
+        self._overrides: dict[str, Any] = {}
+
+    async def load(self) -> DynamicSettings:
+        """Текущие override'ы как ``DynamicSettings`` (None — нет override'а)."""
+        return DynamicSettings(**self._overrides)
+
+    async def save(
+        self, patch: DynamicSettings, *, updated_by: str | None = None
+    ) -> DynamicSettings:
+        """Частичное применение: не-None поля patch'а перекрывают сохранённое."""
+        _ = updated_by  # автор изменения — для аудита БД-реализации (§12.8)
+        self._overrides.update(patch.model_dump(mode='json', exclude_none=True))
+        return await self.load()
+
+    async def reset(self, key: str) -> DynamicSettings:
+        """Удалить override поля (возврат к файлу); неизвестное — no-op."""
+        self._overrides.pop(key, None)
+        return await self.load()
+
+
+class MemoryCommandOutbox:
+    """``CommandOutboxPort``: командный мост api→pipeline в памяти (§12.9)."""
+
+    def __init__(self) -> None:
+        self._commands: dict[UUID, OutboxCommand] = {}
+
+    async def put(
+        self, kind: CommandKind, *, payload: dict[str, Any] | None = None
+    ) -> OutboxCommand:
+        """Поставить команду (``pending``); вернуть запись."""
+        command = OutboxCommand(
+            uid=uuid4(),
+            kind=kind,
+            payload=payload or {},
+            created_at=datetime.now(UTC),
+        )
+        self._commands[command.uid] = command
+        return command
+
+    async def take(self, limit: int = 10) -> list[OutboxCommand]:
+        """
+        Захватить ``pending`` → ``taken`` (FIFO по порядку вставки).
+
+        Корутина без await-точек между чтением и записью — событийный
+        цикл не прерывает её, поэтому захват атомарен (паритет с
+        SQL-``UPDATE ... WHERE status='pending'``).
+        """
+        taken: list[OutboxCommand] = []
+        for uid, command in self._commands.items():
+            if len(taken) >= limit:
+                break
+            if command.status is not CommandStatus.PENDING:
+                continue
+            updated = command.model_copy(update={'status': CommandStatus.TAKEN})
+            self._commands[uid] = updated
+            taken.append(updated)
+        return taken
+
+    async def mark_done(self, uid: UUID, *, result: str | None = None) -> None:
+        """Терминальный переход ``taken`` → ``done``; иначе no-op."""
+        command = self._commands.get(uid)
+        if command is None or command.status is not CommandStatus.TAKEN:
+            return
+        self._commands[uid] = command.model_copy(
+            update={
+                'status': CommandStatus.DONE,
+                'result': result,
+                'executed_at': datetime.now(UTC),
+            }
+        )
+
+    async def mark_failed(self, uid: UUID, error: str) -> None:
+        """Терминальный переход ``taken`` → ``failed``; иначе no-op."""
+        command = self._commands.get(uid)
+        if command is None or command.status is not CommandStatus.TAKEN:
+            return
+        self._commands[uid] = command.model_copy(
+            update={
+                'status': CommandStatus.FAILED,
+                'error': error,
+                'executed_at': datetime.now(UTC),
+            }
+        )
+
+    async def get(self, uid: UUID) -> OutboxCommand | None:
+        """Команда по ``uid`` или None."""
+        return self._commands.get(uid)
+
+    async def prune(self, older_than: AwareDatetime) -> int:
+        """Удалить терминальные команды, исполненные раньше порога."""
+        stale = [
+            uid
+            for uid, command in self._commands.items()
+            if command.executed_at is not None and command.executed_at < older_than
+        ]
+        for uid in stale:
+            del self._commands[uid]
+        return len(stale)
 
 
 class MemoryDeadLetters:

@@ -50,6 +50,22 @@ class TokenBucket:
                 return
             await self._sleep((1 - self._tokens) / self._rate)
 
+    def reconfigure(self, *, rate: float, capacity: float) -> None:
+        """
+        Сменить ``rate``/``capacity`` на лету (динамические лимиты §12.8).
+
+        Сначала добираем токены по старому темпу до текущего момента,
+        затем применяем новые параметры и подрезаем накопленное под новый
+        ``capacity`` — смена лимита не «дарит» всплеск сверх новой ёмкости.
+        """
+        if rate <= 0 or capacity <= 0:
+            msg = 'rate и capacity token bucket должны быть положительны'
+            raise ValueError(msg)
+        self._refill()
+        self._rate = rate
+        self._capacity = capacity
+        self._tokens = min(self._tokens, capacity)
+
     def _refill(self) -> None:
         now = self._clock()
         elapsed = now - self._updated

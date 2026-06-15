@@ -46,6 +46,13 @@ def make_engine(path: Path) -> AsyncEngine:
         cursor = dbapi_connection.cursor()
         cursor.execute('PRAGMA journal_mode=WAL')
         cursor.execute('PRAGMA foreign_keys=ON')
+        # busy_timeout — ADR §3.1 (T024): в раздельном режиме (--role api +
+        # --role pipeline) два процесса пишут в один app.db; WAL разводит
+        # читателей с писателем, а busy_timeout даёт писателям подождать
+        # снятия блокировки (до 5 с) вместо немедленного "database is
+        # locked". Записи api-процесса редкие (админ-действия), поэтому
+        # таймаута достаточно; явный per-write ретрай — в BACKLOG (T028).
+        cursor.execute('PRAGMA busy_timeout=5000')
         cursor.close()
 
     return engine

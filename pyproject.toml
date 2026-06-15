@@ -66,13 +66,14 @@ llm = [
 # аутентификация на fastapi-users (§12.7, T023). FastAPI тянет
 # starlette/pydantic; fastapi-users[sqlalchemy] — fastapi-users-db-
 # sqlalchemy (user store на нашем SQLAlchemy 2.0), pwdlib[argon2] (хэш
-# паролей), pyjwt (JWT-транспорт), python-multipart (формы логина). Без
-# uvicorn: ASGI-тесты идут через httpx.ASGITransport; uvicorn-раннер
-# (`run --with-api`) придёт с ролями процессов (§12.9, группа C). Ядро
-# остаётся fastapi-free (§14.9).
+# паролей), pyjwt (JWT-транспорт), python-multipart (формы логина).
+# uvicorn — ASGI-раннер ролей процессов (`run --with-api` / `--role api`,
+# §12.9, T024); сами ASGI-тесты идут через httpx.ASGITransport. Ядро
+# остаётся fastapi-free (§14.9): FastAPI/uvicorn тянет только http-адаптер.
 web = [
     "fastapi>=0.115",
     "fastapi-users[sqlalchemy]>=15",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
@@ -131,6 +132,7 @@ dev = [
     "aiosqlite>=0.21",
     "fastapi>=0.115",
     "fastapi-users[sqlalchemy]>=15",
+    "uvicorn>=0.30",
 ]
 
 

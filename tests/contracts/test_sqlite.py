@@ -13,11 +13,13 @@ from typing import TYPE_CHECKING
 import pytest
 from angarion.testing import (
     AnalyticsContract,
+    CommandOutboxContract,
     CursorStoreContract,
     DeadLetterContract,
     DedupStoreContract,
     MessageRegistryContract,
     OutboxContract,
+    RuntimeConfigContract,
     SessionStoreContract,
     StateStoreContract,
 )
@@ -90,6 +92,20 @@ class TestSqliteDeadLetters(DeadLetterContract):
         return sqlite_storage.dead_letters
 
 
+class TestSqliteRuntimeConfig(RuntimeConfigContract):
+    @pytest.fixture
+    def runtime_config(self, sqlite_storage: SqliteStorage) -> ports.RuntimeConfigPort:
+        return sqlite_storage.runtime_config
+
+
+class TestSqliteCommandOutbox(CommandOutboxContract):
+    @pytest.fixture
+    def command_outbox(
+        self, sqlite_storage: SqliteStorage
+    ) -> ports.CommandOutboxPort:
+        return sqlite_storage.command_outbox
+
+
 async def test_sqlite_adapters_satisfy_their_ports(
     sqlite_storage: SqliteStorage,
 ) -> None:
@@ -102,6 +118,8 @@ async def test_sqlite_adapters_satisfy_their_ports(
         (sqlite_storage.state, ports.StateStorePort),
         (sqlite_storage.analytics, ports.AnalyticsPort),
         (sqlite_storage.dead_letters, ports.DeadLetterPort),
+        (sqlite_storage.runtime_config, ports.RuntimeConfigPort),
+        (sqlite_storage.command_outbox, ports.CommandOutboxPort),
     ]
     for impl, port in conformance:
         assert isinstance(impl, port), port.__name__

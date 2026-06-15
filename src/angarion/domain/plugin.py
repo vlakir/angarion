@@ -21,6 +21,7 @@ from angarion.domain.capabilities import AdapterCapabilities
 from angarion.domain.models import Messenger
 from angarion.domain.ports import (
     AnalyticsPort,
+    CommandOutboxPort,
     CursorStorePort,
     DeadLetterPort,
     DedupStorePort,
@@ -28,6 +29,7 @@ from angarion.domain.ports import (
     MessageRegistryPort,
     MessageSinkPort,
     OutboxPort,
+    RuntimeConfigPort,
     SessionStorePort,
     StateStorePort,
 )
@@ -93,7 +95,8 @@ class StorageBundle(BaseModel):
     Комплект driven-портов хранения, который собирает storage-бэкенд
     (§12.11, plan 2.5). Объём M1 — порты C-1 (+ outbox после C-9);
     ``session`` добавлен в M3 (T005) под сессии аккаунтов платформы;
-    ``runtime_config`` придёт аддитивно в M5.
+    ``runtime_config`` — в M5 (T024) под динамические настройки §12.8,
+    ``command_outbox`` — там же под командный мост api→pipeline §12.9.
 
     Конструкция композиции (A-2): JSON-контракт DTO на неё не
     распространяется; frozen — сохраняем.
@@ -109,6 +112,8 @@ class StorageBundle(BaseModel):
     analytics: AnalyticsPort
     dead_letters: DeadLetterPort
     session: SessionStorePort
+    runtime_config: RuntimeConfigPort
+    command_outbox: CommandOutboxPort
 
 
 QueueFactory = Callable[..., EventQueuePort]

@@ -16,8 +16,11 @@ from angarion.adapters.http import AngarionDeps, create_app
 from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.storage import (
     MemoryAnalytics,
+    MemoryCommandOutbox,
     MemoryCursorStore,
+    MemoryDeadLetters,
     MemoryMessageRegistry,
+    MemoryRuntimeConfig,
     MemoryStateStore,
 )
 from angarion.config import (
@@ -82,11 +85,29 @@ def registry() -> MemoryMessageRegistry:
 
 
 @pytest.fixture
+def runtime_config() -> MemoryRuntimeConfig:
+    return MemoryRuntimeConfig()
+
+
+@pytest.fixture
+def command_outbox() -> MemoryCommandOutbox:
+    return MemoryCommandOutbox()
+
+
+@pytest.fixture
+def dead_letters() -> MemoryDeadLetters:
+    return MemoryDeadLetters()
+
+
+@pytest.fixture
 def deps(
     analytics: MemoryAnalytics,
     cursors: MemoryCursorStore,
     state: MemoryStateStore,
     registry: MemoryMessageRegistry,
+    runtime_config: MemoryRuntimeConfig,
+    command_outbox: MemoryCommandOutbox,
+    dead_letters: MemoryDeadLetters,
 ) -> AngarionDeps:
     return AngarionDeps(
         queue=MemoryQueue(),
@@ -94,6 +115,9 @@ def deps(
         registry=registry,
         state=state,
         cursors=cursors,
+        runtime_config=runtime_config,
+        command_outbox=command_outbox,
+        dead_letters=dead_letters,
         settings=make_settings(),
     )
 

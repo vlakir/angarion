@@ -13,6 +13,7 @@ import angarion.testing
 
 CONTRACT_CLASSES = [
     'AnalyticsContract',
+    'CommandOutboxContract',
     'CursorStoreContract',
     'DeadLetterContract',
     'DedupStoreContract',
@@ -20,6 +21,7 @@ CONTRACT_CLASSES = [
     'MessageRegistryContract',
     'MessageSinkContract',
     'OutboxContract',
+    'RuntimeConfigContract',
     'SessionStoreContract',
     'StateStoreContract',
 ]

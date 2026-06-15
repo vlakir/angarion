@@ -70,3 +70,31 @@ async def test_rate_governs_wait_duration() -> None:
     await bucket.acquire()
     await bucket.acquire()  # ждём 1/2 с
     assert clock.slept == [0.5]
+
+
+def test_reconfigure_rejects_non_positive() -> None:
+    bucket = _bucket(FakeClock(), rate=1.0, capacity=1.0)
+    with pytest.raises(ValueError, match='положительны'):
+        bucket.reconfigure(rate=0, capacity=1)
+    with pytest.raises(ValueError, match='положительны'):
+        bucket.reconfigure(rate=1, capacity=0)
+
+
+async def test_reconfigure_applies_new_rate() -> None:
+    clock = FakeClock()
+    bucket = _bucket(clock, rate=1000.0, capacity=1000.0)  # фактически без лимита
+    await bucket.acquire()
+    bucket.reconfigure(rate=1.0, capacity=1.0)  # ужали лимит на лету
+    await bucket.acquire()  # подрезанный до capacity=1 токен
+    await bucket.acquire()  # пусто, новый темп 1/с → ждём 1с
+    assert clock.slept == [1.0]
+
+
+async def test_reconfigure_caps_accumulated_tokens() -> None:
+    clock = FakeClock()
+    bucket = _bucket(clock, rate=1.0, capacity=100.0)  # накопили большой бакет
+    bucket.reconfigure(rate=1.0, capacity=2.0)  # новый потолок ёмкости — 2
+    await bucket.acquire()  # 2 -> 1
+    await bucket.acquire()  # 1 -> 0
+    await bucket.acquire()  # пусто → ждём 1с (всплеск сверх нового capacity не подарен)
+    assert clock.slept == [1.0]

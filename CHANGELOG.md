@@ -28,6 +28,64 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 <!-- Здесь накапливаются изменения для следующего milestone (M5). -->
 
 ### Added
+- Ops — админ-операции + consumer outbox + роли процессов (**T024**/M5,
+  §12.8/§12.9, фаза 4): завершение группы C. **Админ-операции** (admin-
+  only, `/api/v1/admin/*` + SSR `/ui/settings`, `/ui/dlq`; viewer → 403):
+  пауза/возобновление пайплайна (через `RuntimeConfigPort`, worker уже
+  откладывает паузнутое — пауза без потерь), сохранение/сброс динамики,
+  requeue из DLQ с `attempt=0` (+ `requeued_at`), restart и ручной
+  catch-up. Каждая операция и изменение динамики пишет аудит `admin_op`
+  (пользователь, операция, старое/новое) в аналитику. **Командный
+  outbox** (§12.9): `OutboxConsumer` (pipeline-процесс, фоновый поллинг
+  `worker.outbox_poll_seconds`) захватывает команды и диспетчеризует —
+  `notify` (через `MessageSinkPort`), `catchup` (по listener'ам),
+  `restart_pipeline` (взвод graceful-остановки, супервизор поднимает);
+  сбой → `mark_failed` + `notify_failed`/`command_failed`. **Уведомление
+  о заявке** на регистрацию (`[api.notify]`) — неблокирующее: команда
+  `notify` в outbox, сбой не ломает регистрацию. **Роли процессов**:
+  `angarion run --role pipeline|api|combined` / `--with-api` (uvicorn-
+  раннер в http-адаптере; ядро fastapi-free). Web composition root
+  `build_web_deps`/`build_settings_notifier`; `AngarionDeps` пополнен
+  `runtime_config`/`command_outbox`/`dead_letters`/`notifier`. Два писателя
+  `app.db` в раздельном режиме — `PRAGMA busy_timeout=5000` (ADR §3.1,
+  2026-06-15); per-write ретрай — BACKLOG T028. Reaper зависших `taken` —
+  BACKLOG T027.
+- Ops — применение динамики на лету + пауза-без-потерь (**T024**/M5,
+  §12.8, фаза 3): `PipelineWorker` читает `RuntimeConfigPort` в начале
+  итерации — пайплайн из `paused_pipelines` откладывается defer-to-tail
+  (`put` в хвост строго до `ack` + событие аналитики `deferred` +
+  короткий sleep против горячего цикла); ingest продолжает копить, resume
+  обрабатывает накопленное без потерь и дублей. `TelegramSender`
+  применяет динамические `sender_chat_per_second` /
+  `sender_account_per_minute` поверх файловых порогов (override → reset
+  возвращает файл) через новый `TokenBucket.reconfigure`. Уровень лога —
+  по in-process событию: `SettingsNotifier` (pub/sub) + подписчик
+  `apply_log_level_on_change` (переключает `wrapper_class` structlog);
+  producer события (после `save`) — в фазе 4. ADR 2026-06-15.
+  Админ-операции, consumer outbox, роли процессов и `/ui/settings` —
+  фаза 4.
+- Ops — `CommandOutboxPort` (командный outbox api→pipeline) (**T024**/M5,
+  §12.9, фаза 2): DTO `OutboxCommand` + enum'ы `CommandKind`
+  (`notify`/`catchup`/`restart_pipeline`) и `CommandStatus`
+  (`pending`/`taken`/`done`/`failed`); порт `put` (producer) /
+  `take` (consumer, атомарный захват `pending` → `taken` через
+  `UPDATE ... WHERE status='pending'` + rowcount, at-least-once) /
+  `mark_done` / `mark_failed` / `get` / `prune`. Реализации —
+  `OutboxCommandRow` (миграция Alembic `0005`, индекс по `status`) на
+  SQLAlchemy (`RETURNING` для захвата) + InMemory; добавлены в
+  `StorageBundle`. Контрактный набор `CommandOutboxContract`
+  (FIFO-захват с лимитом, конкурентный захват без дублей, терминальные
+  пометки, no-op вне `taken`, prune терминальных) — на обоих бэкендах.
+  Producer/consumer-поллинг, виды команд и роли процессов — фаза 4.
+- Ops — `RuntimeConfigPort` (динамические настройки) (**T024**/M5, §12.8,
+  фаза 1): DTO `DynamicSettings` (sparse-override поверх файла: `None` —
+  действует значение TOML+env, не-`None` — БД-override) + порт
+  `load`/`save`/`reset`. Реализации — `AppSettingRow` (key-value JSON,
+  миграция Alembic `0004`) на SQLAlchemy + InMemory; добавлены в
+  `StorageBundle`. Контрактный набор `RuntimeConfigContract` (приоритет
+  override над файлом, частичное применение `save`, сброс) прогоняется
+  на обоих бэкендах. Применение на лету (worker/sender/log level) и
+  `/ui/settings` — последующие фазы T024.
 - Auth — регистрация-одобрение и админка пользователей (**T023**/M5,
   §12.7, фаза 3): завершение группы B. Cookie-вход для UI — страницы
   `/ui/login` (форма → JWT в HTTPOnly-cookie), `/ui/logout`,

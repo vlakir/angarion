@@ -279,6 +279,8 @@ def make_plugins(
             analytics=bundle.analytics,
             dead_letters=bundle.dead_letters,
             session=bundle.session,
+            runtime_config=bundle.runtime_config,
+            command_outbox=bundle.command_outbox,
         )
 
     plugin = AdapterPlugin(

@@ -1,0 +1,112 @@
+{% extends "angarion/base.html" %}
+{% block title %}angarion — settings{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Настройки и операции</h2>
+  <p>Статическая конфигурация (read-only) и динамика поверх файла (§12.8).</p>
+</hgroup>
+
+<article>
+  <header><strong>Конфигурация</strong> (из файла/env, секреты маскированы)</header>
+  <table>
+    <thead><tr><th>Ключ</th><th>Значение</th></tr></thead>
+    <tbody>
+      {% for row in static_rows %}
+      <tr><td><code>{{ row.key }}</code></td><td>{{ row.value }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</article>
+
+<article>
+  <header><strong>Управление</strong> — динамика на лету (override поверх файла)</header>
+  <form method="post" action="/ui/settings">
+    <label>log_level
+      <input type="text" name="log_level" placeholder="DEBUG/INFO/WARNING/...">
+    </label>
+    <div class="grid">
+      <label>sender_chat_per_second
+        <input type="text" name="sender_chat_per_second" placeholder="напр. 1.0">
+      </label>
+      <label>sender_account_per_minute
+        <input type="text" name="sender_account_per_minute" placeholder="напр. 20">
+      </label>
+    </div>
+    <div class="grid">
+      <label>catchup_max_messages_per_source
+        <input type="text" name="catchup_max_messages_per_source" placeholder="напр. 2000">
+      </label>
+      <label>catchup_max_age_days
+        <input type="text" name="catchup_max_age_days" placeholder="напр. 7">
+      </label>
+    </div>
+    <button type="submit">Сохранить override</button>
+  </form>
+
+  <table>
+    <thead><tr><th>Поле</th><th>Override</th><th>Источник</th><th></th></tr></thead>
+    <tbody>
+      {% for row in override_rows %}
+      <tr>
+        <td><code>{{ row.key }}</code></td>
+        <td>{{ row.value }}</td>
+        <td>{{ row.source }}</td>
+        <td>
+          {% if row.source == 'override' %}
+          <form method="post" action="/ui/settings/{{ row.key }}/reset">
+            <button type="submit" class="secondary outline">Сбросить к файлу</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</article>
+
+<article>
+  <header><strong>Пайплайны</strong> — пауза без потерь (§12.8)</header>
+  <table>
+    <thead><tr><th>Пайплайн</th><th>Статус</th><th></th></tr></thead>
+    <tbody>
+      {% for p in pipelines %}
+      <tr>
+        <td><code>{{ p.name }}</code></td>
+        <td>{{ 'на паузе' if p.paused else 'активен' }}</td>
+        <td>
+          {% if p.paused %}
+          <form method="post" action="/ui/pipelines/{{ p.name }}/resume">
+            <button type="submit">Возобновить</button>
+          </form>
+          {% else %}
+          <form method="post" action="/ui/pipelines/{{ p.name }}/pause">
+            <button type="submit" class="secondary">Пауза</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</article>
+
+<article>
+  <header><strong>Операции процесса</strong> (через командный outbox, §12.9)</header>
+  <form method="post" action="/ui/restart">
+    <button type="submit" class="contrast"
+            onclick="return confirm('Перезапустить pipeline-процесс?')">
+      Restart pipeline
+    </button>
+  </form>
+  <form method="post" action="/ui/catchup">
+    <label>Ручной catch-up источника
+      <select name="source_key" required>
+        {% for sk in source_keys %}
+        <option value="{{ sk }}">{{ sk }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">Запустить catch-up</button>
+  </form>
+</article>
+{% endblock %}

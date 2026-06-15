@@ -69,8 +69,27 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
   Каждая — своя ветка/PR/сессия; поднимается в `Doing` при взятии.
   При релизе 1.0.0 CHANGELOG содержит «T008 (вкл. бывш. T021),
   T022–T025» (уникальность T-ID).
-
 ## Done
+
+- **T024** — **M5/C** — Ops: динамика + админ-операции (§12.8) +
+  командный outbox + роли процессов (§12.9) (ветка `T024-ops`). [closed
+  2026-06-15, PR #18] Самая тяжёлая группа, четыре фазы:
+  (1) `RuntimeConfigPort` (`DynamicSettings`, миграция 0004) →
+  (2) `CommandOutboxPort` (`OutboxCommandRow`, миграция 0005,
+  атомарный `take` `pending`→`taken`) →
+  (3) применение на лету + пауза-без-потерь (worker defer-to-tail,
+  sender-троттлинг, log level через `SettingsNotifier`) →
+  (4) админ-операции (`/api/v1/admin` + `/ui/settings` + `/ui/dlq`:
+  pause/resume, requeue `attempt=0`, restart/catchup, аудит `admin_op`,
+  viewer→403), `OutboxConsumer` (notify/catchup/restart_pipeline),
+  неблокирующее уведомление о заявке (`[api.notify]`, закрыт долг T023),
+  роли процессов `--role pipeline|api|combined` / `--with-api`
+  (uvicorn-раннер), web composition root. Один squash-PR на группу.
+  Acceptance spec §4 закрыт: контракты портов (InMemory+SQLAlchemy),
+  пауза-без-потерь, requeue `attempt=0`, цикл notify, аудит `admin_op`,
+  viewer→403. ADR 2026-06-15 (§3.1 busy_timeout два писателя; per-write
+  ретрай → BACKLOG T028; reaper `taken` → BACKLOG T027). Дальше **T025**
+  Viz+Docs — последняя группа M5.
 
 - **T023** — **M5/B** — Auth (ветка `T023-auth`). [closed 2026-06-15,
   PR #17] fastapi-users (+`-db-sqlalchemy`), §12.7. Все три фазы:

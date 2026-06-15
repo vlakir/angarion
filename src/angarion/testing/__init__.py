@@ -11,6 +11,7 @@ Assert-rewriting подмодулей регистрирует pytest11-плаг
 """
 
 from angarion.testing.analytics_contract import AnalyticsContract
+from angarion.testing.command_outbox_contract import CommandOutboxContract
 from angarion.testing.cursor_contract import CursorStoreContract
 from angarion.testing.dead_letter_contract import DeadLetterContract
 from angarion.testing.dedup_contract import DedupStoreContract
@@ -31,6 +32,7 @@ from angarion.testing.factories import (
 from angarion.testing.outbox_contract import OutboxContract
 from angarion.testing.queue_contract import EventQueueContract
 from angarion.testing.registry_contract import MessageRegistryContract
+from angarion.testing.runtime_config_contract import RuntimeConfigContract
 from angarion.testing.session_contract import SessionStoreContract
 from angarion.testing.sink_contract import MessageSinkContract
 from angarion.testing.state_contract import StateStoreContract
@@ -41,6 +43,7 @@ __all__ = [
     'NOW',
     'SOURCE_KEY',
     'AnalyticsContract',
+    'CommandOutboxContract',
     'CursorStoreContract',
     'DeadLetterContract',
     'DedupStoreContract',
@@ -48,6 +51,7 @@ __all__ = [
     'MessageRegistryContract',
     'MessageSinkContract',
     'OutboxContract',
+    'RuntimeConfigContract',
     'SessionStoreContract',
     'StateStoreContract',
     'make_address',

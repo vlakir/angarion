@@ -120,6 +120,34 @@ class TestRun:
         )
         assert app.events == ['start', 'stop']
 
+    async def test_role_api_dispatches_to_serve_api(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[str] = []
+
+        async def fake_serve_api(_s: AngarionSettings, _stop: asyncio.Event) -> None:
+            seen.append('api')
+
+        monkeypatch.setattr(cli, '_install_signal_handlers', lambda stop: stop.set())
+        monkeypatch.setattr(cli, 'serve_api', fake_serve_api)
+        await cli.cmd_run(AngarionSettings(), role='api')
+        assert seen == ['api']
+
+    async def test_role_combined_dispatches_to_serve_combined(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[str] = []
+
+        async def fake_serve_combined(
+            _s: AngarionSettings, _stop: asyncio.Event
+        ) -> None:
+            seen.append('combined')
+
+        monkeypatch.setattr(cli, '_install_signal_handlers', lambda stop: stop.set())
+        monkeypatch.setattr(cli, 'serve_combined', fake_serve_combined)
+        await cli.cmd_run(AngarionSettings(), role='combined')
+        assert seen == ['combined']
+
 
 class TestLogin:
     async def test_saves_encrypted_session(self, tmp_path: Path) -> None:
@@ -166,13 +194,43 @@ class TestMain:
     ) -> None:
         calls: list[str] = []
 
-        async def fake_run(_settings: AngarionSettings) -> None:
-            calls.append('run')
+        async def fake_run(_settings: AngarionSettings, *, role: str = 'pipeline') -> None:
+            calls.append(role)
 
         monkeypatch.setattr(cli, 'cmd_run', fake_run)
         rc = cli.main(['run', '--config', str(_write_config(tmp_path))])
         assert rc == 0
-        assert calls == ['run']
+        assert calls == ['pipeline']
+
+    def test_run_with_api_dispatches_combined(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[str] = []
+
+        async def fake_run(_settings: AngarionSettings, *, role: str = 'pipeline') -> None:
+            calls.append(role)
+
+        monkeypatch.setattr(cli, 'cmd_run', fake_run)
+        rc = cli.main(
+            ['run', '--config', str(_write_config(tmp_path)), '--with-api']
+        )
+        assert rc == 0
+        assert calls == ['combined']
+
+    def test_run_role_api_flag(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[str] = []
+
+        async def fake_run(_settings: AngarionSettings, *, role: str = 'pipeline') -> None:
+            calls.append(role)
+
+        monkeypatch.setattr(cli, 'cmd_run', fake_run)
+        rc = cli.main(
+            ['run', '--config', str(_write_config(tmp_path)), '--role', 'api']
+        )
+        assert rc == 0
+        assert calls == ['api']
 
     def test_login_dispatch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

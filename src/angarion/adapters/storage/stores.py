@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -25,21 +25,27 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from angarion.adapters.registry_rules import effective_ts, id_at_least
 from angarion.adapters.storage.orm import (
     AnalyticsEventRow,
+    AppSettingRow,
     DeadLetterRow,
     InboundDedupRow,
     MessageRow,
     MessageVersionRow,
     OutboundRow,
+    OutboxCommandRow,
     ProcessorStateRow,
     SourceCursorRow,
     TelegramSessionRow,
 )
 from angarion.domain.models import (
     AnalyticsEvent,
+    CommandKind,
+    CommandStatus,
     DeadLetter,
     DeliveryReceipt,
+    DynamicSettings,
     OutboundMessage,
     OutboundRecord,
+    OutboxCommand,
     OutboxStatus,
     QueueEnvelope,
     RegistryDelta,
@@ -484,6 +490,173 @@ class SqliteStateStore:
         async with self._sessions() as session:
             keys = (await session.scalars(stmt)).all()
         return [key for key in keys if key.startswith(prefix)]
+
+
+class SqliteRuntimeConfig:
+    """``RuntimeConfigPort``: override'ы динамических настроек в ``app_settings``."""
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    @staticmethod
+    def _to_settings(raw: dict[str, Any]) -> DynamicSettings:
+        """Собрать DTO из строк, отбросив неизвестные ключи (эволюция схемы)."""
+        known = {k: v for k, v in raw.items() if k in DynamicSettings.model_fields}
+        return DynamicSettings(**known)
+
+    async def load(self) -> DynamicSettings:
+        """Все override'ы из таблицы как ``DynamicSettings``."""
+        async with self._sessions() as session:
+            rows = (await session.scalars(select(AppSettingRow))).all()
+        return self._to_settings({row.key: json.loads(row.value) for row in rows})
+
+    async def save(
+        self, patch: DynamicSettings, *, updated_by: str | None = None
+    ) -> DynamicSettings:
+        """Upsert не-None полей patch'а (insert-or-update по ключу)."""
+        now = datetime.now(UTC)
+        data = patch.model_dump(mode='json', exclude_none=True)
+        async with self._sessions() as session, session.begin():
+            for key, value in data.items():
+                stmt = sqlite_insert(AppSettingRow).values(
+                    key=key,
+                    value=json.dumps(value),
+                    updated_at=now,
+                    updated_by=updated_by,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[AppSettingRow.key],
+                    set_={
+                        'value': stmt.excluded.value,
+                        'updated_at': stmt.excluded.updated_at,
+                        'updated_by': stmt.excluded.updated_by,
+                    },
+                )
+                await session.execute(stmt)
+        return await self.load()
+
+    async def reset(self, key: str) -> DynamicSettings:
+        """Удалить override поля (возврат к файлу); неизвестное — no-op."""
+        async with self._sessions() as session, session.begin():
+            await session.execute(delete(AppSettingRow).where(AppSettingRow.key == key))
+        return await self.load()
+
+
+def _row_to_command(row: OutboxCommandRow) -> OutboxCommand:
+    return OutboxCommand(
+        uid=UUID(row.uid),
+        kind=CommandKind(row.kind),
+        payload=json.loads(row.payload),
+        status=CommandStatus(row.status),
+        created_at=row.created_at,
+        executed_at=row.executed_at,
+        result=row.result,
+        error=row.error,
+    )
+
+
+class SqliteCommandOutbox:
+    """``CommandOutboxPort``: командный мост api→pipeline (§12.9)."""
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def put(
+        self, kind: CommandKind, *, payload: dict[str, Any] | None = None
+    ) -> OutboxCommand:
+        """Поставить команду (``pending``); вернуть запись."""
+        command = OutboxCommand(
+            uid=uuid4(),
+            kind=kind,
+            payload=payload or {},
+            created_at=datetime.now(UTC),
+        )
+        row = OutboxCommandRow(
+            uid=str(command.uid),
+            kind=command.kind.value,
+            payload=json.dumps(command.payload),
+            status=command.status.value,
+            created_at=command.created_at,
+            executed_at=None,
+            result=None,
+            error=None,
+        )
+        async with self._sessions() as session, session.begin():
+            session.add(row)
+        return command
+
+    async def take(self, limit: int = 10) -> list[OutboxCommand]:
+        """Атомарно захватить ``pending`` → ``taken`` (FIFO), вернуть их."""
+        pending = (
+            select(OutboxCommandRow.uid)
+            .where(OutboxCommandRow.status == CommandStatus.PENDING.value)
+            .order_by(OutboxCommandRow.created_at, text('rowid'))
+            .limit(limit)
+        )
+        stmt = (
+            update(OutboxCommandRow)
+            .where(
+                OutboxCommandRow.uid.in_(pending),
+                OutboxCommandRow.status == CommandStatus.PENDING.value,
+            )
+            .values(status=CommandStatus.TAKEN.value)
+            .returning(OutboxCommandRow)
+        )
+        async with self._sessions() as session, session.begin():
+            rows = (await session.execute(stmt)).scalars().all()
+        return sorted(
+            (_row_to_command(row) for row in rows), key=lambda c: c.created_at
+        )
+
+    async def mark_done(self, uid: UUID, *, result: str | None = None) -> None:
+        """Терминальный переход ``taken`` → ``done``; иначе no-op."""
+        stmt = (
+            update(OutboxCommandRow)
+            .where(
+                OutboxCommandRow.uid == str(uid),
+                OutboxCommandRow.status == CommandStatus.TAKEN.value,
+            )
+            .values(
+                status=CommandStatus.DONE.value,
+                result=result,
+                executed_at=datetime.now(UTC),
+            )
+        )
+        async with self._sessions() as session, session.begin():
+            await session.execute(stmt)
+
+    async def mark_failed(self, uid: UUID, error: str) -> None:
+        """Терминальный переход ``taken`` → ``failed``; иначе no-op."""
+        stmt = (
+            update(OutboxCommandRow)
+            .where(
+                OutboxCommandRow.uid == str(uid),
+                OutboxCommandRow.status == CommandStatus.TAKEN.value,
+            )
+            .values(
+                status=CommandStatus.FAILED.value,
+                error=error,
+                executed_at=datetime.now(UTC),
+            )
+        )
+        async with self._sessions() as session, session.begin():
+            await session.execute(stmt)
+
+    async def get(self, uid: UUID) -> OutboxCommand | None:
+        """Команда по ``uid`` или None."""
+        async with self._sessions() as session:
+            row = await session.get(OutboxCommandRow, str(uid))
+        return _row_to_command(row) if row is not None else None
+
+    async def prune(self, older_than: AwareDatetime) -> int:
+        """Удалить терминальные команды, исполненные раньше порога."""
+        stmt = delete(OutboxCommandRow).where(
+            OutboxCommandRow.executed_at.is_not(None),
+            OutboxCommandRow.executed_at < older_than,
+        )
+        async with self._sessions() as session, session.begin():
+            result = await session.execute(stmt)
+        return _rowcount(result)
 
 
 def _row_to_event(row: AnalyticsEventRow) -> AnalyticsEvent:

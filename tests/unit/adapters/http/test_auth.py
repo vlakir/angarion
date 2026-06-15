@@ -24,8 +24,11 @@ from angarion.adapters.http.auth.users import password_helper
 from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.storage import (
     MemoryAnalytics,
+    MemoryCommandOutbox,
     MemoryCursorStore,
+    MemoryDeadLetters,
     MemoryMessageRegistry,
+    MemoryRuntimeConfig,
     MemoryStateStore,
 )
 from angarion.adapters.storage.engine import apply_migrations, make_engine
@@ -83,6 +86,9 @@ def build_app(sessions: async_sessionmaker | None, **api: object) -> object:
         registry=MemoryMessageRegistry(),
         state=MemoryStateStore(),
         cursors=MemoryCursorStore(),
+        runtime_config=MemoryRuntimeConfig(),
+        command_outbox=MemoryCommandOutbox(),
+        dead_letters=MemoryDeadLetters(),
         settings=settings,
         auth_sessionmaker=sessions,
     )
@@ -145,6 +151,35 @@ async def test_admin_reaches_admin_route(users_db: async_sessionmaker) -> None:
         resp = await client.get('/api/v1/admin-check', headers=headers)
         assert resp.status_code == 200
         assert resp.json() == {'login': 'a'}
+
+
+@pytest.mark.asyncio
+async def test_viewer_denied_admin_ops(users_db: async_sessionmaker) -> None:
+    """Админ-операции (§12.8) закрыты для viewer — 403."""
+    await seed_user(
+        users_db, login='v', password='pw', role=UserRole.VIEWER, is_active=True
+    )
+    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+        token = await login(client, 'v', 'pw')
+        headers = {'Authorization': f'Bearer {token}'}
+        assert (await client.post('/api/v1/admin/restart', headers=headers)).status_code == 403
+        assert (
+            await client.get('/api/v1/admin/settings', headers=headers)
+        ).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_reaches_admin_ops(users_db: async_sessionmaker) -> None:
+    """Админ ставит restart-команду в outbox — 202."""
+    await seed_user(
+        users_db, login='a', password='pw', role=UserRole.ADMIN, is_active=True
+    )
+    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+        token = await login(client, 'a', 'pw')
+        headers = {'Authorization': f'Bearer {token}'}
+        resp = await client.post('/api/v1/admin/restart', headers=headers)
+        assert resp.status_code == 202
+        assert resp.json()['kind'] == 'restart_pipeline'
 
 
 @pytest.mark.asyncio
@@ -213,6 +248,9 @@ async def test_auth_none_allows_admin_without_login() -> None:
         registry=MemoryMessageRegistry(),
         state=MemoryStateStore(),
         cursors=MemoryCursorStore(),
+        runtime_config=MemoryRuntimeConfig(),
+        command_outbox=MemoryCommandOutbox(),
+        dead_letters=MemoryDeadLetters(),
         settings=settings,
     )
     admin_router = APIRouter()
@@ -236,6 +274,9 @@ async def test_auth_none_non_local_bind_warns_but_builds() -> None:
         registry=MemoryMessageRegistry(),
         state=MemoryStateStore(),
         cursors=MemoryCursorStore(),
+        runtime_config=MemoryRuntimeConfig(),
+        command_outbox=MemoryCommandOutbox(),
+        dead_letters=MemoryDeadLetters(),
         settings=settings,
     )
     async with asgi_client(create_app(deps)) as client:
@@ -308,6 +349,9 @@ def test_create_app_fail_fast_without_secret(
         registry=MemoryMessageRegistry(),
         state=MemoryStateStore(),
         cursors=MemoryCursorStore(),
+        runtime_config=MemoryRuntimeConfig(),
+        command_outbox=MemoryCommandOutbox(),
+        dead_letters=MemoryDeadLetters(),
         settings=settings,
         auth_sessionmaker=users_db,
     )
@@ -566,6 +610,9 @@ def test_create_app_fail_fast_without_user_store() -> None:
         registry=MemoryMessageRegistry(),
         state=MemoryStateStore(),
         cursors=MemoryCursorStore(),
+        runtime_config=MemoryRuntimeConfig(),
+        command_outbox=MemoryCommandOutbox(),
+        dead_letters=MemoryDeadLetters(),
         settings=settings,
     )
     with pytest.raises(ConfigError):

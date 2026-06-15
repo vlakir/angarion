@@ -20,8 +20,11 @@ from angarion.adapters.http.deps import (
 from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.storage import (
     MemoryAnalytics,
+    MemoryCommandOutbox,
     MemoryCursorStore,
+    MemoryDeadLetters,
     MemoryMessageRegistry,
+    MemoryRuntimeConfig,
     MemoryStateStore,
 )
 
@@ -63,6 +66,9 @@ def _make_deps(**overrides: object) -> AngarionDeps:
         'registry': MemoryMessageRegistry(),
         'state': MemoryStateStore(),
         'cursors': MemoryCursorStore(),
+        'runtime_config': MemoryRuntimeConfig(),
+        'command_outbox': MemoryCommandOutbox(),
+        'dead_letters': MemoryDeadLetters(),
         'settings': make_settings(),
     }
     fields.update(overrides)

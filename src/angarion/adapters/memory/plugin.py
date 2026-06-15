@@ -22,11 +22,13 @@ from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.sink import MemorySink
 from angarion.adapters.memory.storage import (
     MemoryAnalytics,
+    MemoryCommandOutbox,
     MemoryCursorStore,
     MemoryDeadLetters,
     MemoryDedupStore,
     MemoryMessageRegistry,
     MemoryOutbox,
+    MemoryRuntimeConfig,
     MemorySessionStore,
     MemoryStateStore,
 )
@@ -95,6 +97,8 @@ def _make_storage(_config: 'StorageConfig') -> StorageBundle:
         analytics=MemoryAnalytics(),
         dead_letters=MemoryDeadLetters(),
         session=MemorySessionStore(),
+        runtime_config=MemoryRuntimeConfig(),
+        command_outbox=MemoryCommandOutbox(),
     )
 
 
