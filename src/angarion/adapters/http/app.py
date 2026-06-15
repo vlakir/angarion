@@ -27,6 +27,8 @@ from angarion.adapters.http.auth.pages import router_admin, router_public
 from angarion.adapters.http.auth.state import AuthState
 from angarion.adapters.http.auth.users import login_router, register_router
 from angarion.adapters.http.deps import AngarionDeps
+from angarion.adapters.http.ops import router as admin_api_router
+from angarion.adapters.http.ops_pages import router_ops
 from angarion.adapters.http.routes import public_router
 from angarion.adapters.http.routes import router as api_v1_router
 from angarion.adapters.http.templating import Page, build_nav, build_templates
@@ -101,6 +103,8 @@ def create_app(
         app.include_router(router_public)
         app.include_router(router_admin, dependencies=admin_only)
     app.include_router(api_v1_router, dependencies=protected)
+    app.include_router(admin_api_router, dependencies=admin_only)
+    app.include_router(router_ops, dependencies=admin_only)
     app.include_router(ui_router, dependencies=protected)
     app.mount('/ui/static', StaticFiles(directory=_STATIC_DIR), name='static')
     for user_router in routers:

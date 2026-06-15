@@ -40,7 +40,9 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from angarion.adapters.http.auth.notify import notify_registration
 from angarion.adapters.http.auth.state import AuthState
+from angarion.adapters.http.deps import get_deps
 from angarion.adapters.storage.orm import UserRow
 
 
@@ -181,6 +183,8 @@ async def register(
     user_db: Annotated[AngarionUserDatabase, Depends(get_user_db)],
 ) -> UserRow:
     """Саморегистрация-заявка (§12.7) — JSON-обёртка ``create_pending_user``."""
-    return await create_pending_user(
+    user = await create_pending_user(
         user_db, request.app.state.auth, payload.login, payload.password
     )
+    await notify_registration(get_deps(request), login=payload.login)
+    return user

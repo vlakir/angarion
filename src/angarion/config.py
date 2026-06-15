@@ -109,6 +109,8 @@ class WorkerConfig(BaseModel):
     backoff_cap: float = Field(default=60.0, gt=0)
     poll_interval: float = Field(default=1.0, gt=0)
     prune_interval: float = Field(default=0.0, ge=0)
+    outbox_poll_seconds: float = Field(default=5.0, gt=0)
+    """Период опроса командного outbox consumer'ом (§12.9, FR-5; default 5)."""
 
 
 class CatchupConfig(BaseModel):
@@ -166,6 +168,31 @@ class TelegramConfig(BaseModel):
     sender: SenderConfig = SenderConfig()
 
 
+class NotifyConfig(BaseModel):
+    """
+    Секция ``[api.notify]`` (§12.7/§12.9, T024): цель уведомления о
+    заявке на регистрацию.
+
+    Когда заданы ``account`` (ссылка на ``[accounts.*]``) и ``chat_id``,
+    регистрация ставит команду ``notify`` в командный outbox; consumer
+    (pipeline-процесс) отправляет сообщение через ``MessageSinkPort``.
+    Пустой ``account``/``chat_id`` — уведомление отключено (заявки видны
+    только в ``/ui/users``); сбой отправки неблокирующий (``notify_failed``
+    в аналитику, на регистрацию не влияет, §12.9 FR-5).
+    """
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    account: str = ''
+    chat_id: str = ''
+    thread_id: str | None = None
+
+    @property
+    def enabled(self) -> bool:
+        """Уведомление активно, только когда заданы и аккаунт, и чат."""
+        return bool(self.account and self.chat_id)
+
+
 class ApiConfig(BaseModel):
     """
     Секция ``[api]`` (M5, §12.5/§12.7): web-адаптер и аутентификация.
@@ -193,6 +220,8 @@ class ApiConfig(BaseModel):
     cookie_secure: bool = False
     registration_enabled: bool = True
     max_pending_registrations: int = Field(default=20, ge=1)
+    notify: NotifyConfig = NotifyConfig()
+    """Цель уведомления о заявке на регистрацию (``[api.notify]``, §12.9)."""
 
 
 class EndpointConfig(BaseModel):

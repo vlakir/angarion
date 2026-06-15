@@ -3,10 +3,15 @@ CLI приложения (§11.8, FR «CLI и запуск»; M3, T005, фаза
 
 Три команды поверх composition root (``bootstrap``):
 
-- ``angarion run --config app.toml`` — боевой запуск роли ``pipeline``
-  (ingest + worker + Telethon-клиенты в одном процессе, §12.1) с graceful
-  shutdown по SIGINT/SIGTERM (стоп приёма → дообработка → курсоры →
-  закрытие клиентов и БД, §14.7).
+- ``angarion run --config app.toml [--role pipeline|api|combined]
+  [--with-api]`` — боевой запуск по роли процесса (§12.9): ``pipeline``
+  (ingest + worker + Telethon + consumer командного outbox в одном
+  процессе, §12.1, по умолчанию), ``api`` (отдельный web-процесс —
+  producer outbox + дашборд, без конвейера), ``combined`` / ``--with-api``
+  (конвейер + uvicorn в одном процессе). Graceful shutdown по
+  SIGINT/SIGTERM (стоп приёма → дообработка → курсоры → закрытие клиентов
+  и БД, §14.7); в combined команда ``restart_pipeline`` гасит процесс
+  (§3.2, супервизор поднимает).
 - ``angarion migrate --config app.toml`` — применение миграций Alembic
   (sqlite-бэкенд).
 - ``angarion login --config app.toml --account NAME`` — интерактивная
@@ -31,6 +36,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from angarion.adapters.http.server import serve_api, serve_combined
 from angarion.adapters.storage.engine import apply_migrations
 from angarion.adapters.telegram.plugin import TelegramAccountConfig
 from angarion.adapters.telegram.realclient import login_and_export_session
@@ -72,6 +78,17 @@ def _build_parser() -> argparse.ArgumentParser:
         cmd.add_argument('--config', required=True, type=Path)
         if name == 'login':
             cmd.add_argument('--account', required=True)
+        if name == 'run':
+            # Роли процессов (§12.9, T024): pipeline (по умолчанию — приём
+            # + worker + Telethon), api (отдельный web-процесс), combined
+            # (конвейер + uvicorn в одном процессе). ``--with-api`` —
+            # сокращение для combined.
+            cmd.add_argument(
+                '--role',
+                choices=('pipeline', 'api', 'combined'),
+                default='pipeline',
+            )
+            cmd.add_argument('--with-api', action='store_true')
     return parser
 
 
@@ -111,15 +128,26 @@ async def _serve(app: AngarionApp, stop: asyncio.Event) -> None:
 async def cmd_run(
     settings: AngarionSettings,
     *,
+    role: str = 'pipeline',
     app_factory: Callable[[AngarionSettings], AngarionApp] = build_app,
 ) -> None:
-    """Боевой запуск конвейера с graceful shutdown (FR «CLI», §14.7)."""
-    app = app_factory(settings)
+    """
+    Боевой запуск с graceful shutdown по роли процесса (§12.9, §14.7).
+
+    ``pipeline`` — приём + worker + Telethon (и consumer командного
+    outbox); ``api`` — отдельный web-процесс (producer outbox + дашборд,
+    без конвейера); ``combined`` — конвейер + uvicorn в одном процессе.
+    """
     stop = asyncio.Event()
     _install_signal_handlers(stop)
-    _log.info('starting')
-    await _serve(app, stop)
-    _log.info('stopped')
+    _log.info('starting', role=role)
+    if role == 'api':
+        await serve_api(settings, stop)
+    elif role == 'combined':
+        await serve_combined(settings, stop)
+    else:
+        await _serve(app_factory(settings), stop)
+    _log.info('stopped', role=role)
 
 
 async def cmd_login(
@@ -156,7 +184,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == 'migrate':
             cmd_migrate(settings)
         elif args.command == 'run':
-            asyncio.run(cmd_run(settings))
+            role = 'combined' if args.with_api else args.role
+            asyncio.run(cmd_run(settings, role=role))
         elif args.command == 'login':
             asyncio.run(cmd_login(settings, args.account))
     except ConfigError as exc:

@@ -19,6 +19,7 @@ pydantic-моделей вычисляются в runtime.
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import entry_points
@@ -37,6 +38,7 @@ from pydantic import (
 from angarion.application import processors
 from angarion.application.delivery import DeliveryWorker
 from angarion.application.ingest import IngestService
+from angarion.application.outbox_consumer import OutboxConsumer
 from angarion.application.router import Router, RouteSpec
 from angarion.application.worker import PipelineBinding, PipelineWorker
 from angarion.config import AngarionSettings, EndpointConfig, PipelineConfig
@@ -374,6 +376,30 @@ def _catchup_degradation(
     return tuple(sorted(degraded))
 
 
+def _make_catchup(
+    listeners: tuple[Listener, ...],
+) -> Callable[[str], Awaitable[None]]:
+    """
+    Колбэк ручного catch-up для outbox-consumer'а (§12.9): пробует
+    listener'ы по очереди, пока чей-то ``catchup`` не примет источник
+    (нерезолвленный → ``KeyError``, пробуем следующий). Ни один не принял
+    → ``KeyError`` наружу (consumer пометит команду ``failed``).
+    """
+
+    async def run_catchup(source_key: str) -> None:
+        for listener in listeners:
+            try:
+                await listener.catchup(source_key)
+            except KeyError:
+                continue
+            else:
+                return
+        msg = f'источник не резолвлен ни одним listener: {source_key}'
+        raise KeyError(msg)
+
+    return run_catchup
+
+
 class _DispatchSink:
     """Маршрутизация исходящих по платформе ``send_via.messenger``."""
 
@@ -452,11 +478,13 @@ class AngarionApp(BaseModel):
     ingest: IngestService
     worker: PipelineWorker
     delivery: DeliveryWorker
+    outbox_consumer: OutboxConsumer
     listeners: tuple[Listener, ...]
     queue: EventQueuePort
     storage: StorageBundle
     sinks: dict[str, MessageSinkPort]
     catchup_unavailable: tuple[str, ...]
+    restart_event: asyncio.Event
 
     _tasks: list[asyncio.Task[None]] = PrivateAttr(default_factory=list)
 
@@ -475,6 +503,7 @@ class AngarionApp(BaseModel):
         self._tasks = [
             asyncio.create_task(self.worker.run(), name='angarion-worker'),
             asyncio.create_task(self.delivery.run(), name='angarion-delivery'),
+            asyncio.create_task(self.outbox_consumer.run(), name='angarion-outbox'),
         ]
         prune_task = self._make_prune_task()
         if prune_task is not None:
@@ -550,6 +579,22 @@ def build_storage(
     ).make(settings.storage)
 
 
+def build_queue(
+    settings: AngarionSettings, *, plugins: LoadedPlugins | None = None
+) -> EventQueuePort:
+    """
+    Собрать очередь по ``[queue].backend`` (резолв по реестру).
+
+    Отдельная точка входа для api-роли (§12.9, T024): web-процесс
+    дотягивается до очереди (диагностика, requeue DLQ) без построения
+    конвейера и подключения Telethon-клиентов.
+    """
+    registry = plugins if plugins is not None else load_plugins()
+    return _resolve_backend(registry.queues, settings.queue.backend, 'очереди').make(
+        settings.queue
+    )
+
+
 def build_app(
     settings: AngarionSettings, *, plugins: LoadedPlugins | None = None
 ) -> AngarionApp:
@@ -589,15 +634,17 @@ def build_app(
         analytics=storage.analytics,
         dead_letters=storage.dead_letters,
         state=storage.state,
+        runtime_config=storage.runtime_config,
         pipelines=bindings,
         max_retries=settings.worker.max_retries,
         backoff_base=settings.worker.backoff_base,
         backoff_cap=settings.worker.backoff_cap,
         log=get_logger('angarion.worker'),
     )
+    dispatch_sink = _DispatchSink(sinks)
     delivery = DeliveryWorker(
         outbox=storage.outbox,
-        sink=_DispatchSink(sinks),
+        sink=dispatch_sink,
         analytics=storage.analytics,
         max_retries=settings.worker.max_retries,
         backoff_base=settings.worker.backoff_base,
@@ -605,14 +652,26 @@ def build_app(
         poll_interval=settings.worker.poll_interval,
         log=get_logger('angarion.delivery'),
     )
+    restart_event = asyncio.Event()
+    outbox_consumer = OutboxConsumer(
+        command_outbox=storage.command_outbox,
+        sink=dispatch_sink,
+        analytics=storage.analytics,
+        catchup=_make_catchup(listeners),
+        request_restart=restart_event.set,
+        poll_seconds=settings.worker.outbox_poll_seconds,
+        log=get_logger('angarion.outbox'),
+    )
     return AngarionApp(
         settings=settings,
         ingest=ingest,
         worker=worker,
         delivery=delivery,
+        outbox_consumer=outbox_consumer,
         listeners=listeners,
         queue=queue,
         storage=storage,
         sinks=sinks,
         catchup_unavailable=_catchup_degradation(settings, accounts),
+        restart_event=restart_event,
     )

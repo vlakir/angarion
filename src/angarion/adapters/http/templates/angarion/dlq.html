@@ -1,0 +1,33 @@
+{% extends "angarion/base.html" %}
+{% block title %}angarion — DLQ{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Dead Letter Queue</h2>
+  <p>Сообщения, исчерпавшие ретраи (§8). Requeue возвращает в очередь с <code>attempt=0</code>.</p>
+</hgroup>
+
+{% if not letters %}
+<p>DLQ пуста.</p>
+{% else %}
+<table>
+  <thead>
+    <tr><th>Пайплайн</th><th>Событие</th><th>Ошибка</th><th>Когда</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for letter in letters %}
+    <tr>
+      <td><code>{{ letter.envelope.pipeline }}</code></td>
+      <td><code>{{ letter.envelope.event.uid }}</code></td>
+      <td>{{ letter.error }}</td>
+      <td>{{ letter.failed_at }}</td>
+      <td>
+        <form method="post" action="/ui/dlq/{{ letter.uid }}/requeue">
+          <button type="submit">Requeue</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

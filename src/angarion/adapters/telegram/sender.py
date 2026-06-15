@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from angarion.adapters.telegram.client import TelegramClientPort
     from angarion.adapters.telegram.registry import ClientPool
     from angarion.domain.models import OutboundMessage
+    from angarion.domain.ports import RuntimeConfigPort
 
 
 class TelegramSendOptions(BaseModel):
@@ -83,6 +84,7 @@ class TelegramSender:
         transient_max_attempts: int = 3,
         backoff_base: float = 1.0,
         backoff_cap: float = 60.0,
+        runtime_config: RuntimeConfigPort | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
@@ -91,6 +93,12 @@ class TelegramSender:
             raise ValueError(msg)
         self._pool = pool
         self._log = log
+        self._runtime_config = runtime_config
+        # файловые пороги (TOML+env) — база, поверх которой ложится
+        # динамический override §12.8; ``_chat_per_second`` — текущий
+        # эффективный темп (override либо файл при отсутствии override'а)
+        self._file_chat_per_second = chat_per_second
+        self._file_account_per_minute = account_per_minute
         self._chat_per_second = chat_per_second
         self._account_per_minute = account_per_minute
         self._flood_max_retries = flood_max_retries
@@ -117,6 +125,7 @@ class TelegramSender:
         account_id = msg.send_via.account_id
         client = self._pool.clients[account_id]
         opts = TelegramSendOptions.model_validate(msg.extra)
+        await self._apply_dynamic_limits()
         await self._throttle(account_id, msg.target.chat_id)
         reply_to = (
             int(msg.target.thread_id) if msg.target.thread_id is not None else None
@@ -131,6 +140,40 @@ class TelegramSender:
         return DeliveryReceipt(
             external_id=str(message_id), delivered_at=datetime.now(UTC)
         )
+
+    async def _apply_dynamic_limits(self) -> None:
+        """
+        §12.8: применить динамические лимиты троттлинга «на лету».
+
+        Эффективный темп = override (не-``None`` поле ``DynamicSettings``)
+        либо файловый порог при его отсутствии — поэтому сброс override'а
+        возвращает файловое значение. При изменении переконфигурируем уже
+        созданные бакеты; лениво создаваемые позже подхватят новый темп
+        сами (``_chat_bucket`` читает ``self._chat_per_second``).
+        """
+        if self._runtime_config is None:
+            return
+        settings = await self._runtime_config.load()
+        chat_rate = (
+            settings.sender_chat_per_second
+            if settings.sender_chat_per_second is not None
+            else self._file_chat_per_second
+        )
+        if chat_rate != self._chat_per_second:
+            self._chat_per_second = chat_rate
+            for bucket in self._chat_buckets.values():
+                bucket.reconfigure(rate=chat_rate, capacity=max(chat_rate, 1.0))
+        account_rate = (
+            settings.sender_account_per_minute
+            if settings.sender_account_per_minute is not None
+            else self._file_account_per_minute
+        )
+        if account_rate != self._account_per_minute:
+            self._account_per_minute = account_rate
+            for bucket in self._account_buckets.values():
+                bucket.reconfigure(
+                    rate=account_rate / 60.0, capacity=max(account_rate, 1.0)
+                )
 
     async def _throttle(self, account_id: str, chat_id: str) -> None:
         await self._chat_bucket(account_id, chat_id).acquire()

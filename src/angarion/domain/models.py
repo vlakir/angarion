@@ -264,6 +264,83 @@ class SourceCursor(DomainModel):
     updated_at: AwareDatetime
 
 
+class DynamicSettings(DomainModel):
+    """
+    Динамические настройки (§12.8): sparse-override поверх файла.
+
+    Каждое поле — ``None`` означает «нет override'а, действует значение
+    из TOML+env»; не-``None`` — БД-override (приоритет над файлом).
+    ``paused_pipelines`` — чисто динамическое (файлового аналога нет),
+    ``None`` трактуется как «ничего не на паузе». ``save(patch)``
+    применяет частично — ``None``-поля patch'а не трогают сохранённое.
+    """
+
+    paused_pipelines: frozenset[str] | None = None
+    registration_enabled: bool | None = None
+    max_pending_registrations: int | None = None
+    log_level: str | None = None
+    sender_chat_per_second: float | None = None
+    sender_account_per_minute: float | None = None
+    catchup_max_messages_per_source: int | None = None
+    catchup_max_age_days: int | None = None
+
+
+class CommandKind(StrEnum):
+    """
+    Виды команд командного outbox v1 (§12.9): мост api→pipeline.
+
+    ``notify`` — уведомление через ``MessageSinkPort`` (заявка на
+    регистрацию §12.7); ``catchup`` — ручной catch-up источника
+    (``payload['source_key']``); ``restart_pipeline`` — graceful
+    перезапуск pipeline-процесса. Расширение — новый член enum'а;
+    механизм outbox при этом не меняется (диспетчеризацию по виду
+    делает consumer).
+    """
+
+    NOTIFY = 'notify'
+    CATCHUP = 'catchup'
+    RESTART_PIPELINE = 'restart_pipeline'
+
+
+class CommandStatus(StrEnum):
+    """
+    Статус команды в командном outbox (§12.9).
+
+    ``taken`` — команда атомарно захвачена consumer'ом на исполнение
+    (pending → taken); терминальные ``done`` / ``failed`` ставятся после
+    исполнения. ``failed`` — неуспех исполнения, виден в аудите (разбор
+    ручной, аналог DLQ для команд).
+    """
+
+    PENDING = 'pending'
+    TAKEN = 'taken'
+    DONE = 'done'
+    FAILED = 'failed'
+
+
+class OutboxCommand(DomainModel):
+    """
+    Команда командного outbox (§12.9, M5/C T024): мост из api-процесса
+    в pipeline-процесс. Producer (api) кладёт ``put``, consumer
+    (pipeline) атомарно захватывает ``take`` (pending → taken),
+    исполняет и помечает терминально (``done`` / ``failed``).
+
+    ``payload`` — параметры команды (JSON; например ``source_key`` для
+    ``catchup``). ``executed_at`` — момент терминального исхода; по нему
+    работает retention. ``result`` / ``error`` — итог исполнения (для
+    аудита и ``/ui``).
+    """
+
+    uid: UUID
+    kind: CommandKind
+    payload: dict[str, Any] = Field(default_factory=dict)
+    status: CommandStatus = CommandStatus.PENDING
+    created_at: AwareDatetime
+    executed_at: AwareDatetime | None = None
+    result: str | None = None
+    error: str | None = None
+
+
 @runtime_checkable
 class ScopedState(Protocol):
     """

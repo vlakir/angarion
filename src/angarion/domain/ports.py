@@ -1,9 +1,9 @@
 """
 Асинхронные Protocol-порты ядра (§5 ТЗ; объём M1 — C-1 спеки T002).
 
-``RuntimeConfigPort`` и ``CommandOutboxPort`` сознательно не
-определены: появятся аддитивно в M5 вместе со своими DTO (C-1: порт
-без потребителя — мёртвый контракт). Протокол ``Listener`` живёт в
+``RuntimeConfigPort`` (§12.8) и ``CommandOutboxPort`` (§12.9) добавлены
+аддитивно в M5 (T024) вместе со своими DTO (C-1: порт без потребителя —
+мёртвый контракт). Протокол ``Listener`` живёт в
 ``angarion.domain.plugin`` (§12.11).
 
 Методы ``prune()`` — ретеншн-очистка §17.3 (A-7): в M1 реализуются и
@@ -15,17 +15,21 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from typing import Any
     from uuid import UUID
 
     from pydantic import AwareDatetime, BaseModel
 
     from angarion.domain.models import (
         AnalyticsEvent,
+        CommandKind,
         DeadLetter,
         DeliveryReceipt,
+        DynamicSettings,
         InboundEvent,
         OutboundMessage,
         OutboundRecord,
+        OutboxCommand,
         PipelineContextData,
         ProcessingResult,
         ProcessorServices,
@@ -232,6 +236,63 @@ class StateStorePort(Protocol):
 
     async def keys(self, ns: str, prefix: str = '') -> list[str]:
         """Ключи namespace с данным префиксом, отсортированы."""
+
+
+@runtime_checkable
+class RuntimeConfigPort(Protocol):
+    """
+    Динамические настройки «на лету» (§12.8): sparse-override поверх
+    файла, хранится в БД (поверх TOML+env). Компоненты читают ``load()``
+    в начале итерации (пауза пайплайна, лимиты троттлинга).
+    """
+
+    async def load(self) -> DynamicSettings:
+        """Текущие override'ы (``None``-поле — действует значение файла)."""
+
+    async def save(
+        self, patch: DynamicSettings, *, updated_by: str | None = None
+    ) -> DynamicSettings:
+        """Применить частично: не-``None`` поля patch'а → override; вернуть итог."""
+
+    async def reset(self, key: str) -> DynamicSettings:
+        """Удалить override поля по имени (возврат к файлу); неизвестное — no-op."""
+
+
+@runtime_checkable
+class CommandOutboxPort(Protocol):
+    """
+    Командный outbox (§12.9): мост api→pipeline. Producer (api-процесс)
+    кладёт команды ``put``, consumer (pipeline-процесс, фоновый поллинг)
+    атомарно захватывает ``take`` (pending → taken) и помечает результат.
+
+    Семантика at-least-once с защитой по статусу: захват и пометка —
+    ``UPDATE ... WHERE status=...`` с проверкой rowcount, поэтому одну
+    команду не возьмут/не закроют дважды; исполнение consumer'а должно
+    быть идемпотентным (§12.9).
+    """
+
+    async def put(
+        self, kind: CommandKind, *, payload: dict[str, Any] | None = None
+    ) -> OutboxCommand:
+        """Поставить команду в очередь (статус ``pending``); вернуть запись."""
+
+    async def take(self, limit: int = 10) -> list[OutboxCommand]:
+        """
+        Атомарно захватить до ``limit`` ``pending``-команд (FIFO),
+        переведя их в ``taken``; вернуть захваченные (consumer).
+        """
+
+    async def mark_done(self, uid: UUID, *, result: str | None = None) -> None:
+        """Терминально ``taken`` → ``done``; не-``taken``/неизвестная — no-op."""
+
+    async def mark_failed(self, uid: UUID, error: str) -> None:
+        """Терминально ``taken`` → ``failed``; не-``taken``/неизвестная — no-op."""
+
+    async def get(self, uid: UUID) -> OutboxCommand | None:
+        """Команда по ``uid`` или ``None``."""
+
+    async def prune(self, older_than: AwareDatetime) -> int:
+        """Удалить терминальные команды с ``executed_at`` старше порога."""
 
 
 @runtime_checkable

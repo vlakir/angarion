@@ -6,9 +6,16 @@ import pytest
 from telegram_fakes import FakePool, FakeTelegramClient
 from test_telegram_throttle import FakeClock
 
+from angarion.adapters.memory.storage import MemoryRuntimeConfig
 from angarion.adapters.telegram.client import FloodWaitError, TransientSendError
 from angarion.adapters.telegram.sender import TelegramSender, as_peer
-from angarion.domain.models import AccountRef, Address, DeliveryReceipt, OutboundMessage
+from angarion.domain.models import (
+    AccountRef,
+    Address,
+    DeliveryReceipt,
+    DynamicSettings,
+    OutboundMessage,
+)
 from angarion.log import get_logger
 
 
@@ -169,4 +176,75 @@ async def test_account_rate_throttles_across_chats() -> None:
         await sender.send(_msg(chat_id=f'-10{i:04d}', text=str(i)))
     assert clock.slept == []
     await sender.send(_msg(chat_id='-19999', text='over'))  # 61-е → ждём ~1с
+    assert clock.slept == [1.0]
+
+
+async def test_dynamic_chat_limit_overrides_file() -> None:
+    """§12.8: динамический override лимита чата применяется на лету."""
+    client = FakeTelegramClient()
+    clock = FakeClock()
+    rt = MemoryRuntimeConfig()
+    sender = _sender(
+        {'main': client},
+        clock,
+        chat_per_second=1000.0,  # файл — фактически без лимита
+        account_per_minute=1_000_000.0,
+        runtime_config=rt,
+    )
+    await rt.save(DynamicSettings(sender_chat_per_second=1.0))  # ужали через БД
+    await sender.send(_msg(text='1'))
+    await sender.send(_msg(text='2'))  # тот же чат, override 1/с → ждём 1с
+    assert clock.slept == [1.0]
+
+
+async def test_dynamic_account_limit_overrides_file() -> None:
+    client = FakeTelegramClient()
+    clock = FakeClock()
+    rt = MemoryRuntimeConfig()
+    sender = _sender(
+        {'main': client},
+        clock,
+        chat_per_second=1000.0,
+        account_per_minute=1_000_000.0,
+        runtime_config=rt,
+    )
+    await rt.save(DynamicSettings(sender_account_per_minute=60.0))  # 60/min = 1/с
+    for i in range(60):  # стартовый бакет аккаунта (capacity 60)
+        await sender.send(_msg(chat_id=f'-10{i:04d}', text=str(i)))
+    assert clock.slept == []
+    await sender.send(_msg(chat_id='-19999', text='over'))  # 61-е → ждём ~1с
+    assert clock.slept == [1.0]
+
+
+async def test_dynamic_limit_reset_reverts_to_file() -> None:
+    """Сброс override'а возвращает файловый порог (новые бакеты — без лимита)."""
+    client = FakeTelegramClient()
+    clock = FakeClock()
+    rt = MemoryRuntimeConfig()
+    sender = _sender(
+        {'main': client},
+        clock,
+        chat_per_second=1000.0,
+        account_per_minute=1_000_000.0,
+        runtime_config=rt,
+    )
+    await rt.save(DynamicSettings(sender_chat_per_second=1.0))
+    await sender.send(_msg(chat_id='-100111', text='1'))
+    await sender.send(_msg(chat_id='-100111', text='2'))  # под override'ом → 1с
+    assert clock.slept == [1.0]
+    await rt.reset('sender_chat_per_second')  # возврат к файлу (1000/с)
+    for i in range(5):  # свежий чат: бакет на файловом темпе, без ожидания
+        await sender.send(_msg(chat_id='-100222', text=f'r{i}'))
+    assert clock.slept == [1.0]  # новых ожиданий не добавилось
+
+
+async def test_no_runtime_config_keeps_file_limits() -> None:
+    """Без ``runtime_config`` поведение чисто файловое (обратная совместимость)."""
+    client = FakeTelegramClient()
+    clock = FakeClock()
+    sender = _sender(
+        {'main': client}, clock, chat_per_second=1.0, account_per_minute=1_000_000.0
+    )
+    await sender.send(_msg(text='1'))
+    await sender.send(_msg(text='2'))  # файловый 1/с → ждём 1с
     assert clock.slept == [1.0]

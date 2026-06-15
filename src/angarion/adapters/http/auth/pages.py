@@ -28,6 +28,7 @@ from angarion.adapters.http.auth.admin import (
     remove_user,
 )
 from angarion.adapters.http.auth.deps import COOKIE_NAME, AdminUser
+from angarion.adapters.http.auth.notify import notify_registration
 from angarion.adapters.http.auth.users import (
     AngarionUserDatabase,
     UserRole,
@@ -36,6 +37,7 @@ from angarion.adapters.http.auth.users import (
     jwt_strategy_for,
     password_helper,
 )
+from angarion.adapters.http.deps import get_deps
 
 router_public = APIRouter(prefix='/ui', tags=['ui-auth'])
 router_admin = APIRouter(prefix='/ui', tags=['ui-users'])
@@ -131,6 +133,7 @@ async def register_submit(
             {'error': str(exc.detail)},
             status_code=exc.status_code,
         )
+    await notify_registration(get_deps(request), login=username)
     return _templates(request).TemplateResponse(
         request, 'angarion/register.html', {'submitted': True}
     )

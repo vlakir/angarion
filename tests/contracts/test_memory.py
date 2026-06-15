@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 from angarion.testing import (
     AnalyticsContract,
+    CommandOutboxContract,
     CursorStoreContract,
     DeadLetterContract,
     DedupStoreContract,
@@ -15,6 +16,7 @@ from angarion.testing import (
     MessageRegistryContract,
     MessageSinkContract,
     OutboxContract,
+    RuntimeConfigContract,
     SessionStoreContract,
     StateStoreContract,
     make_outbound,
@@ -24,11 +26,13 @@ from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.sink import MemorySink
 from angarion.adapters.memory.storage import (
     MemoryAnalytics,
+    MemoryCommandOutbox,
     MemoryCursorStore,
     MemoryDeadLetters,
     MemoryDedupStore,
     MemoryMessageRegistry,
     MemoryOutbox,
+    MemoryRuntimeConfig,
     MemorySessionStore,
     MemoryStateStore,
 )
@@ -89,6 +93,18 @@ class TestMemoryDeadLetters(DeadLetterContract):
         return MemoryDeadLetters()
 
 
+class TestMemoryRuntimeConfig(RuntimeConfigContract):
+    @pytest.fixture
+    def runtime_config(self) -> MemoryRuntimeConfig:
+        return MemoryRuntimeConfig()
+
+
+class TestMemoryCommandOutbox(CommandOutboxContract):
+    @pytest.fixture
+    def command_outbox(self) -> MemoryCommandOutbox:
+        return MemoryCommandOutbox()
+
+
 class TestMemorySink(MessageSinkContract):
     @pytest.fixture
     def sink(self) -> MemorySink:
@@ -120,6 +136,8 @@ PORT_CONFORMANCE = [
     (MemoryStateStore, ports.StateStorePort),
     (MemoryAnalytics, ports.AnalyticsPort),
     (MemoryDeadLetters, ports.DeadLetterPort),
+    (MemoryRuntimeConfig, ports.RuntimeConfigPort),
+    (MemoryCommandOutbox, ports.CommandOutboxPort),
 ]
 
 

@@ -4,8 +4,8 @@ ORM-сущности SQLite-бэкенда (§12.3 ТЗ; FR-3, FR-4 спеки T
 
 Состав — объём M2. ``DeliveredDedupRow`` из §12.3 сознательно не
 создаётся (C-9 T002: выходная идемпотентность — первичный ключ
-outbox); вместо него — ``OutboundRow``. ``UserRow``, ``AppSettingRow``,
-``OutboxCommandRow`` придут в M5 своими миграциями (C-2).
+outbox); вместо него — ``OutboundRow``. ``UserRow`` (M5/B), ``AppSettingRow`` и
+``OutboxCommandRow`` (M5/C) добавлены в M5 своими миграциями (C-2).
 
 Время — ``UTCDateTime`` (A-4, §17.4): TEXT ISO 8601 с явным смещением,
 нормализация в UTC; фиксированная ширина (``timespec='microseconds'``)
@@ -284,3 +284,44 @@ class UserRow(Base):
     registered_at: Mapped[datetime]
     approved_at: Mapped[datetime | None]
     approved_by: Mapped[str | None]
+
+
+class AppSettingRow(Base):
+    """
+    Override динамической настройки (§12.8, M5/C T024): key-value JSON
+    поверх файла. ``key`` — имя поля ``DynamicSettings`` (PK); ``value`` —
+    JSON-сериализация значения; ``updated_by`` — автор изменения (аудит,
+    источник «override» в ``/ui/settings``). Отсутствие строки = «нет
+    override'а, действует значение TOML+env».
+    """
+
+    __tablename__ = 'app_settings'
+
+    key: Mapped[str] = mapped_column(primary_key=True)
+    value: Mapped[str]
+    updated_at: Mapped[datetime]
+    updated_by: Mapped[str | None]
+
+
+class OutboxCommandRow(Base):
+    """
+    Команда командного outbox (§12.9, M5/C T024): персистентная форма
+    ``OutboxCommand``. ``uid`` — PK (handle для ``take``/``mark``);
+    ``payload`` / ``result`` — JSON-текст; ``status`` —
+    pending/taken/done/failed строкой. Захват и пометка — атомарные
+    ``UPDATE ... WHERE status=...`` (at-least-once, §12.9). FIFO —
+    по ``created_at`` + ``rowid``; индекс по ``status`` ускоряет
+    поллинг pending'ов.
+    """
+
+    __tablename__ = 'outbox_commands'
+    __table_args__ = (Index('ix_outbox_commands_status', 'status'),)
+
+    uid: Mapped[str] = mapped_column(primary_key=True)
+    kind: Mapped[str]
+    payload: Mapped[str]
+    status: Mapped[str]
+    created_at: Mapped[datetime]
+    executed_at: Mapped[datetime | None]
+    result: Mapped[str | None]
+    error: Mapped[str | None]

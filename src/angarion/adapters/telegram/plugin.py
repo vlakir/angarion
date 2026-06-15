@@ -125,6 +125,7 @@ def _make_sender(
         transient_max_attempts=sender_cfg.transient_max_attempts,
         backoff_base=sender_cfg.backoff_base,
         backoff_cap=sender_cfg.backoff_cap,
+        runtime_config=deps.storage.runtime_config,
     )
 
 

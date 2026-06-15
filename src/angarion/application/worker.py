@@ -49,11 +49,15 @@ from angarion.domain.ports import (
     EventQueuePort,
     OutboxPort,
     ProcessorPort,
+    RuntimeConfigPort,
     StateStorePort,
 )
 
 DEFER_SLEEP_CAP_SECONDS: Final = 1.0
 """Верхняя граница sleep при возврате «раннего» envelope в хвост (C-8)."""
+
+PAUSE_POLL_SECONDS: Final = 1.0
+"""Sleep при возврате envelope паузнутого пайплайна в хвост (FR-4, §12.8)."""
 
 
 class ScopedStateStore:
@@ -106,6 +110,7 @@ class PipelineWorker:
         analytics: AnalyticsPort,
         dead_letters: DeadLetterPort,
         state: StateStorePort,
+        runtime_config: RuntimeConfigPort,
         pipelines: Mapping[str, PipelineBinding],
         max_retries: int = 5,
         backoff_base: float = 1.0,
@@ -117,6 +122,7 @@ class PipelineWorker:
         self._analytics = analytics
         self._dead_letters = dead_letters
         self._state = state
+        self._runtime_config = runtime_config
         self._pipelines = dict(pipelines)
         self._max_retries = max_retries
         self._backoff_base = backoff_base
@@ -150,6 +156,9 @@ class PipelineWorker:
         now = datetime.now(UTC)
         if envelope.not_before is not None and envelope.not_before > now:
             await self._defer(item, envelope.not_before - now)
+            return
+        if await self._is_paused(envelope.pipeline):
+            await self._defer_paused(item)
             return
         binding = self._pipelines.get(envelope.pipeline)
         if binding is None:
@@ -197,6 +206,24 @@ class PipelineWorker:
         await self._queue.put(item.envelope)
         await self._queue.ack(item)
         await asyncio.sleep(min(remaining.total_seconds(), DEFER_SLEEP_CAP_SECONDS))
+
+    async def _is_paused(self, pipeline: str) -> bool:
+        """FR-4 (§12.8): пайплайн в динамическом ``paused_pipelines``."""
+        paused = (await self._runtime_config.load()).paused_pipelines
+        return paused is not None and pipeline in paused
+
+    async def _defer_paused(self, item: QueueItem) -> None:
+        """
+        FR-4 (§12.8): пауза ≠ потеря — envelope паузнутого пайплайна
+        возвращается в хвост (``put`` строго до ``ack``: дубль возможен,
+        потеря — нет), фиксируется ``deferred``, цикл тормозится против
+        горячего прокручивания накопленной очереди.
+        """
+        envelope = item.envelope
+        await self._queue.put(envelope)
+        await self._queue.ack(item)
+        await self._record('deferred', envelope, {'reason': 'paused'})
+        await asyncio.sleep(PAUSE_POLL_SECONDS)
 
     async def _retry_or_fail(self, item: QueueItem, exc: Exception) -> None:
         """Retry-ветка §8: re-enqueue с backoff либо DLQ после исчерпания."""

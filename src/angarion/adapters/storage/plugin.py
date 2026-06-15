@@ -12,7 +12,7 @@ pydantic-моделей вычисляются в runtime.
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
@@ -24,11 +24,13 @@ from angarion.adapters.storage.engine import (
 )
 from angarion.adapters.storage.stores import (
     SqliteAnalytics,
+    SqliteCommandOutbox,
     SqliteCursorStore,
     SqliteDeadLetters,
     SqliteDedupStore,
     SqliteMessageRegistry,
     SqliteOutbox,
+    SqliteRuntimeConfig,
     SqliteSessionStore,
     SqliteStateStore,
 )
@@ -52,9 +54,16 @@ class SqliteStorage(StorageBundle):
     """
     ``StorageBundle`` + движок: ``dispose()`` сверх контракта — нужен
     тестам и graceful shutdown (вызов из жизненного цикла — M3).
+
+    ``sessions`` — общий ``async_sessionmaker`` бэкенда: его же берёт
+    user store fastapi-users в api-роли (§12.7/§12.9, T024), чтобы users/
+    settings/outbox жили в одном ``app.db`` (ADR §3.1 — два писателя).
+    Тип поля — ``Any`` (параметризованный generic как поле pydantic —
+    источник проблем; здесь это хранимый колбэк, как ``auth.sessionmaker``).
     """
 
     engine: AsyncEngine
+    sessions: Any
 
     async def dispose(self) -> None:
         """Закрыть пул соединений с ``app.db``; идемпотентно."""
@@ -84,7 +93,10 @@ def _make_storage(config: 'StorageConfig') -> SqliteStorage:
         analytics=SqliteAnalytics(sessions),
         dead_letters=SqliteDeadLetters(sessions),
         session=SqliteSessionStore(sessions),
+        runtime_config=SqliteRuntimeConfig(sessions),
+        command_outbox=SqliteCommandOutbox(sessions),
         engine=engine,
+        sessions=sessions,
     )
 
 
