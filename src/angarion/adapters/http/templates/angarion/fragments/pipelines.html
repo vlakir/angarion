@@ -1,0 +1,58 @@
+{# Серверный SVG-граф топологии (§12.6, T025). Корень фрагмента —
+   #pipeline-graph: его подменяет htmx-поллинг (GET) и клик по узлу
+   (POST pause/resume). Без графических JS-библиотек — только разметка. #}
+{% set is_admin = current_user and current_user.role == 'admin' %}
+<div id="pipeline-graph">
+  <p>
+    <small>Queue: <strong>pending {{ graph.depth_pending }}</strong>,
+    unacked {{ graph.depth_unacked }}. Pipeline node colour = status
+    (green active, yellow paused, red failed within the hour).{% if is_admin %}
+    Click a pipeline to pause/resume.{% endif %}</small>
+  </p>
+  <svg viewBox="0 0 {{ graph.width }} {{ graph.height }}"
+       width="100%" role="img" aria-label="Pipeline topology"
+       style="max-width:{{ graph.width }}px;font-family:sans-serif">
+    {% for e in graph.edges %}
+    <line x1="{{ e.x1 }}" y1="{{ e.y1 }}" x2="{{ e.x2 }}" y2="{{ e.y2 }}"
+          stroke="#90a4ae" stroke-width="1.5"/>
+    {% endfor %}
+    {% for n in graph.sources %}
+    {% set cx = n.x + n.width // 2 %}
+    <g data-role="source">
+      <rect x="{{ n.x }}" y="{{ n.y }}" width="{{ n.width }}" height="{{ n.height }}"
+            rx="6" fill="{{ n.fill }}"/>
+      <text x="{{ cx }}" y="{{ n.y + n.height // 2 + 4 }}" text-anchor="middle"
+            fill="#eceff1" font-size="12">{{ n.label }}</text>
+    </g>
+    {% endfor %}
+    {% for n in graph.pipelines %}
+    {% set cx = n.x + n.width // 2 %}
+    <g data-status="{{ n.status }}"
+       {% if is_admin %}
+       {% if n.status == 'paused' %}
+       hx-post="/ui/pipelines/{{ n.key }}/resume"
+       {% else %}
+       hx-post="/ui/pipelines/{{ n.key }}/pause"
+       {% endif %}
+       hx-target="#pipeline-graph" hx-swap="outerHTML"
+       style="cursor:pointer"
+       {% endif %}>
+      <rect x="{{ n.x }}" y="{{ n.y }}" width="{{ n.width }}" height="{{ n.height }}"
+            rx="6" fill="{{ n.fill }}"/>
+      <text x="{{ cx }}" y="{{ n.y + 19 }}" text-anchor="middle"
+            fill="#ffffff" font-size="13" font-weight="bold">{{ n.label }}</text>
+      <text x="{{ cx }}" y="{{ n.y + 36 }}" text-anchor="middle"
+            fill="#eceff1" font-size="11">{{ n.annotation }}</text>
+    </g>
+    {% endfor %}
+    {% for n in graph.targets %}
+    {% set cx = n.x + n.width // 2 %}
+    <g data-role="target">
+      <rect x="{{ n.x }}" y="{{ n.y }}" width="{{ n.width }}" height="{{ n.height }}"
+            rx="6" fill="{{ n.fill }}"/>
+      <text x="{{ cx }}" y="{{ n.y + n.height // 2 + 4 }}" text-anchor="middle"
+            fill="#eceff1" font-size="12">{{ n.label }}</text>
+    </g>
+    {% endfor %}
+  </svg>
+</div>

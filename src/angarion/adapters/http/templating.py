@@ -66,6 +66,7 @@ class NavItem(BaseModel):
 
 _BUILTIN_NAV: tuple[NavItem, ...] = (
     NavItem(title='Dashboard', path='/ui'),
+    NavItem(title='Pipelines', path='/ui/pipelines'),
     NavItem(title='Events', path='/ui/events'),
 )
 

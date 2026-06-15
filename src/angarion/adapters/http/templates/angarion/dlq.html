@@ -3,15 +3,15 @@
 {% block content %}
 <hgroup>
   <h2>Dead Letter Queue</h2>
-  <p>Сообщения, исчерпавшие ретраи (§8). Requeue возвращает в очередь с <code>attempt=0</code>.</p>
+  <p>Messages that exhausted their retries (§8). Requeue puts them back on the queue with <code>attempt=0</code>.</p>
 </hgroup>
 
 {% if not letters %}
-<p>DLQ пуста.</p>
+<p>DLQ is empty.</p>
 {% else %}
 <table>
   <thead>
-    <tr><th>Пайплайн</th><th>Событие</th><th>Ошибка</th><th>Когда</th><th></th></tr>
+    <tr><th>Pipeline</th><th>Event</th><th>Error</th><th>When</th><th></th></tr>
   </thead>
   <tbody>
     {% for letter in letters %}

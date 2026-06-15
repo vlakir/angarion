@@ -1,0 +1,87 @@
+site_name: angarion
+site_description: >-
+  Универсальная библиотека конвейеров обработки событий сообщений
+  (гексагональная архитектура, ports & adapters).
+site_url: https://vlakir.github.io/angarion/
+repo_url: https://github.com/vlakir/angarion
+repo_name: vlakir/angarion
+copyright: MIT License — Vladimir Kirievskiy
+
+# Документация — deliverable этапа (§17.9 ТЗ), не послесловие. Каркас
+# mkdocs-material + mkdocstrings (автосправочник публичного API)
+# заведён в T025 (втянутый T006). Сборка офлайн: griffe анализирует
+# исходники статически, импорт пакета и extra-зависимости не требуются.
+
+theme:
+  name: material
+  language: ru
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Тёмная тема
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Светлая тема
+
+plugins:
+  - search:
+      lang: ru
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            filters: ["!^_"]
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - toc:
+      permalink: true
+      # Unicode-aware slug: кириллические заголовки → кириллические якоря
+      # (дефолтный slugify Python-Markdown выкидывает не-ASCII, ломая
+      # внутренние ссылки вида #роли-процессов).
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+
+nav:
+  - Обзор: index.md
+  - Быстрый старт: quick-start.md
+  - Руководства:
+      - Деплой: guides/deploy.md
+      - Автору плагина: guides/plugin-authoring.md
+      - Web API и UI: guides/web-api.md
+  - Справочник API:
+      - reference/index.md
+      - Доменные модели: reference/models.md
+      - Порты: reference/ports.md
+      - Контракт плагина: reference/plugin.md
+      - Конфигурация: reference/config.md
+      - Web-адаптер: reference/web.md
+      - Контрактные тесты: reference/testing.md

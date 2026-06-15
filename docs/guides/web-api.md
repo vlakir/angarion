@@ -1,0 +1,163 @@
+# Web API и UI
+
+angarion включает FastAPI как второй driving-адаптер (§12.5/§12.6): REST
+API, серверный (SSR) Web UI на Jinja2 + htmx, граф топологии, журнал
+аналитики и админ-операции. Расширяется пользовательскими ручками и
+страницами через DI поверх портов — пользователь дотягивается до системы
+только через порты, не зная про ORM/сессии/адаптеры.
+
+Пакет — в extra `angarion[web]`; ядро остаётся fastapi-free (§14.9).
+
+## Запуск
+
+Web поднимается ролью процесса (см. [Деплой → роли](deploy.md#роли-процессов)):
+
+```bash
+uv add "angarion[web,sqlite]"
+uv run angarion run --config app.toml --with-api   # конвейер + API в одном процессе
+# либо отдельный web-процесс:
+uv run angarion run --config app.toml --role api
+```
+
+Хост/порт/аутентификация — секция `[api]` конфига:
+
+```toml
+[api]
+host = "127.0.0.1"
+port = 8000
+auth = "users"          # "none" — открыто (dev/localhost); "users" — fastapi-users
+# secret подаётся через env, не в TOML
+```
+
+## Встроенные эндпоинты
+
+| Путь | Назначение | Доступ |
+|---|---|---|
+| `GET /api/v1/health` | liveness | публичный |
+| `GET /api/v1/diagnostics` | состояние конвейера, курсоры | защищённый |
+| `GET /api/v1/events` | журнал аналитики (JSON) | защищённый |
+| `GET /ui` | дашборд | защищённый |
+| `GET /ui/pipelines` | граф топологии «источники → пайплайны → получатели» (серверный SVG) | защищённый |
+| `GET /ui/events` | журнал аналитики (SSR) | защищённый |
+| `/api/v1/admin/*`, `/ui/settings`, `/ui/dlq`, `/ui/users` | админ-операции (пауза/resume, requeue DLQ, динамика, пользователи) | admin-only |
+| `/api/v1/auth/*`, `/ui/login`, `/ui/register` | аутентификация | публичный |
+
+Граф `/ui/pipelines` рендерится **на сервере** (Jinja, без JS-библиотек):
+цвет узла = статус (активен / пауза из `runtime_config` / failed за час),
+аннотации delivered/depth; клик по узлу (admin) — htmx pause/resume.
+
+## Своя JSON-ручка
+
+Соберите `APIRouter` и попросите нужный порт типизированной зависимостью
+(`AnalyticsDep`, `RegistryDep`, `StateDep`, …) — FastAPI подставит его из
+`app.state`. Роутер передаётся в `create_app(routers=[...])` и
+монтируется **под `CurrentUser`** (как встроенный `/api/v1`).
+
+```python
+from fastapi import APIRouter
+from angarion.adapters.http.deps import AnalyticsDep
+
+router = APIRouter(prefix="/api/v1/ext", tags=["ext"])
+
+
+@router.get("/event-count")
+async def event_count(analytics: AnalyticsDep) -> dict[str, int]:
+    rows = await analytics.recent(limit=1000)
+    return {"count": len(rows)}
+```
+
+Доступные зависимости — [`angarion.adapters.http.deps`](../reference/web.md#типизированные-di-зависимости):
+`AnalyticsDep`, `RegistryDep`, `StateDep`, `QueueDep`, `CursorsDep`,
+`RuntimeConfigDep`, `CommandOutboxDep`, `DeadLettersDep`, `NotifierDep`.
+
+## Своя UI-страница
+
+Страница — дескриптор [`Page`](../reference/web.md) (роутер + пункт
+навигации). Шаблон наследует `angarion/base.html` и получает навигацию,
+стили и htmx-автообновление бесплатно; рендер — через
+`request.app.state.templates`.
+
+```python
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse
+from angarion.adapters.http import Page
+from angarion.adapters.http.deps import AnalyticsDep
+
+router = APIRouter()
+
+
+@router.get("/ui/ext", response_class=HTMLResponse)
+async def ext_page(request: Request, analytics: AnalyticsDep) -> HTMLResponse:
+    rows = await analytics.recent(limit=20)
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        request, "ext/page.html", {"rows": rows}
+    )
+
+
+ext_page_descriptor = Page(title="Расширение", path="/ui/ext", router=router)
+```
+
+```jinja
+{# templates/ext/page.html #}
+{% extends "angarion/base.html" %}
+{% block content %}
+  <h1>Моё расширение</h1>
+  <ul>{% for r in rows %}<li>{{ r }}</li>{% endfor %}</ul>
+{% endblock %}
+```
+
+Соберите приложение, передав страницу и каталог шаблонов:
+
+```python
+from pathlib import Path
+from angarion.adapters.http import create_app
+
+app = create_app(
+    deps,
+    pages=[ext_page_descriptor],
+    template_dirs=[Path("templates")],
+)
+```
+
+`title` / `path` автоматически появляются в шапке навигации. Каталоги
+пользователя ищутся раньше встроенных (`ChoiceLoader`) — любой встроенный
+шаблон можно переопределить.
+
+## Аутентификация
+
+- **`auth = "none"`** — все роутеры открыты; `CurrentUser` / `AdminUser`
+  резолвятся в синтетического локального админа. Режим для dev/localhost;
+  при bind не на `127.0.0.1` — громкое предупреждение в лог.
+- **`auth = "users"`** — fastapi-users (§12.7): JWT/cookie-вход, роли
+  `admin` / `viewer`, регистрация с одобрением админом. Требует
+  `[api].secret` (env) и user store (`app.db`). Пользовательские ручки и
+  страницы по умолчанию закрыты `CurrentUser`.
+
+Страницу можно осознанно открыть — `Page(..., public=True)` (например,
+своя страница входа). И ручки из `routers=[...]`, и страницы наследуют
+выбранный режим `auth`: при `auth = "none"` они открыты (локальный
+синтетический админ), при `auth = "users"` — требуют аутентификации
+(`public=True` оставляет страницу открытой и в этом режиме).
+
+## Контейнер портов
+
+`create_app` принимает [`AngarionDeps`](../reference/web.md) — контейнер
+driven-портов из composition root. Собирается из хранилища и очереди
+фабрикой `build_web_deps`:
+
+```python
+from angarion.adapters.http import build_web_deps, build_settings_notifier, create_app
+
+deps = build_web_deps(
+    settings,
+    storage,
+    queue,
+    notifier=build_settings_notifier(),
+)
+app = create_app(deps, routers=[router], pages=[ext_page_descriptor])
+```
+
+Рабочий пример запуска с кастомной ручкой и страницей — каталог
+[`examples/web/`](https://github.com/vlakir/angarion/tree/main/examples)
+репозитория.

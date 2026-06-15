@@ -3,7 +3,7 @@
 {% block content %}
 <hgroup>
   <h2>Dashboard</h2>
-  <p>Состояние конвейера; блоки обновляются автоматически.</p>
+  <p>Pipeline status; blocks refresh automatically.</p>
 </hgroup>
 
 <div class="grid">
@@ -20,14 +20,14 @@
 </article>
 
 <article>
-  <h3>Пайплайны</h3>
+  <h3>Pipelines</h3>
   <table>
     <thead><tr><th>Pipeline</th></tr></thead>
     <tbody>
       {% for pipeline in pipelines %}
       <tr><td>{{ pipeline }}</td></tr>
       {% else %}
-      <tr><td><em>нет пайплайнов</em></td></tr>
+      <tr><td><em>no pipelines</em></td></tr>
       {% endfor %}
     </tbody>
   </table>

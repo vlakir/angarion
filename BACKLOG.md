@@ -104,3 +104,16 @@ BACKLOG.md, BOARD.md и CHANGELOG.md) + 1`. ID не переиспользует
   добавить явный ретрай записи в storage-слое (tenacity на
   `OperationalError: database is locked`). Acceptance: воспроизвести
   контеншн двух писателей; запись не падает под нагрузкой админ-операций.
+
+- **T029** — [2026-06-15] **Загрузка пользовательских страниц/ручек в
+  `angarion run --with-api`** (§12.6, всплыло в T025 фаза 3) — встроенный
+  CLI-раннер собирает приложение как `create_app(deps)` без
+  пользовательских `routers`/`pages` (передать Python-объекты через CLI
+  нельзя), поэтому расширение Web сейчас требует собственного лаунчера
+  (см. `examples/web/run.py`). Нужен seam для чистого CLI: entry-point-
+  группа `angarion.pages` (по образцу `angarion.processors`/
+  `angarion.adapters`) — раннер резолвит зарегистрированные `Page`/роутеры
+  и передаёт в `create_app`. Новая фича-расширение (нужен ADR + спека),
+  вне scope T025. Acceptance: установленный пакет с entry point
+  `angarion.pages` отдаёт страницу в навигацию под `angarion run
+  --with-api` без кастомного лаунчера; контракт загрузки покрыт тестом.

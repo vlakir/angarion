@@ -32,6 +32,7 @@ from angarion.adapters.http.ops import (
     save_settings,
     set_pause,
 )
+from angarion.adapters.http.ui import render_pipelines_fragment
 from angarion.config import AngarionSettings
 from angarion.domain.models import DynamicSettings
 
@@ -89,7 +90,7 @@ def _override_view(overrides: DynamicSettings) -> list[dict[str, Any]]:
             {
                 'key': key,
                 'value': '' if value is None else value,
-                'source': 'override' if value is not None else 'файл',
+                'source': 'override' if value is not None else 'file',
             }
         )
     return rows
@@ -177,34 +178,40 @@ async def settings_reset(request: Request, key: str) -> Response:
     return RedirectResponse('/ui/settings', status_code=303)
 
 
-@router_ops.post('/pipelines/{pipeline}/pause')
-async def pipeline_pause(request: Request, pipeline: str) -> Response:
-    """Поставить пайплайн на паузу (admin)."""
+async def _set_pause_respond(
+    request: Request, pipeline: str, *, paused: bool
+) -> Response:
+    """
+    Применить паузу и ответить по источнику запроса.
+
+    htmx-клик по узлу графа (``/ui/pipelines``, заголовок ``HX-Request``)
+    → обновлённый фрагмент графа на месте; обычная форма ``/ui/settings``
+    → редирект назад (POST→redirect→GET, T024).
+    """
     deps = get_deps(request)
     await set_pause(
         deps.runtime_config,
         deps.analytics,
         deps.notifier,
         pipeline=pipeline,
-        paused=True,
+        paused=paused,
         by=_current_login(request),
     )
+    if request.headers.get('HX-Request'):
+        return await render_pipelines_fragment(request, _templates(request))
     return RedirectResponse('/ui/settings', status_code=303)
+
+
+@router_ops.post('/pipelines/{pipeline}/pause')
+async def pipeline_pause(request: Request, pipeline: str) -> Response:
+    """Поставить пайплайн на паузу (admin)."""
+    return await _set_pause_respond(request, pipeline, paused=True)
 
 
 @router_ops.post('/pipelines/{pipeline}/resume')
 async def pipeline_resume(request: Request, pipeline: str) -> Response:
     """Снять пайплайн с паузы (admin)."""
-    deps = get_deps(request)
-    await set_pause(
-        deps.runtime_config,
-        deps.analytics,
-        deps.notifier,
-        pipeline=pipeline,
-        paused=False,
-        by=_current_login(request),
-    )
-    return RedirectResponse('/ui/settings', status_code=303)
+    return await _set_pause_respond(request, pipeline, paused=False)
 
 
 @router_ops.post('/restart')

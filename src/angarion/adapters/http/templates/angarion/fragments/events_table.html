@@ -1,6 +1,6 @@
 <table>
   <thead>
-    <tr><th>Время</th><th>Вид</th><th>Пайплайн</th><th>event_uid</th></tr>
+    <tr><th>Time</th><th>Kind</th><th>Pipeline</th><th>event_uid</th></tr>
   </thead>
   <tbody>
     {% for event in events %}
@@ -11,7 +11,7 @@
       <td>{{ event.event_uid or '—' }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="4"><em>событий нет</em></td></tr>
+    <tr><td colspan="4"><em>no events</em></td></tr>
     {% endfor %}
   </tbody>
 </table>

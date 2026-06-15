@@ -134,6 +134,10 @@ dev = [
     "fastapi-users[sqlalchemy]>=15",
     "uvicorn>=0.30",
 ]
+docs = [
+    "mkdocs-material>=9.7.6",
+    "mkdocstrings[python]>=1.0.4",
+]
 
 
 [tool.ruff]
@@ -141,9 +145,10 @@ unsafe-fixes = true
 line-length = 88
 indent-width = 4
 target-version = "py312"
-# Каталог примера — намеренно НЕ пакет (одиночные скрипты processor.py /
-# run.py без __init__.py): подавляет ложный INP001 на них, не трогая остальное.
-namespace-packages = ["examples/digest"]
+# Каталоги примеров — намеренно НЕ пакеты (одиночные скрипты processor.py /
+# run.py / ext.py без __init__.py): подавляет ложный INP001 на них, не трогая
+# остальное.
+namespace-packages = ["examples/digest", "examples/web"]
 exclude = [
     "**/migrations",
     ".git",

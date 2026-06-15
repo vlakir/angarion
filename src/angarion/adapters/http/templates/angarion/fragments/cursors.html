@@ -1,6 +1,6 @@
-<h3>Курсоры источников</h3>
+<h3>Source cursors</h3>
 <table>
-  <thead><tr><th>Источник</th><th>Обновлён</th></tr></thead>
+  <thead><tr><th>Source</th><th>Updated</th></tr></thead>
   <tbody>
     {% for row in cursors %}
     <tr>
@@ -8,7 +8,7 @@
       <td>{{ row.updated_at.isoformat() if row.updated_at else '—' }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="2"><em>источников нет</em></td></tr>
+    <tr><td colspan="2"><em>no sources</em></td></tr>
     {% endfor %}
   </tbody>
 </table>

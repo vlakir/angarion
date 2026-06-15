@@ -62,3 +62,4 @@ vanilla_docker.sh
 # Temp / docs builds
 temp/
 doc/
+site/

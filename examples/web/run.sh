@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
-# Пример angarion «всё в одном»: дайджест сообщений группы A с LLM-саммари в B.
+# Пример angarion «web»: конвейер A→B + Web API/UI с кастомной ручкой и
+# страницей в одном процессе (combined).
 #
-# Запуск из любого места: examples/digest/run.sh
-# Перед первым запуском подними Ollama и стяни модель (см. README.md):
-#   ollama serve & ; ollama pull qwen2.5:3b
+# Запуск из любого места: examples/web/run.sh
 #
-# Dev (есть git-ignored `.secrets` в корне репо): api-реквизиты, группы A/B
-# и сессия подхватываются автоматически — ни export, ни login не нужны.
+# Dev (есть git-ignored `.secrets` в корне репо): реквизиты, группы A/B и
+# сессия тестового аккаунта подхватываются автоматически — ни export, ни
+# интерактивный login не нужны.
 #
-# Внешний пользователь (без `.secrets`) — задай api-реквизиты в окружении
-# (см. README.md) и подставь id групп в app.toml:
-#   export ANGARION_ACCOUNTS__MAIN__API_ID=...
-#   export ANGARION_ACCOUNTS__MAIN__API_HASH=...
+# Внешний пользователь (без `.secrets`) — перед первым запуском:
+#   1) задай api-реквизиты в окружении:
+#        export ANGARION_ACCOUNTS__MAIN__API_ID=...
+#        export ANGARION_ACCOUNTS__MAIN__API_HASH=...
+#   2) подставь id групп A/B в app.toml.
+#   Первый запуск попросит авторизацию (телефон → код → 2FA), дальше — сразу.
 #
-# Первый запуск попросит авторизацию (телефон → код → 2FA), последующие —
-# сразу запуск конвейера. Рантайм (БД, ключ сессии) — в ./angarion-data/
-# (git-ignored), никаких секретов в репозиторий не попадает.
+# Рантайм (БД, ключ сессии) — в ./angarion-data/ (git-ignored), никаких
+# секретов в репозиторий не попадает.
+#
+# После старта открой http://127.0.0.1:8000/ui — дашборд, граф топологии
+# (/ui/pipelines) и кастомная страница примера «Activity» (/ui/ext).
+# JSON-ручка расширения: http://127.0.0.1:8000/api/v1/ext/stats
 set -euo pipefail
 
 cd "$(dirname "$0")"  # каталог примера (uv найдёт проект выше по дереву)
@@ -23,17 +28,17 @@ ROOT="$(cd ../.. && pwd)"  # корень репо (subshell — cwd приме�
 
 # Dev-удобство: подхватить постоянные тестовые реквизиты из `.secrets`
 # (если есть), чтобы не экспортировать руками. Внешний пользователь без
-# `.secrets` идёт обычным путём (export + login по README).
+# `.secrets` идёт обычным путём (export + login по README). См. helper.
 # shellcheck source=../../scripts/example_dev.sh
 source "$ROOT/scripts/example_dev.sh"
 
 # dev: подставить тестовые группы в источник/цель пайплайна через env
 # (env приоритетнее app.toml — сам app.toml с плейсхолдерами не трогаем).
-if [[ -n "${TG_TEST_GROUP_A:-}" && -z "${ANGARION_PIPELINES__DIGEST__SOURCES:-}" ]]; then
-  export ANGARION_PIPELINES__DIGEST__SOURCES="[{\"account\":\"main\",\"chat_id\":\"$TG_TEST_GROUP_A\"}]"
+if [[ -n "${TG_TEST_GROUP_A:-}" && -z "${ANGARION_PIPELINES__FORWARD__SOURCES:-}" ]]; then
+  export ANGARION_PIPELINES__FORWARD__SOURCES="[{\"account\":\"main\",\"chat_id\":\"$TG_TEST_GROUP_A\"}]"
 fi
-if [[ -n "${TG_TEST_GROUP_B:-}" && -z "${ANGARION_PIPELINES__DIGEST__TARGETS:-}" ]]; then
-  export ANGARION_PIPELINES__DIGEST__TARGETS="[{\"account\":\"main\",\"chat_id\":\"$TG_TEST_GROUP_B\"}]"
+if [[ -n "${TG_TEST_GROUP_B:-}" && -z "${ANGARION_PIPELINES__FORWARD__TARGETS:-}" ]]; then
+  export ANGARION_PIPELINES__FORWARD__TARGETS="[{\"account\":\"main\",\"chat_id\":\"$TG_TEST_GROUP_B\"}]"
 fi
 
 CONFIG=app.toml
@@ -94,6 +99,7 @@ else
   uv run angarion login --config "$CONFIG" --account main
 fi
 
-# 6. запуск конвейера через лаунчер (он регистрирует кастомный процессор)
-echo "→ Запуск дайджеста. Пиши в группу A — сводка прилетит в B по сбросу. Ctrl+C — стоп."
+# 6. запуск combined-процесса через лаунчер (он собирает приложение с
+#    кастомной ручкой/страницей и поднимает uvicorn рядом с конвейером)
+echo "→ Запуск. Web UI: http://127.0.0.1:8000/ui  (Ctrl+C — стоп)"
 uv run python run.py

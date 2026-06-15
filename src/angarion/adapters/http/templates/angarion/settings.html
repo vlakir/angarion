@@ -2,14 +2,14 @@
 {% block title %}angarion — settings{% endblock %}
 {% block content %}
 <hgroup>
-  <h2>Настройки и операции</h2>
-  <p>Статическая конфигурация (read-only) и динамика поверх файла (§12.8).</p>
+  <h2>Settings and operations</h2>
+  <p>Static configuration (read-only) and runtime overrides on top of the file (§12.8).</p>
 </hgroup>
 
 <article>
-  <header><strong>Конфигурация</strong> (из файла/env, секреты маскированы)</header>
+  <header><strong>Configuration</strong> (from file/env, secrets masked)</header>
   <table>
-    <thead><tr><th>Ключ</th><th>Значение</th></tr></thead>
+    <thead><tr><th>Key</th><th>Value</th></tr></thead>
     <tbody>
       {% for row in static_rows %}
       <tr><td><code>{{ row.key }}</code></td><td>{{ row.value }}</td></tr>
@@ -19,32 +19,32 @@
 </article>
 
 <article>
-  <header><strong>Управление</strong> — динамика на лету (override поверх файла)</header>
+  <header><strong>Controls</strong> — live runtime overrides (on top of the file)</header>
   <form method="post" action="/ui/settings">
     <label>log_level
       <input type="text" name="log_level" placeholder="DEBUG/INFO/WARNING/...">
     </label>
     <div class="grid">
       <label>sender_chat_per_second
-        <input type="text" name="sender_chat_per_second" placeholder="напр. 1.0">
+        <input type="text" name="sender_chat_per_second" placeholder="e.g. 1.0">
       </label>
       <label>sender_account_per_minute
-        <input type="text" name="sender_account_per_minute" placeholder="напр. 20">
+        <input type="text" name="sender_account_per_minute" placeholder="e.g. 20">
       </label>
     </div>
     <div class="grid">
       <label>catchup_max_messages_per_source
-        <input type="text" name="catchup_max_messages_per_source" placeholder="напр. 2000">
+        <input type="text" name="catchup_max_messages_per_source" placeholder="e.g. 2000">
       </label>
       <label>catchup_max_age_days
-        <input type="text" name="catchup_max_age_days" placeholder="напр. 7">
+        <input type="text" name="catchup_max_age_days" placeholder="e.g. 7">
       </label>
     </div>
-    <button type="submit">Сохранить override</button>
+    <button type="submit">Save override</button>
   </form>
 
   <table>
-    <thead><tr><th>Поле</th><th>Override</th><th>Источник</th><th></th></tr></thead>
+    <thead><tr><th>Field</th><th>Override</th><th>Source</th><th></th></tr></thead>
     <tbody>
       {% for row in override_rows %}
       <tr>
@@ -54,7 +54,7 @@
         <td>
           {% if row.source == 'override' %}
           <form method="post" action="/ui/settings/{{ row.key }}/reset">
-            <button type="submit" class="secondary outline">Сбросить к файлу</button>
+            <button type="submit" class="secondary outline">Reset to file</button>
           </form>
           {% endif %}
         </td>
@@ -65,22 +65,22 @@
 </article>
 
 <article>
-  <header><strong>Пайплайны</strong> — пауза без потерь (§12.8)</header>
+  <header><strong>Pipelines</strong> — lossless pause (§12.8)</header>
   <table>
-    <thead><tr><th>Пайплайн</th><th>Статус</th><th></th></tr></thead>
+    <thead><tr><th>Pipeline</th><th>Status</th><th></th></tr></thead>
     <tbody>
       {% for p in pipelines %}
       <tr>
         <td><code>{{ p.name }}</code></td>
-        <td>{{ 'на паузе' if p.paused else 'активен' }}</td>
+        <td>{{ 'paused' if p.paused else 'active' }}</td>
         <td>
           {% if p.paused %}
           <form method="post" action="/ui/pipelines/{{ p.name }}/resume">
-            <button type="submit">Возобновить</button>
+            <button type="submit">Resume</button>
           </form>
           {% else %}
           <form method="post" action="/ui/pipelines/{{ p.name }}/pause">
-            <button type="submit" class="secondary">Пауза</button>
+            <button type="submit" class="secondary">Pause</button>
           </form>
           {% endif %}
         </td>
@@ -91,22 +91,22 @@
 </article>
 
 <article>
-  <header><strong>Операции процесса</strong> (через командный outbox, §12.9)</header>
+  <header><strong>Process operations</strong> (via command outbox, §12.9)</header>
   <form method="post" action="/ui/restart">
     <button type="submit" class="contrast"
-            onclick="return confirm('Перезапустить pipeline-процесс?')">
+            onclick="return confirm('Restart the pipeline process?')">
       Restart pipeline
     </button>
   </form>
   <form method="post" action="/ui/catchup">
-    <label>Ручной catch-up источника
+    <label>Manual source catch-up
       <select name="source_key" required>
         {% for sk in source_keys %}
         <option value="{{ sk }}">{{ sk }}</option>
         {% endfor %}
       </select>
     </label>
-    <button type="submit">Запустить catch-up</button>
+    <button type="submit">Run catch-up</button>
   </form>
 </article>
 {% endblock %}

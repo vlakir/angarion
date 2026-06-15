@@ -85,7 +85,7 @@ async def login_submit(
         return _templates(request).TemplateResponse(
             request,
             'angarion/login.html',
-            {'error': 'Неверный логин/пароль или аккаунт не одобрен'},
+            {'error': 'Invalid username/password or account not approved'},
             status_code=401,
         )
     auth = request.app.state.auth

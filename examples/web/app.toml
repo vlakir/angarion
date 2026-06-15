@@ -1,0 +1,34 @@
+# Пример angarion «web»: конвейер пересылки A→B + встроенный Web API/UI
+# с кастомной ручкой и страницей (combined-режим, аналог --with-api).
+#
+# Скопируй и подставь свои значения. Секреты (api_id/api_hash, ключ
+# шифрования сессии) — НЕ здесь, а через переменные окружения (см.
+# README.md). В TOML — только не-секретные параметры.
+
+[accounts.main]
+messenger = "telegram"
+# api_id / api_hash подаются через env:
+#   ANGARION_ACCOUNTS__MAIN__API_ID, ANGARION_ACCOUNTS__MAIN__API_HASH
+
+[storage]
+backend = "sqlite"               # обязателен: сюда login кладёт сессию,
+path = "angarion-data/app.db"    #   а Web UI читает аналитику; git-ignored
+
+[queue]
+backend = "memory"               # для примера; боевой — persistqueue
+
+# Web-адаптер. auth = "none" — локальный режим: все роутеры открыты под
+# синтетическим админом, без user store и JWT-секрета. Для публичного
+# доступа — auth = "users" (+ TLS-прокси), см. docs/guides/web-api.md.
+[api]
+host = "127.0.0.1"
+port = 8000
+auth = "none"
+
+[pipelines.forward]
+processor = "passthrough"        # ретрансляция текста как есть
+events = ["message_new"]         # только новые сообщения
+# Источник и цель — числовые id супергрупп (вида -100…) или @username.
+# Аккаунт должен состоять в обеих группах.
+sources = [{ account = "main", chat_id = "-100AAAAAAAAAA" }]
+targets = [{ account = "main", chat_id = "-100BBBBBBBBBB" }]
