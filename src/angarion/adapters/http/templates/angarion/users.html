@@ -1,0 +1,28 @@
+{% extends "angarion/base.html" %}
+{% block title %}angarion — пользователи{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Пользователи</h2>
+  <p>Одобрение заявок, роли и доступ.</p>
+</hgroup>
+
+<article>
+  <h3>Создать пользователя</h3>
+  <form hx-post="/ui/users/create" hx-target="#users-table">
+    <div class="grid">
+      <input type="text" name="login" placeholder="Логин" required>
+      <input type="password" name="password" placeholder="Пароль" required>
+      <select name="role">
+        {% for role in roles %}
+        <option value="{{ role }}">{{ role }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Создать</button>
+    </div>
+  </form>
+</article>
+
+<article id="users-table">
+  {% include "angarion/fragments/users_table.html" %}
+</article>
+{% endblock %}

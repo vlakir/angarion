@@ -39,6 +39,159 @@ ADR-Lite: компактный лог архитектурных решений 
 
 <!-- Реальные решения добавляются сюда, новые сверху. -->
 
+### 2026-06-14 — Cookie-вход UI — свой эндпоинт `/ui/login`, не cookie-backend fastapi-users (T023, M5/B, фаза 3)
+
+- **Решение:** вход в Web UI — собственные SSR-эндпоинты `/ui/login`
+  (форма → проверка пароля → JWT в HTTPOnly-cookie `angarionauth`),
+  `/ui/logout`, `/ui/register`, а не `CookieTransport` + cookie-backend
+  fastapi-users. Тот же JWT (та же `JWTStrategy`) принимает уже
+  существующая `require_user` (Bearer для `/api/v1`, cookie для `/ui`),
+  поэтому отдельный cookie-backend не нужен. Управление пользователями —
+  htmx-страница `/ui/users` поверх тех же сервисных функций, что и
+  admin-only JSON-ручки `/api/v1/users`.
+- **Контекст:** `CookieTransport` фиксирует `cookie_secure`/`max_age` в
+  конструкторе (модульный синглтон), а они пер-приложение
+  (`settings.api.cookie_secure`). Плюс вход — это HTML-форма с
+  редиректом и сообщениями об ошибке, а не JSON-ответ backend'а. Свой
+  эндпоинт даёт и пер-app cookie-флаги, и контроль над HTML-потоком.
+- **Альтернативы:** `fastapi_users.get_auth_router(cookie_backend)` —
+  отвергли: пер-app `cookie_secure` не настроить на модульном транспорте,
+  а HTML-форму/редирект/ошибки всё равно пришлось бы оборачивать
+  вручную. Дублирование cookie-backend поверх того же JWT не несёт
+  ценности (`require_user` уже читает cookie).
+- **Последствия:** навигация показывает `Users`/`Logout` по текущему
+  пользователю — `require_user` кладёт его в `request.state.user`,
+  context-processor шаблонов отдаёт `current_user`. Cookie-страницы
+  монтируются только при `auth="users"`.
+
+### 2026-06-14 — coverage: `concurrency = ["thread", "greenlet"]` для async-SQLAlchemy (T023, M5/B, фаза 3)
+
+- **Решение:** в `[tool.coverage.run]` добавлено `concurrency =
+  ["thread", "greenlet"]`.
+- **Контекст:** SQLAlchemy async выполняет операции БД в greenlet'е;
+  без этой настройки coverage **теряет трассировку** строк, исполняемых
+  после `await` к БД, — ложные пропуски в async-ручках web-слоя (ручки
+  фазы 3 показывали 61–69% при фактически выполненном коде, что
+  подтверждалось прямым прогоном). С настройкой — корректные ~100%.
+- **Альтернативы:** `# pragma: no cover` на «непокрытых» строках —
+  отвергли как маскировку (код исполняется, виновата трассировка);
+  смена `COVERAGE_CORE` (sysmon/ctrace) не помогает (причина —
+  greenlet, не ядро).
+- **Последствия:** coverage измеряет async-SQLAlchemy честно; порог
+  ≥ 90% по-прежнему на реальном покрытии. Требует пакет `greenlet`
+  (приходит транзитивно от `sqlalchemy[asyncio]`).
+
+### 2026-06-14 — fastapi-users: свой register-эндпоинт + ручная `require_user`, авторизация на уровне роутеров через `app.state` (T023, M5/B, фаза 2)
+
+- **Решение:** fastapi-users даёт user store, хэш паролей (argon2/pwdlib),
+  JWT-стратегию и логин-роутер (`get_auth_router`). Поверх:
+  - **регистрация — свой эндпоинт** (`POST /api/v1/auth/register`), не
+    дефолтный register-роутер: наша модель — `login` (не email) и заявка
+    `is_active=False`/`role=viewer`, дефолтный завязан на email-схему и
+    `create_update_dict`. Это же снимает необходимость переопределять
+    `BaseUserManager.create` (несовместимость сигнатуры с mypy --strict);
+  - **`require_user`/`require_admin` — ручные зависимости**, навешиваются
+    на модульные роутеры через `include_router(dependencies=[...])`. Весь
+    конфиг аутентификации (секрет, sessionmaker, режим) живёт
+    пер-приложение в `app.state.auth` (`AuthState`) и читается в момент
+    запроса — поэтому модульные синглтоны (backend, `FastAPIUsers`)
+    работают для любого `create_app(...)`; `require_user` переиспользует
+    `JWTStrategy.read_token` + менеджер fastapi-users (Bearer для
+    `/api/v1`, cookie для `/ui`). `auth="none"` → синтетический локальный
+    админ.
+  - `AngarionUserDatabase.get_by_email` переопределён на запрос по
+    `login` — fastapi-users трактует `login` как идентификатор входа.
+- **Контекст:** `FastAPIUsers.current_user` — FastAPI-зависимость,
+  построенная из инстанса, требующего секрет в конструкторе; на модульных
+  роутерах, общих для всех приложений, это не навесить без пер-app
+  пересборки. Чтение конфига из `app.state` в момент запроса развязывает
+  модульные роутеры и пер-app конфиг.
+- **Альтернативы:**
+  - Пер-app пересборка `FastAPIUsers` + хранение `current_user` в
+    `app.state` с тонкой обёрткой — отвергли: обёртка над FastAPI-Depends
+    вне DI-графа хрупка; ручная `require_user` (декод токена + загрузка
+    юзера) прозрачнее и полностью под контролем.
+  - Дефолтный register-роутер + `email`-схема + override `create` —
+    отвергли: тащит email-валидацию на `login`, конфликт сигнатуры
+    `create` с mypy --strict.
+- **Последствия:** уровень-роутерная авторизация (§12.7): встроенные
+  diagnostics/events и `/ui` закрыты `CurrentUser`; публичны `/health`,
+  `/api/v1/auth/*`, статика и webhook-роутеры адаптеров (их аутентифицирует
+  платформа). Cookie-вход (`/ui/login`) и одобрение/лимит заявок,
+  `/ui/users` — фаза 3.
+
+### 2026-06-14 — `UserRow` ↔ протокол fastapi-users: `TYPE_CHECKING`-аннотации + property-алиасы, без колонок email/superuser/verified (T023, M5/B, фаза 2)
+
+> Продолжение ADR фазы 1 («Схема `UserRow`…»): здесь — *как* модель
+> удовлетворяет `UserProtocol` fastapi-users, не заводя его колонок.
+
+- **Решение:** `UserRow` объявляет члены протокола fastapi-users
+  (`id`/`hashed_password`/`is_active` и мост-алиасы
+  `email`/`is_superuser`/`is_verified`) **плоскими аннотациями в ветке
+  `if TYPE_CHECKING:`**, а runtime-определения (Mapped-колонки и
+  property-алиасы с сеттерами) — в ветке `else`. `email`=`login`,
+  `is_superuser`↔роль `admin`, `is_verified`↔`is_active`.
+- **Контекст:** под mypy --strict дескриптор `Mapped[...]` не проходит
+  bound-проверку `UserProtocol[Any]` (инвариантность mutable-членов с
+  `Any`-параметром) — `SQLAlchemyUserDatabase[UserRow, ...]` краснеет.
+  Точно тот же приём (`if TYPE_CHECKING:` с плоскими типами) применяет
+  сама fastapi-users в `SQLAlchemyBaseUserTable`.
+- **Альтернативы:** наследовать `SQLAlchemyBaseUserTableUUID` — отвергли:
+  тащит колонки `email`/`is_superuser`/`is_verified`, дублирующие
+  `login`/`role`/`is_active` и противоречащие схеме миграции 0003
+  (ADR фазы 1). `# type: ignore` на обобщениях — отвергли (гигиена).
+- **Последствия:** storage-слой не импортирует fastapi-users; схема БД
+  не меняется (миграция 0003 без новых колонок); property-сеттеры — для
+  соответствия mutable-протоколу (в наших потоках не вызываются).
+
+### 2026-06-14 — Схема `UserRow`: `login`/`hashed_password`/`role`-строка, UUID id, без колонок `is_superuser`/`is_verified` (T023, M5/B, фаза 1)
+
+- **Решение:** ORM-сущность `UserRow` (`adapters/storage/orm.py`, миграция
+  `0003`) — колонки `id` (нативный `sa.Uuid`, CHAR(32) в SQLite),
+  `login` (unique), `hashed_password`, `role` (TEXT `admin`/`viewer`),
+  `is_active`, `registered_at`, `approved_at?`, `approved_by?`. Колонок
+  fastapi-users `email` / `is_superuser` / `is_verified` в таблице **нет**.
+- **Контекст:** §12.7 требует `login` (не email), роли `admin`/`viewer`,
+  lifecycle одобрения. fastapi-users-db-sqlalchemy ожидает по протоколу
+  атрибуты `email`/`is_superuser`/`is_verified`/`hashed_password`. Схему
+  замораживает миграция фазы 1 — выбор колонок надо сделать до фазы 2,
+  чтобы не было второй миграции.
+- **Альтернативы:**
+  - Полный mixin `SQLAlchemyBaseUserTable` (колонки `email`,
+    `is_superuser`, `is_verified`) — отвергли: `email`-колонка под логин
+    вводит в заблуждение, `is_superuser`/`is_verified` дублируют `role`/
+    `is_active` и тащат верификационный поток, который не используем.
+    Плюс mixin затащил бы зависимость storage-слоя от fastapi-users.
+  - `password_hash` (имя из §12.7) вместо `hashed_password` — отвергли:
+    fastapi-users хардкодит атрибут `hashed_password`; синоним ради
+    косметики имени — лишний слой. Имя колонки выровнено под библиотеку.
+- **Последствия:** в фазе 2 кастомный адаптер user store маппит протокол
+  fastapi-users на нашу схему: `email`←`login`, `is_superuser`←
+  (`role=="admin"`), `is_verified`←`is_active` — как вычисляемые
+  свойства, без колонок. Storage-слой не зависит от fastapi-users
+  (id через нативный `sa.Uuid`). Роль хранится строкой — enum `UserRole`
+  валидирует на границе auth-слоя (фаза 2).
+
+### 2026-06-14 — Секция `[api]` плоская: `auth` строкой, `secret`/admin-creds из env (T023, M5/B, фаза 1)
+
+- **Решение:** `ApiConfig` (`[api]`) — плоская секция: `host`/`port`,
+  `auth: Literal["users","none"]`, `secret`, `jwt_lifetime`,
+  `cookie_secure`, `registration_enabled`, `max_pending_registrations`.
+  `api.secret` кладётся из env `ANGARION_API__SECRET`; bootstrap-админ —
+  из top-level env `ANGARION_ADMIN_LOGIN`/`ANGARION_ADMIN_PASSWORD`
+  (поля `admin_login`/`admin_password`). Секреты в TOML не кладутся.
+- **Контекст:** §12.7 даёт `auth="users"` строкой и `ANGARION_API__SECRET`
+  (= `api.secret`, один `__`). fail-fast по секрету/admin-env и проверка
+  bind при `auth="none"` — в bootstrap (фаза 2), не в структурной
+  валидации конфига.
+- **Альтернативы:** под-таблица `[api.auth]` с `mode=` — отвергли:
+  конфликтует с `ANGARION_API__SECRET` (секрет был бы `api.auth.secret`)
+  и со строковым `auth="users"` из §12.7. Notify-секция (§12.9) приедет
+  отдельным полем в T024 (outbox), а не как `[api.auth.notify]`.
+- **Последствия:** `extra="forbid"` — неизвестный ключ `[api]` падает
+  fail-fast; T024 добавит поле notify аддитивно. Раннер (uvicorn) для
+  `host`/`port` придёт с ролями процессов (T024), конфиг готов раньше.
+
 ### 2026-06-14 — Регистрация UI-страниц: дескриптор `Page` + `create_app(pages=…)`, без глобального `register_page` (T022, M5, фаза 3)
 
 - **Решение:** контракт расширения Web UI (§12.6) — иммутабельный

@@ -62,12 +62,17 @@ llm = [
     "httpx>=0.27",
     "tenacity>=9",
 ]
-# Web-слой M5 (T022): FastAPI как второй driving-адаптер (§12.5/§12.6).
-# Только FastAPI (тянет starlette/pydantic) — без uvicorn: ASGI-тесты идут
-# через httpx.ASGITransport; uvicorn-раннер (`run --with-api`) придёт с
-# ролями процессов (§12.9, группа C). Ядро остаётся fastapi-free (§14.9).
+# Web-слой M5: FastAPI как второй driving-адаптер (§12.5/§12.6, T022) +
+# аутентификация на fastapi-users (§12.7, T023). FastAPI тянет
+# starlette/pydantic; fastapi-users[sqlalchemy] — fastapi-users-db-
+# sqlalchemy (user store на нашем SQLAlchemy 2.0), pwdlib[argon2] (хэш
+# паролей), pyjwt (JWT-транспорт), python-multipart (формы логина). Без
+# uvicorn: ASGI-тесты идут через httpx.ASGITransport; uvicorn-раннер
+# (`run --with-api`) придёт с ролями процессов (§12.9, группа C). Ядро
+# остаётся fastapi-free (§14.9).
 web = [
     "fastapi>=0.115",
+    "fastapi-users[sqlalchemy]>=15",
 ]
 
 [project.scripts]
@@ -125,6 +130,7 @@ dev = [
     "alembic>=1.16",
     "aiosqlite>=0.21",
     "fastapi>=0.115",
+    "fastapi-users[sqlalchemy]>=15",
 ]
 
 
@@ -206,6 +212,10 @@ markers = [
 [tool.coverage.run]
 source = ["src"]
 branch = true
+# SQLAlchemy async выполняет операции БД в greenlet'е; без этого coverage
+# теряет трассировку строк, исполняемых после await к БД (ложные пропуски
+# в async-ручках web-слоя). Требует пакет greenlet (есть от sqlalchemy[asyncio]).
+concurrency = ["thread", "greenlet"]
 omit = ["*/migrations/*"]
 
 

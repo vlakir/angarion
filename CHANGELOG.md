@@ -28,6 +28,51 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 <!-- Здесь накапливаются изменения для следующего milestone (M5). -->
 
 ### Added
+- Auth — регистрация-одобрение и админка пользователей (**T023**/M5,
+  §12.7, фаза 3): завершение группы B. Cookie-вход для UI — страницы
+  `/ui/login` (форма → JWT в HTTPOnly-cookie), `/ui/logout`,
+  `/ui/register` (заявка + сообщение «ждите одобрения»). Лимит
+  `max_pending_registrations` (429 при достижении). Управление
+  пользователями только для `admin`: JSON-ручки `GET/POST /api/v1/users`,
+  `PATCH /api/v1/users/{id}` (одобрить/деактивировать/сменить роль,
+  аудит `approved_by`), `DELETE /api/v1/users/{id}` — единственное write-
+  исключение из read-only встроенных ручек. SSR-страница `/ui/users`
+  (таблица + htmx-действия approve/deactivate/delete/create). Навигация
+  показывает `Users`/`Logout` по текущему пользователю (через
+  `request.state.user`). Cookie-вход и одобрение — ADR 2026-06-14.
+- Auth — fastapi-users core (**T023**/M5, §12.7, фаза 2): аутентификация
+  и авторизация на уровне роутеров. Логин по JWT (`POST
+  /api/v1/auth/login`, Bearer) и саморегистрация-заявка (`POST
+  /api/v1/auth/register` — `is_active=False`, `role="viewer"`, можно
+  отключить `registration_enabled=false`) поверх user store fastapi-users
+  (`UserRow`, хэш argon2/pwdlib). Публичный API — зависимости
+  `CurrentUser`/`AdminUser` (`angarion.adapters.http.auth`): встроенные
+  diagnostics/events и `/ui` закрыты `CurrentUser`, write — `AdminUser`
+  (роль `admin`); публичны `GET /health`, `/api/v1/auth/*`, статика и
+  webhook-роутеры адаптеров. Пользовательские роутеры/страницы по
+  умолчанию закрыты (`Page(public=True)` открывает). Два транспорта над
+  одним store: Bearer для `/api/v1`, HTTPOnly-cookie для `/ui`. Режим
+  `auth="none"` (dev/локально) — синтетический локальный админ; при bind
+  не на localhost — громкое предупреждение. Bootstrap первого админа из
+  env (`ANGARION_ADMIN_LOGIN`/`PASSWORD`) на пустой БД + fail-fast по
+  секрету/admin-env (§12.7, FR-0). ASGI-матрица «аноним/pending/viewer/
+  admin». Решения (свой register, ручная `require_user`, мост `UserRow` ↔
+  протокол fastapi-users) — ADR 2026-06-14. Cookie-вход `/ui/login`,
+  одобрение/лимит заявок и `/ui/users` — фаза 3.
+- Auth — identity data layer (**T023**/M5, §12.7, фаза 1): фундамент
+  аутентификации на fastapi-users. ORM-сущность `UserRow`
+  (`adapters/storage/orm.py`) + миграция Alembic `0003` — `id` (UUID),
+  уникальный `login`, `hashed_password` (argon2), `role`
+  (`admin`/`viewer`), `is_active` (одобрение), `registered_at`/
+  `approved_at`/`approved_by` (аудит). Секция конфига `[api]`
+  (`ApiConfig`): `host`/`port`, `auth` (`users`/`none`), `jwt_lifetime`,
+  `cookie_secure`, `registration_enabled`, `max_pending_registrations`;
+  `api.secret` и bootstrap admin-credentials — из env (`ANGARION_API__SECRET`,
+  `ANGARION_ADMIN_LOGIN`/`ANGARION_ADMIN_PASSWORD`, секреты не в TOML).
+  Зависимость `fastapi-users[sqlalchemy]` добавлена в extra `web`. Схема
+  `UserRow` и плоская `[api]` — ADR 2026-06-14. fastapi-users core
+  (backends JWT+cookie, роутеры, `CurrentUser`/`AdminUser`, bootstrap,
+  fail-fast) — фаза 2.
 - Web UI core (**T022**/M5, §12.6, фаза 3): SSR-дашборд на Jinja2 + htmx
   + Pico.css, **без Node и сборки**. Страницы `GET /ui` (дашборд:
   глубина очереди, события за 24 ч по видам, курсоры источников, таблица

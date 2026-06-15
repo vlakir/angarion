@@ -20,6 +20,12 @@
           </a>
         </li>
         {% endfor %}
+        {% if auth_enabled and current_user and current_user.role == 'admin' %}
+        <li><a href="/ui/users">Users</a></li>
+        {% endif %}
+        {% if auth_enabled and current_user %}
+        <li><a href="/ui/logout">Logout ({{ current_user.login }})</a></li>
+        {% endif %}
       </ul>
     </nav>
   </header>

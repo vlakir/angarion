@@ -23,6 +23,7 @@ from angarion.adapters.memory.storage import (
 from angarion.config import (
     AccountConfig,
     AngarionSettings,
+    ApiConfig,
     EndpointConfig,
     PipelineConfig,
 )
@@ -32,9 +33,16 @@ SOURCE_KEY = 'memory:acc1:-100'
 
 
 def make_settings(**overrides: object) -> AngarionSettings:
-    """Минимальная конфигурация с одним пайплайном memory:acc1 → acc1."""
+    """
+    Минимальная конфигурация с одним пайплайном memory:acc1 → acc1.
+
+    По умолчанию ``api.auth="none"`` — тесты не про auth работают без
+    логина (синтетический локальный админ); auth-тесты задают свою
+    ``api``-секцию явно через ``overrides``.
+    """
     fields: dict[str, object] = {
         'accounts': {'acc1': AccountConfig(messenger='memory')},
+        'api': ApiConfig(auth='none'),
         'pipelines': {
             'digest': PipelineConfig(
                 processor='passthrough',

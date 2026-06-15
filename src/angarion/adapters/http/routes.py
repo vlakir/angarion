@@ -1,8 +1,12 @@
 """
-Встроенный read-only роутер ``/api/v1`` (§12.5): health / diagnostics /
-events. Образец для пользовательских ручек — дотягивается до системы
-теми же опубликованными DI-зависимостями поверх портов
+Встроенный read-only ``/api/v1`` (§12.5): health / diagnostics / events.
+Образец для пользовательских ручек — дотягивается до системы теми же
+опубликованными DI-зависимостями поверх портов
 (``angarion.adapters.http.deps``), не зная про ORM/Telethon.
+
+Два роутера для авторизации на уровне роутеров (§12.7): ``public_router``
+(``GET /health`` — liveness без портов и без auth) и ``router``
+(diagnostics/events — ``create_app`` навешивает ``CurrentUser``).
 """
 
 from datetime import UTC, datetime, timedelta
@@ -27,14 +31,15 @@ from angarion.adapters.http.schemas import (
     QueueDepthSchema,
 )
 
+public_router = APIRouter(prefix='/api/v1', tags=['angarion'])
 router = APIRouter(prefix='/api/v1', tags=['angarion'])
 
 _DIAGNOSTICS_WINDOW: Final = timedelta(hours=24)
 
 
-@router.get('/health')
+@public_router.get('/health')
 async def health() -> HealthResponse:
-    """Liveness без обращения к портам (§12.5)."""
+    """Liveness без обращения к портам и без auth (§12.5, публичная)."""
     return HealthResponse(status='ok', version=__version__)
 
 

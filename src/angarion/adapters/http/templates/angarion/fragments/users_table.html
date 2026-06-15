@@ -1,0 +1,36 @@
+<table>
+  <thead>
+    <tr><th>Логин</th><th>Роль</th><th>Статус</th><th>Действия</th></tr>
+  </thead>
+  <tbody>
+    {% for user in users %}
+    <tr>
+      <td>{{ user.login }}</td>
+      <td>{{ user.role }}</td>
+      <td>{{ 'активен' if user.is_active else 'заявка' }}</td>
+      <td>
+        {% if not user.is_active %}
+        <form hx-post="/ui/users/{{ user.id }}/approve" hx-target="#users-table">
+          <select name="role">
+            {% for role in roles %}
+            <option value="{{ role }}">{{ role }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit">Одобрить</button>
+        </form>
+        {% else %}
+        <button hx-post="/ui/users/{{ user.id }}/deactivate" hx-target="#users-table">
+          Деактивировать
+        </button>
+        {% endif %}
+        <button hx-post="/ui/users/{{ user.id }}/delete" hx-target="#users-table"
+                hx-confirm="Удалить {{ user.login }}?">
+          Удалить
+        </button>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4"><em>пользователей нет</em></td></tr>
+    {% endfor %}
+  </tbody>
+</table>
