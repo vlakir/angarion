@@ -454,10 +454,15 @@ M7 — финальный этап дорожной карты, замыкающ
 
 **Часть B — Matrix (E2EE, медиа `mxc` внутри фаз):**
 
-5. **B1 — Каркас Matrix-плагина + login.** `adapters/matrix/`: capabilities
-   (всё `True`), `MatrixAccountConfig`, entry point, extra `angarion[matrix]`/
-   `nio[e2e]`; `angarion login`-аналог (пароль → токен+device, E2EE-стор);
-   `SessionStorePort` для токена/device; bootstrap-валидация.
+5. **B1 — Каркас Matrix-плагина + login. ✅ (2026-06-16)** `adapters/matrix/`:
+   capabilities (полный профиль), `MatrixAccountConfig`, entry point, extra
+   `angarion[matrix]` (базовый `matrix-nio`, **без** `nio[e2e]` — E2EE-стор
+   и расшифровка ушли в B2, решение 2026-06-16); парольный login через
+   контрактный шов `AdapterPlugin.make_login` (`AsyncClient.login` → токен+
+   device в зашифрованную `MatrixSession` в `app.db` через `SessionStorePort`);
+   своя крипта `MatrixEncryptedSessionStore` (не из telegram); telegram-логин
+   переведён на тот же `make_login`. `make_listener`/`make_sender` —
+   fail-fast-заглушки до B2/B3. 985 passed, coverage 96.5%, 2 ADR 2026-06-16.
 6. **B2 — Listener + маппинг + курсор + E2EE.** matrix-nio sync-loop;
    расшифровка E2EE; map new / edited (`m.replace`) / deleted (redaction) →
    `InboundEvent` (+ `mxc`-медиа в `MediaRef`); непрозрачный курсор (sync

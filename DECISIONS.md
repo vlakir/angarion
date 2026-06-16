@@ -39,6 +39,80 @@ ADR-Lite: компактный лог архитектурных решений 
 
 <!-- Реальные решения добавляются сюда, новые сверху. -->
 
+### 2026-06-16 — Шов логина в контракте плагина: `make_login` на `AdapterPlugin` (T010, M7 фаза B1)
+
+- **Решение:** интерактивный логин (`angarion login`) перенесён из
+  `cli.py` в контракт плагина — у `AdapterPlugin` появилось аддитивное
+  поле `make_login: LoginFactory | None = None` (`LoginFactory =
+  Callable[[LoginContext], Awaitable[None]]`). Плагин получает
+  `LoginContext` (имя аккаунта, провалидированный account-config,
+  **непрозрачный** `SessionStorePort`, ключ шифрования), сам выполняет
+  платформенный обмен (пароль/код → сессия) и персистит её своим
+  at-rest-декоратором. `cmd_login` стал платформо-агностичным: резолвит
+  плагин по `messenger` аккаунта и делегирует. `None` — платформа без
+  логина (InMemory) → `ConfigError`. Telegram перевёл свой
+  `login_and_export_session` в `make_login`, не меняя поведения.
+- **Контекст:** до B1 `cmd_login` был зашит под Telegram
+  (`TelegramAccountConfig` + `StringSession`). Matrix-логин принципиально
+  иной (homeserver/пароль → `access_token`+`device_id`), и ветвление по
+  платформам в CLI разнесло бы платформенное знание по ядру/драйверу.
+  Логин — такая же платформенная забота, как приём/отправка, поэтому шов
+  лёг на плагин рядом с `make_listener`/`make_sender` (§12.11). Решение
+  Владимира 2026-06-16 (развилка «login-шов»).
+- **Альтернативы:**
+  - Ветка по `messenger` внутри `cli.py` — отвергли: знание о
+    платформенном логине размазано по CLI, контракт плагина неполон.
+  - Возвращать из `make_login` строку сессии, шифровать/сохранять в CLI —
+    отвергли: тогда CLI должен знать, **каким** декоратором шифровать
+    (телеграм vs matrix), что снова тащит платформенное ветвление; проще
+    отдать персист самому плагину (он владеет своей криптой).
+- **Последствия:** добавление платформы с логином не трогает CLI/ядро —
+  только новый `make_login` в плагине. Сетевой/интерактивный шов внутри
+  плагина (`login_and_export_session` / `password_login`) — инъецируемый
+  module-level seam, юнит-тестируется подменой без сети. Поле
+  опционально — существующие плагины (memory) и сторонние не ломаются.
+
+### 2026-06-16 — Matrix-каркас: полный профиль capabilities, сессия в `app.db`, своя крипта, базовый nio (T010, M7 фаза B1)
+
+- **Решение:** заведён пакет `adapters/matrix/` (extra `angarion[matrix]`,
+  entry point `angarion.adapters:matrix`) как **каркас** второго боевого
+  адаптера. В B1: матрица возможностей `MATRIX_CAPABILITIES` (полный
+  профиль — `user_account`/`edit_events`/`delete_events`/`history_fetch`/
+  `threads` = True, `push_transport="client"`); схема
+  `MatrixAccountConfig` (`homeserver`/`user_id`/`device_name`, пароль —
+  **не** в модели); парольный `make_login` (`AsyncClient.login` → токен +
+  `device_id`). Решения по узлам:
+  - **Сессия Matrix в `app.db`** через `SessionStorePort` как непрозрачная
+    `MatrixSession` (JSON: homeserver/user_id/device_id/access_token),
+    зашифрованная Fernet — как Telegram (ADR 2026-06-13). E2EE key-store
+    (olm/megolm) — отдельный sqlite на ФС в B2, в эту строку не входит.
+  - **Своя крипта в `matrix/session.py`** (`MatrixEncryptedSessionStore`)
+    — Matrix не импортирует декоратор из telegram-адаптера. Соответствует
+    задокументированному замыслу «крипта — забота адаптера платформы»
+    (ADR 2026-06-13); фаза изолирована, telegram не трогаем. Цена —
+    дублирование ~50 строк Fernet-обёртки.
+  - **Базовый `matrix-nio` без `nio[e2e]`** в B1: login через
+    `AsyncClient.login` токен/device не требует olm. Инициализацию
+    E2EE-стора (`store_path`/`AsyncClientConfig`) и саму расшифровку
+    откладываем в B2 (там же — системная libolm). B1 не упирается в
+    libolm-сборку в dev-окружении.
+  - **`make_listener`/`make_sender` — fail-fast-заглушки** (`NotSupported
+    Error`, «реализуется в B2/B3»): плагин обязан грузиться из entry point
+    (иначе `angarion login` не резолвит платформу), но pipeline в B1 ещё
+    нечем собрать. Сигнатуры фабрик постоянны — в B2/B3 наполняется тело.
+- **Контекст:** Matrix — кандидат №1 на доказательство переносимости
+  портов (§12.10); реализуется фазами B1–B5 под зонтиком T010. Развилки
+  закрыты Владимиром 2026-06-16 (login-шов / сессия-крипта / E2EE-сейчас).
+- **Альтернативы:** вынести `EncryptedSessionStore` в общий модуль (DRY) —
+  отвергли в пользу изоляции фазы (не трогаем telegram, меньше blast
+  radius B1); `nio[e2e]` сразу — отложили (libolm-риск, расшифровки всё
+  равно нет до B2); не регистрировать entry point до B2 — отвергли (login
+  не нашёл бы плагин).
+- **Последствия:** `angarion login --account <matrix>` работает с B1;
+  приём/отправка Matrix — fail-fast до B2/B3. Профиль capabilities виден
+  в `/ui/diagnostics` (механизм M5). Контрактные наборы портов и
+  E2EE-расшифровка — B2.
+
 ### 2026-06-16 — Медиа-политика: глобальная `[media]`, скачивание при ingest принимающим аккаунтом (T010, M7 фаза A3, срез 3)
 
 - **Решение:** введена **глобальная** секция `[media]` (`MediaConfig`):

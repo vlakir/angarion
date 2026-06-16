@@ -12,7 +12,7 @@
 pydantic-моделей вычисляются в runtime.
 """
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
@@ -65,6 +65,36 @@ SenderFactory = Callable[..., MessageSinkPort]
 """Фабрика sender'а: ``(deps, accounts) -> MessageSinkPort``."""
 
 
+class LoginContext(BaseModel):
+    """
+    Контекст интерактивного логина аккаунта (``angarion login``; M7 B1,
+    T010).
+
+    Логин платформо-специфичен (Telegram — номер/код/2FA, Matrix —
+    homeserver/пароль), поэтому шов принадлежит плагину, а не CLI (как
+    ``make_listener``/``make_sender``). Плагин получает **непрозрачный**
+    ``SessionStorePort`` и ключ шифрования, сам оборачивает хранилище
+    своим at-rest-декоратором и персистит сессию — ядро/CLI остаются
+    платформо-агностичными. ``config`` — уже провалидированная моделью
+    плагина секция ``[accounts.*]``.
+
+    Конструкция композиции (A-2): JSON-контракт DTO не действует;
+    ``session`` — Protocol-инстанс, отсюда ``arbitrary_types_allowed``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='forbid', arbitrary_types_allowed=True)
+
+    account_id: str
+    config: BaseModel
+    session: SessionStorePort
+    session_key: str
+
+
+LoginFactory = Callable[[LoginContext], Awaitable[None]]
+"""Фабрика интерактивного логина: получить сессию у платформы и сохранить
+её зашифрованной в ``SessionStorePort`` (``angarion login``)."""
+
+
 class AdapterPlugin(BaseModel):
     """
     Объект, предоставляемый плагином в entry point ``angarion.adapters``.
@@ -81,6 +111,13 @@ class AdapterPlugin(BaseModel):
     """Pydantic-схема секции ``[accounts.*]`` этой платформы."""
     make_listener: ListenerFactory
     make_sender: SenderFactory
+    make_login: LoginFactory | None = None
+    """
+    Фабрика интерактивного логина (``angarion login``, M7 B1): платформа
+    получает сессию (пароль/код → токен) и сохраняет её зашифрованной в
+    ``SessionStorePort``. ``None`` — платформа без логина (InMemory,
+    webhook-only); ``angarion login`` для неё — ``ConfigError``.
+    """
     webhook_router: Any = None
     """
     Роутер webhook-listener'а платформы (``push_transport="webhook"``,

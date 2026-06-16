@@ -150,7 +150,10 @@ class TestRun:
 
 
 class TestLogin:
-    async def test_saves_encrypted_session(self, tmp_path: Path) -> None:
+    async def test_saves_encrypted_session(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Диспатч через плагин: telegram make_login → зашифрованная сессия."""
         key = Fernet.generate_key().decode()
         settings = _sqlite_settings(
             tmp_path,
@@ -162,7 +165,10 @@ class TestLogin:
             assert (api_id, api_hash) == (2040, 'h')
             return 'SESSION-XYZ'
 
-        await cli.cmd_login(settings, 'main', login=fake_login)
+        monkeypatch.setattr(
+            'angarion.adapters.telegram.plugin.login_and_export_session', fake_login
+        )
+        await cli.cmd_login(settings, 'main')
 
         storage = build_storage(settings)
         store = EncryptedSessionStore(storage.session, key)
@@ -172,12 +178,23 @@ class TestLogin:
 
     async def test_unknown_account_fails(self, tmp_path: Path) -> None:
         settings = _sqlite_settings(tmp_path)
-
-        async def fake_login(_api_id: int, _api_hash: str) -> str:
-            return 'X'
-
         with pytest.raises(ConfigError, match='ghost'):
-            await cli.cmd_login(settings, 'ghost', login=fake_login)
+            await cli.cmd_login(settings, 'ghost')
+
+    async def test_unknown_messenger_fails(self, tmp_path: Path) -> None:
+        settings = _sqlite_settings(
+            tmp_path, accounts={'main': {'messenger': 'nosuch'}}
+        )
+        with pytest.raises(ConfigError, match='nosuch'):
+            await cli.cmd_login(settings, 'main')
+
+    async def test_platform_without_login_fails(self, tmp_path: Path) -> None:
+        """Платформа без make_login (InMemory) → внятный ConfigError."""
+        settings = _sqlite_settings(
+            tmp_path, accounts={'main': {'messenger': 'memory'}}
+        )
+        with pytest.raises(ConfigError, match='не поддерживает'):
+            await cli.cmd_login(settings, 'main')
 
 
 class TestMain:

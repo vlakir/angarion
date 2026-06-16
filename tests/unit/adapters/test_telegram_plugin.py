@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 import pytest
+from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
 from angarion.adapters.memory.plugin import STORAGE_BACKEND
 from angarion.adapters.memory.queue import MemoryQueue
+from angarion.adapters.memory.storage import MemorySessionStore
+from angarion.adapters.telegram import plugin as telegram_plugin
 from angarion.adapters.telegram.listener import TelegramListener
 from angarion.adapters.telegram.plugin import (
     PLUGIN,
@@ -19,6 +22,7 @@ from angarion.adapters.telegram.plugin import (
 )
 from angarion.adapters.telegram.registry import ClientRegistry
 from angarion.adapters.telegram.sender import TelegramSender
+from angarion.adapters.telegram.session import EncryptedSessionStore
 from angarion.application.ingest import IngestService
 from angarion.application.router import Router
 from angarion.bootstrap import AdapterDeps
@@ -28,6 +32,7 @@ from angarion.config import (
     StorageConfig,
 )
 from angarion.domain.errors import ConfigError
+from angarion.domain.plugin import LoginContext
 
 
 def _deps(settings: AngarionSettings | None = None) -> AdapterDeps:
@@ -163,3 +168,35 @@ class TestPluginObject:
         )
         with pytest.raises(ConfigError, match='ANGARION_SESSION_KEY'):
             await listener._pool.connect_all()
+
+
+class TestLogin:
+    """Шов логина перенесён в плагин (M7 B1): make_login → зашифр. сессия."""
+
+    KEY = Fernet.generate_key().decode()  # рантайм-ключ, не хардкод
+
+    async def test_make_login_saves_encrypted_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def fake_login(api_id: int, api_hash: str) -> str:
+            assert (api_id, api_hash) == (2040, 'hash')
+            return 'STRING-SESSION'
+
+        monkeypatch.setattr(
+            telegram_plugin, 'login_and_export_session', fake_login
+        )
+        inner = MemorySessionStore()
+        assert PLUGIN.make_login is not None
+        await PLUGIN.make_login(
+            LoginContext(
+                account_id='main',
+                config=_account(),
+                session=inner,
+                session_key=self.KEY,
+            )
+        )
+        loaded = await EncryptedSessionStore(inner, self.KEY).load('main')
+        assert loaded == 'STRING-SESSION'
+        raw = await inner.load('main')
+        assert raw is not None
+        assert raw != 'STRING-SESSION'  # ciphertext

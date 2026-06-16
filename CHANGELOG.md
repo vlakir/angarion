@@ -29,6 +29,22 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Added
 
+- Каркас Matrix-адаптера + парольный login (T010, M7 фаза B1): пакет
+  `adapters/matrix/` (extra `angarion[matrix]`, entry point
+  `angarion.adapters:matrix`) — матрица возможностей полного профиля
+  (`edit_events`/`delete_events`/`history_fetch`/`threads`,
+  `push_transport="client"`), схема `[accounts.*]` (`homeserver`/`user_id`/
+  `device_name`; пароль — из env `ANGARION_MATRIX_PASSWORD`/`getpass`, не в
+  TOML) и `angarion login --account <matrix>` (matrix-nio
+  `AsyncClient.login` → `access_token`+`device_id` в зашифрованную сессию
+  `app.db`). Базовый `matrix-nio` без E2EE; listener/sender/расшифровка —
+  фазы B2/B3 (сейчас fail-fast-заглушки). ADR 2026-06-16.
+- Шов логина в контракте плагина (T010, M7 фаза B1): `AdapterPlugin`
+  получил аддитивное поле `make_login` — `angarion login` стал
+  платформо-агностичным (резолвит плагин по `messenger` и делегирует ему
+  обмен+персист сессии). Telegram перевёл логин в `make_login` без смены
+  поведения; платформа без логина (InMemory) → внятный `ConfigError`.
+  ADR 2026-06-16.
 - Домен медиа (T010, M7 фаза A1): доменный DTO `MediaRef` (открытый
   строковый `kind`; платформенная ссылка `ref` для пересылки без
   скачивания; опц. mime/имя/размер/размерности/длительность; `local_path`)
