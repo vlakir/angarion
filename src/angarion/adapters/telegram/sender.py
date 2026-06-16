@@ -149,17 +149,24 @@ class TelegramSender:
         opts: TelegramSendOptions,
     ) -> Callable[[], Awaitable[int]]:
         """
-        Выбрать операцию отправки: медиа-переотправка (есть ``media`` с
-        ``ref``) либо текст. Возвращает 0-арный корутин-факторий для
-        ``_send_resilient`` (FloodWait/transient-обёртка едина для обоих).
+        Выбрать операцию отправки: медиа (есть ``media`` с ``local_path``
+        или ``ref``) либо текст. ``local_path`` (скачано при ingest, A3) →
+        заливка файла; иначе ``ref`` → refetch-fast-path (A2). Возвращает
+        0-арный корутин-факторий для ``_send_resilient`` (FloodWait/transient-
+        обёртка едина для обоих).
         """
-        source_ref = msg.media[0].ref if msg.media else None
-        if source_ref is not None:
+        media = msg.media[0] if msg.media else None
+        if media is not None and (
+            media.local_path is not None or media.ref is not None
+        ):
+            source_ref = media.ref
+            local_path = media.local_path
 
             async def do_send() -> int:
                 return await client.send_media(
                     peer,
                     source_ref=source_ref,
+                    local_path=local_path,
                     text=msg.text,
                     reply_to=reply_to,
                     parse_mode=opts.parse_mode,

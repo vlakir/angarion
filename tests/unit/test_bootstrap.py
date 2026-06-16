@@ -6,8 +6,9 @@ Bootstrap (FR-12, FR-13, FR-15): загрузка плагинов, двухст
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
-from typing import cast
+import os
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -31,6 +32,7 @@ from angarion.config import (
     AngarionSettings,
     CatchupConfig,
     EndpointConfig,
+    MediaConfig,
     PipelineConfig,
     WorkerConfig,
 )
@@ -43,6 +45,9 @@ from angarion.domain.models import (
     OutboundMessage,
 )
 from angarion.domain.plugin import AdapterPlugin
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 SRC_CHAT = '-100111'
 DST_CHAT = '-100222'
@@ -493,6 +498,42 @@ class TestPruneAndDispose:
         spy = _PruneSpy()
         await AngarionApp._prune_once(datetime.now(UTC), 7, spy)
         assert spy.calls == 1
+
+    def test_prune_media_skips_unbounded_retention(self, tmp_path: Path) -> None:
+        """retention_days=0 — храним бессрочно (файлы не трогаем)."""
+        stale = tmp_path / 'old.bin'
+        stale.write_bytes(b'x')
+        old = (datetime.now(UTC) - timedelta(days=100)).timestamp()
+        os.utime(stale, (old, old))
+        AngarionApp._prune_media(
+            datetime.now(UTC),
+            MediaConfig(retention_days=0, storage_dir=str(tmp_path)),
+        )
+        assert stale.exists()
+
+    def test_prune_media_missing_dir_is_noop(self, tmp_path: Path) -> None:
+        """Отсутствующий каталог — нечего чистить, без ошибки."""
+        AngarionApp._prune_media(
+            datetime.now(UTC),
+            MediaConfig(retention_days=7, storage_dir=str(tmp_path / 'nope')),
+        )
+
+    def test_prune_media_deletes_old_keeps_fresh(self, tmp_path: Path) -> None:
+        """Файлы старше retention_days удаляются, свежие остаются."""
+        now = datetime.now(UTC)
+        old_file = tmp_path / 'old.bin'
+        fresh_file = tmp_path / 'fresh.bin'
+        old_file.write_bytes(b'x')
+        fresh_file.write_bytes(b'y')
+        old = (now - timedelta(days=30)).timestamp()
+        fresh = (now - timedelta(days=1)).timestamp()
+        os.utime(old_file, (old, old))
+        os.utime(fresh_file, (fresh, fresh))
+        AngarionApp._prune_media(
+            now, MediaConfig(retention_days=7, storage_dir=str(tmp_path))
+        )
+        assert not old_file.exists()
+        assert fresh_file.exists()
 
     async def test_no_prune_task_when_interval_zero(self) -> None:
         app = build_app(make_settings())  # prune_interval = 0 по умолчанию

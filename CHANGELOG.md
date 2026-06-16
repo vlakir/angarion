@@ -48,6 +48,18 @@ T-ID между релизами — `CHANGELOG.md` единственное per
   источник недоступен/удалён → деградация до текста. Кросс-аккаунт со
   скачиванием — фаза A3. ADR 2026-06-16 (refetch-fast-path).
 
+- Политика медиа + скачивание при ingest (T010, M7 фаза A3, срез 3):
+  глобальная секция `[media]` (`download`/`allowed_kinds`/`max_size`/
+  `storage_dir`/`retention_days`; по умолчанию не качаем — только
+  метаданные). При `download=true` принимающий аккаунт скачивает подходящие
+  вложения в git-ignored каталог и проставляет `MediaRef.local_path` (хук
+  `enrich_with_downloads` в live и catch-up); процессоры получают локальный
+  путь к контенту. Sender при наличии `local_path` грузит файл напрямую —
+  включает **кросс-аккаунт/кросс-платформа** доставку (без `local_path` —
+  refetch-fast-path A2). Ретеншн скачанных файлов — в фоновой prune-задаче
+  (по mtime, §17.3). Новый метод порта `TelegramClientPort.download_media`.
+  Per-pipeline переопределение пересылки медиа отложено (→ BACKLOG T033).
+  ADR 2026-06-16.
 - Media-хэш в реестре для catch-up (T010, M7 фаза A3, срез 2): `media_hash`
   в `RegistryRecord`/`RegistryVersion`/`InboundEvent` (+ миграция 0006:
   колонки `media_hash` в `messages`/`message_versions`). Детекция изменений

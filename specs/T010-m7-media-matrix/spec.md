@@ -440,11 +440,15 @@ M7 — финальный этап дорожной карты, замыкающ
      в `RegistryRecord`/`RegistryVersion`/`InboundEvent` + миграция 0006;
      общий `content_unchanged` (memory+sqlite) и catch-up сравнивают текст+
      медиа; контракт реестра дополнен. 912 passed, ADR.
-   - **Срез 3 — политика + хранилище + скачивание-fallback.** Конфиг
-     (глобальный дефолт + per-pipeline override): `download`, `allowed_kinds`,
-     `max_size`, `storage_dir`, ретеншн (prune §17.3); скачивание-при-ingest
-     принимающим аккаунтом (даёт кросс-аккаунт + `local_path` процессорам);
-     sender грузит из `local_path` когда есть. ADR медиа.
+   - **Срез 3 — политика + хранилище + скачивание-fallback. ✅ (2026-06-16)**
+     Глобальная `[media]` (`download`/`allowed_kinds`/`max_size`/`storage_dir`/
+     `retention_days`; `MediaConfig.should_download`); скачивание-при-ingest
+     принимающим аккаунтом (хук `enrich_with_downloads` в live+catch-up,
+     метод порта `download_media`) → `local_path` процессорам и кросс-аккаунт;
+     sender грузит из `local_path` (`send_media(local_path=…)`); ретеншн файлов
+     в prune (`_prune_media`, §17.3). **Per-pipeline override отложен** в
+     BACKLOG T033 (download — account/source-level; per-pipeline = пересылка,
+     send-time concern). 939 passed, coverage 96.5%, ADR 2026-06-16.
 4. **A4 — Update медиа.** README/CHANGELOG/DECISIONS; пример `examples/`
    (зеркало с пересылкой медиа); проверка существующих примеров.
 

@@ -27,6 +27,7 @@ from angarion.adapters.telegram.catchup import (
     LAST_SEEN_KEY,
     run_catchup,
 )
+from angarion.config import MediaConfig
 from angarion.application.ingest import IngestService
 from angarion.application.router import Router, RouteSpec
 from angarion.domain.keys import make_media_hash, normalize_and_hash
@@ -81,6 +82,8 @@ async def _run(
     max_messages: int = 2000,
     max_age_days: int = 7,
     thread_id: str | None = None,
+    media_policy: MediaConfig | None = None,
+    client: FakeTelegramClient | None = None,
 ) -> tuple[RecordingIngest, MemoryCursorStore, MemoryAnalytics, FakeTelegramClient]:
     registry = registry or MemoryMessageRegistry()
     ingest = ingest or RecordingIngest()
@@ -88,7 +91,7 @@ async def _run(
     cursors = cursors or MemoryCursorStore()
     if cursor is not None:
         await cursors.save(cursor)
-    client = FakeTelegramClient(history={CHAT: history})  # type: ignore[arg-type]
+    client = client or FakeTelegramClient(history={CHAT: history})  # type: ignore[arg-type]
     await run_catchup(
         client=client,
         account_id='main',
@@ -99,6 +102,7 @@ async def _run(
         ingest=ingest,  # type: ignore[arg-type]
         analytics=analytics,
         log=get_logger('test'),
+        media_policy=media_policy or MediaConfig(),
         max_messages=max_messages,
         max_age_days=max_age_days,
         now=NOW,
@@ -194,6 +198,22 @@ async def test_same_media_not_reemitted_during_catchup() -> None:
         cursor=_cursor(5),
     )
     assert ingest.events == []
+
+
+async def test_catchup_media_downloaded_when_policy_on() -> None:
+    """M7 A3: catch-up качает медиа нового сообщения при включённой политике."""
+    client = FakeTelegramClient(
+        history={CHAT: [_hist(11, 'подпись', media=(RawMedia(kind='photo'),))]},
+        download_effects=['/blobs/-100123_11.bin'],
+    )
+    ingest, *_ = await _run(
+        history=[],
+        client=client,
+        cursor=_cursor(10),
+        media_policy=MediaConfig(download=True, storage_dir='/blobs'),
+    )
+    assert ingest.events[0].media[0].local_path == '/blobs/-100123_11.bin'
+    assert client.downloads == [{'source_ref': '-100123:11', 'dest_dir': '/blobs'}]
 
 
 async def test_unchanged_message_skipped() -> None:
@@ -346,6 +366,7 @@ async def test_redelivery_deduped_end_to_end() -> None:
         'ingest': ingest,
         'analytics': analytics,
         'log': get_logger('test'),
+        'media_policy': MediaConfig(),
         'max_messages': 2000,
         'max_age_days': 7,
         'now': NOW,

@@ -27,6 +27,8 @@ from angarion.adapters.telegram.realclient import (
 from angarion.domain.models import EventKind
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from angarion.adapters.telegram.client import RawTelegramMessage
 
 NOW = datetime(2026, 6, 13, 12, 0, tzinfo=UTC)
@@ -233,6 +235,68 @@ async def test_send_media_refetches_source_and_sends_file() -> None:
         parse_mode=None,
         silent=False,
     )
+
+
+async def test_send_media_uploads_local_path_without_refetch() -> None:
+    """A3: local_path → send_file файла, без рефетча источника."""
+    client = _mock_client()
+    client.get_messages = AsyncMock()
+    client.send_file = AsyncMock(return_value=SimpleNamespace(id=777))
+    message_id = await TelethonClient(client).send_media(
+        -100999, local_path='/blobs/x.jpg', text='подпись'
+    )
+    assert message_id == 777
+    client.get_messages.assert_not_awaited()
+    client.send_file.assert_awaited_once_with(
+        -100999,
+        '/blobs/x.jpg',
+        caption='подпись',
+        reply_to=None,
+        parse_mode=None,
+        silent=False,
+    )
+
+
+async def test_download_media_refetches_and_returns_path(tmp_path: Path) -> None:
+    """A3: рефетч источника + download_media в каталог → локальный путь."""
+    client = _mock_client()
+    origin = SimpleNamespace(media=object())
+    client.get_messages = AsyncMock(return_value=origin)
+    dest = tmp_path / 'media'
+    written = str(dest / 'photo.jpg')
+    client.download_media = AsyncMock(return_value=written)
+    path = await TelethonClient(client).download_media(
+        source_ref='-100123:42', dest_dir=str(dest)
+    )
+    assert path == written
+    assert dest.is_dir()  # каталог создан
+    client.get_messages.assert_awaited_once_with(-100123, ids=42)
+    client.download_media.assert_awaited_once_with(origin, file=str(dest))
+
+
+async def test_download_media_returns_none_when_no_media(tmp_path: Path) -> None:
+    """Источник без медиа → None, скачивание не вызывается."""
+    client = _mock_client()
+    client.get_messages = AsyncMock(return_value=SimpleNamespace(media=None))
+    client.download_media = AsyncMock()
+    path = await TelethonClient(client).download_media(
+        source_ref='-100123:42', dest_dir=str(tmp_path)
+    )
+    assert path is None
+    client.download_media.assert_not_awaited()
+
+
+async def test_download_media_translates_floodwait(tmp_path: Path) -> None:
+    """Ошибка границы Telethon при скачивании → port-исключение."""
+    client = _mock_client()
+    client.get_messages = AsyncMock(
+        side_effect=errors.FloodWaitError(request=None, capture=5)
+    )
+    with pytest.raises(FloodWaitError) as caught:
+        await TelethonClient(client).download_media(
+            source_ref='-1:2', dest_dir=str(tmp_path)
+        )
+    assert caught.value.seconds == 5
 
 
 async def test_send_media_degrades_to_text_when_source_gone() -> None:

@@ -39,6 +39,46 @@ ADR-Lite: компактный лог архитектурных решений 
 
 <!-- Реальные решения добавляются сюда, новые сверху. -->
 
+### 2026-06-16 — Медиа-политика: глобальная `[media]`, скачивание при ingest принимающим аккаунтом (T010, M7 фаза A3, срез 3)
+
+- **Решение:** введена **глобальная** секция `[media]` (`MediaConfig`):
+  `download` (по умолчанию `False`), `allowed_kinds` (пусто = все),
+  `max_size` (0 = без лимита), `storage_dir` (`data/media`, git-ignored),
+  `retention_days` (0 = бессрочно). Предикат «качать ли» — метод
+  `MediaConfig.should_download(media)` (messenger-agnostic). Скачивание
+  выполняет **принимающий аккаунт** при ingest — хук `enrich_with_downloads`
+  в Telegram-адаптере (live `_emit` listener'а + catch-up `_emit_messages`):
+  по политике рефетчит источник новым методом порта `download_media` и
+  проставляет `MediaRef.local_path`. Sender при наличии `local_path` грузит
+  файл напрямую (`send_media(local_path=…)` → `send_file` по пути) — это и
+  даёт кросс-аккаунт/кросс-платформа доставку; без `local_path` остаётся
+  refetch-fast-path A2. Ретеншн файлов — отдельный шаг фоновой prune-задачи
+  (`AngarionApp._prune_media`, по mtime, §17.3).
+- **Контекст:** A3 замыкает медиа-часть — нужна управляемая политика
+  скачивания/хранения и кросс-аккаунтная доставка (когда refetch-fast-path
+  недоступен). Resolved Q2/Q4/Q6.
+- **Альтернативы:**
+  - **Per-pipeline переопределение политики** (Resolved Q3) — **отложено**
+    (решение Владимира 2026-06-16, → BACKLOG T033). Download физически
+    account/source-level (до fan-out в пайплайны), поэтому per-pipeline knob
+    — это не «скачивать ли», а «пересылать ли медиа в этом пайплайне»
+    (send-time concern уровня `passthrough`/sender). В A3 — только глобальная
+    политика; гранулярность пересылки — отдельной задачей.
+  - Скачивание в application-`IngestService` (messenger-agnostic) — отвергнуто:
+    рефетч/скачивание требуют платформенного клиента; ingest клиента не
+    держит. Хук живёт в адаптере, ядро не трогаем.
+  - `MediaStorePort` (абстракция ФС/S3) — отложено (Resolved Q6): для v1
+    хватает файлового каталога; S3 — последующим аддитивом.
+  - `download_media` без `to_thread` (синхронный `Path.mkdir`) — отвергнуто
+    (ruff ASYNC240): создание каталога offload'ится в `asyncio.to_thread`,
+    event loop не блокируется.
+- **Последствия:** медиа сквозь пайплайн доходит кросс-аккаунт (через
+  скачанный файл), процессоры получают `local_path`; по умолчанию диск не
+  растёт (download opt-in, fast-path по ссылке). Скачивание при catch-up —
+  best-effort, сбой границы (FloodWait/transient) деградирует до «только
+  метаданные», событие не теряется. **A3 закрыт; дальше A4** (README/
+  CHANGELOG/DECISIONS + пример зеркала с медиа).
+
 ### 2026-06-16 — Media-хэш в реестре: catch-up-детекция медиа-правок (T010, M7 фаза A3, срез 2)
 
 - **Решение:** `media_hash` хранится в реестре (`RegistryRecord`,

@@ -55,6 +55,7 @@ class FakeTelegramClient:
         fail_peers: tuple[str, ...] = (),
         history: dict[int, list[RawTelegramMessage]] | None = None,
         send_effects: list[Exception | None] | None = None,
+        download_effects: list[str | Exception | None] | None = None,
     ) -> None:
         self.warmed = 0
         self._peer_ids = dict(peer_ids or {})
@@ -65,6 +66,10 @@ class FakeTelegramClient:
         # отправка: запись попыток + очередь эффектов (None — успех)
         self.sent: list[dict[str, object]] = []
         self._send_effects = list(send_effects or [])
+        # скачивание медиа (A3): запись запросов + очередь эффектов
+        # (str — путь, Exception — сбой границы, None — «нет медиа»)
+        self.downloads: list[dict[str, str]] = []
+        self._download_effects = list(download_effects or [])
         self._next_message_id = 1000
         self._on_new: list[RawMessageHandler] = []
         self._on_edit: list[RawMessageHandler] = []
@@ -137,17 +142,19 @@ class FakeTelegramClient:
         self,
         chat_id: int | str,
         *,
-        source_ref: str,
+        source_ref: str | None = None,
+        local_path: str | None = None,
         text: str,
         reply_to: int | None = None,
         parse_mode: str | None = None,
         silent: bool = False,
     ) -> int:
-        """Записать попытку переотправки медиа; разыграть эффект (как send)."""
+        """Записать попытку отправки медиа; разыграть эффект (как send)."""
         self.sent.append(
             {
                 'chat_id': chat_id,
                 'source_ref': source_ref,
+                'local_path': local_path,
                 'caption': text,
                 'reply_to': reply_to,
                 'parse_mode': parse_mode,
@@ -161,6 +168,16 @@ class FakeTelegramClient:
                 raise effect
         self._next_message_id += 1
         return self._next_message_id
+
+    async def download_media(self, *, source_ref: str, dest_dir: str) -> str | None:
+        """Записать запрос скачивания; вернуть запланированный путь (или None)."""
+        self.downloads.append({'source_ref': source_ref, 'dest_dir': dest_dir})
+        if self._download_effects:
+            effect = self._download_effects.pop(0)
+            if isinstance(effect, Exception):
+                raise effect
+            return effect
+        return f'{dest_dir}/{source_ref.replace(":", "_")}.bin'
 
     def on_new_message(self, handler: RawMessageHandler) -> None:
         self._on_new.append(handler)

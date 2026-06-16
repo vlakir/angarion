@@ -18,7 +18,9 @@ composition root (фаза 5); здесь обёртка лишь оборачи
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from telethon import TelegramClient, errors, events, utils
@@ -236,22 +238,12 @@ class TelethonClient:
         message_id: int = sent.id
         return message_id
 
-    async def send_media(
-        self,
-        chat_id: int | str,
-        *,
-        source_ref: str,
-        text: str,
-        reply_to: int | None = None,
-        parse_mode: str | None = None,
-        silent: bool = False,
-    ) -> int:
+    async def download_media(self, *, source_ref: str, dest_dir: str) -> str | None:
         """
-        Рефетч источника + ``send_file`` его медиа с подписью (M7 A2).
+        Рефетч источника + ``download_media`` его медиа в ``dest_dir`` (A3).
 
         ``source_ref`` = ``"chat_id:message_id"``. Источник недоступен/удалён
-        или без медиа → деградация до текстовой отправки (медиа потеряно, но
-        сообщение не теряется). Ошибки Telethon → port-исключения.
+        или без медиа → ``None``. Ошибки Telethon → port-исключения.
         """
         source_chat, _, source_msg = source_ref.rpartition(':')
         try:
@@ -259,6 +251,37 @@ class TelethonClient:
                 as_peer(source_chat), ids=int(source_msg)
             )
             if origin is None or origin.media is None:
+                return None
+            await asyncio.to_thread(Path(dest_dir).mkdir, parents=True, exist_ok=True)
+            path = await self._client.download_media(origin, file=dest_dir)
+        except errors.FloodWaitError as exc:
+            raise FloodWaitError(seconds=exc.seconds) from exc
+        except _TRANSIENT_ERRORS as exc:
+            raise TransientSendError(str(exc)) from exc
+        return str(path) if path is not None else None
+
+    async def send_media(
+        self,
+        chat_id: int | str,
+        *,
+        source_ref: str | None = None,
+        local_path: str | None = None,
+        text: str,
+        reply_to: int | None = None,
+        parse_mode: str | None = None,
+        silent: bool = False,
+    ) -> int:
+        """
+        Отправка вложения: файл по ``local_path`` либо рефетч ``source_ref``.
+
+        ``local_path`` (скачано при ingest, A3) → ``send_file`` по пути
+        (кросс-аккаунт/кросс-платформа). Иначе рефетч источника + ``send_file``
+        его медиа (A2 fast-path). Источник/файл недоступен или без медиа →
+        деградация до текстовой отправки. Ошибки Telethon → port-исключения.
+        """
+        try:
+            media = await self._resolve_outgoing_media(source_ref, local_path)
+            if media is None:
                 return await self.send_message(
                     chat_id,
                     text,
@@ -268,7 +291,7 @@ class TelethonClient:
                 )
             sent = await self._client.send_file(
                 chat_id,
-                origin.media,
+                media,
                 caption=text,
                 reply_to=reply_to,
                 parse_mode=parse_mode,
@@ -280,6 +303,20 @@ class TelethonClient:
             raise TransientSendError(str(exc)) from exc
         message_id: int = sent.id
         return message_id
+
+    async def _resolve_outgoing_media(
+        self, source_ref: str | None, local_path: str | None
+    ) -> object | None:
+        """Файл по ``local_path`` (приоритет) или медиа рефетченного источника."""
+        if local_path is not None:
+            return local_path
+        if source_ref is None:
+            return None
+        source_chat, _, source_msg = source_ref.rpartition(':')
+        origin = await self._client.get_messages(
+            as_peer(source_chat), ids=int(source_msg)
+        )
+        return None if origin is None else origin.media
 
     async def disconnect(self) -> None:
         """Закрыть соединение клиента (``ClientRegistry.disconnect_all``)."""

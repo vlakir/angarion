@@ -42,7 +42,12 @@ from angarion.application.loop_guard import GuardedSource, LoopGuardSink
 from angarion.application.outbox_consumer import OutboxConsumer
 from angarion.application.router import Router, RouteSpec
 from angarion.application.worker import PipelineBinding, PipelineWorker
-from angarion.config import AngarionSettings, EndpointConfig, PipelineConfig
+from angarion.config import (
+    AngarionSettings,
+    EndpointConfig,
+    MediaConfig,
+    PipelineConfig,
+)
 from angarion.domain.errors import ConfigError, DeliveryError
 from angarion.domain.keys import make_source_key
 from angarion.domain.models import (
@@ -573,12 +578,34 @@ class AngarionApp(BaseModel):
                 now, storage_cfg.analytics_retention_days, self.storage.analytics
             )
             await self._prune_once(now, storage_cfg.dedup_ttl_days, self.storage.outbox)
+            self._prune_media(now, self.settings.media)
 
     @staticmethod
     async def _prune_once(now: datetime, days: int, store: _Prunable) -> None:
         if days <= 0:  # 0 = бессрочно (§17.3) → не чистим
             return
         await store.prune(now - timedelta(days=days))
+
+    @staticmethod
+    def _prune_media(now: datetime, media: MediaConfig) -> None:
+        """
+        Ретеншн скачанных файлов медиа (M7 A3, §17.3): удалить файлы в
+        ``storage_dir`` старше ``retention_days`` по mtime.
+
+        ``retention_days=0`` — бессрочно (как прочие окна §17.3).
+        Отсутствующий каталог — нечего чистить (скачивание выключено или
+        ещё ничего не скачано). ФС-операции синхронны, но дёшевы и идут в
+        фоновой prune-задаче.
+        """
+        if media.retention_days <= 0:
+            return
+        directory = media.storage_path
+        if not directory.is_dir():
+            return
+        cutoff = (now - timedelta(days=media.retention_days)).timestamp()
+        for path in directory.iterdir():
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
 
     async def _announce_degradation(self) -> None:
         """§12.10: предупреждение в лог + ``catchup_unavailable`` в аналитику."""

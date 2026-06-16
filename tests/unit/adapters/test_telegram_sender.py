@@ -41,9 +41,14 @@ def _media_msg(
     *,
     text: str = 'подпись',
     ref: str | None = '-100123:42',
+    local_path: str | None = None,
     chat_id: str = '-100999',
 ) -> OutboundMessage:
-    media = [MediaRef(kind='photo', ref=ref)] if ref is not None else []
+    media = (
+        [MediaRef(kind='photo', ref=ref, local_path=local_path)]
+        if ref is not None or local_path is not None
+        else []
+    )
     return OutboundMessage(
         idempotency_key=f'k:{chat_id}:media',
         target=Address(messenger='telegram', chat_id=chat_id),
@@ -153,11 +158,23 @@ async def test_media_floodwait_retries_same_message() -> None:
 
 
 async def test_media_without_ref_falls_back_to_text() -> None:
-    """media без ref (не fast-path) → текстовая отправка (A3 даст скачивание)."""
+    """media без ref/local_path (не fast-path) → текстовая отправка."""
     client = FakeTelegramClient()
     await _sender({'main': client}, FakeClock()).send(_media_msg(text='подпись', ref=None))
     assert 'media' not in client.sent[0]  # ушло через send_message
     assert client.sent[0]['text'] == 'подпись'
+
+
+async def test_media_local_path_uploaded_from_file() -> None:
+    """A3 (M7): скачанное при ingest (local_path) → заливка файла, не рефетч."""
+    client = FakeTelegramClient()
+    await _sender({'main': client}, FakeClock()).send(
+        _media_msg(ref=None, local_path='/blobs/x.jpg')
+    )
+    call = client.sent[0]
+    assert call['media'] is True
+    assert call['local_path'] == '/blobs/x.jpg'
+    assert call['source_ref'] is None
 
 
 async def test_floodwait_waits_and_retries_same_message() -> None:

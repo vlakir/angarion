@@ -27,7 +27,9 @@ from typing import TYPE_CHECKING
 from angarion.adapters.telegram.buffer import LiveBuffer
 from angarion.adapters.telegram.catchup import run_catchup
 from angarion.adapters.telegram.mapping import map_deletion, map_message
+from angarion.adapters.telegram.media import enrich_with_downloads
 from angarion.adapters.telegram.resolver import resolve_sources
+from angarion.config import MediaConfig
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -45,6 +47,7 @@ if TYPE_CHECKING:
     from angarion.adapters.telegram.resolver import ResolvedSource
     from angarion.application.ingest import IngestService
     from angarion.config import EndpointConfig
+    from angarion.domain.models import InboundEvent
     from angarion.domain.ports import (
         AnalyticsPort,
         CursorStorePort,
@@ -53,6 +56,9 @@ if TYPE_CHECKING:
 
 DEFAULT_BUFFER_SOFT_LIMIT = 1000
 """Мягкий лимит буфера live по умолчанию (конфиг-ключ — фаза 5)."""
+
+_NO_MEDIA_POLICY: MediaConfig = MediaConfig()
+"""Дефолт-политика медиа: скачивание выключено (метаданные, A3)."""
 
 
 class TelegramListener:
@@ -73,11 +79,13 @@ class TelegramListener:
         catchup_max_age_days: int = 7,
         catchup_interval: float | None = None,
         buffer_soft_limit: int = DEFAULT_BUFFER_SOFT_LIMIT,
+        media_policy: MediaConfig = _NO_MEDIA_POLICY,
     ) -> None:
         if not pool.account_ids:
             msg = 'нужен хотя бы один клиент Telegram'
             raise ValueError(msg)
         self._ingest = ingest
+        self._media_policy = media_policy
         self._pool = pool
         self._clients: dict[str, TelegramClientPort] = {}
         self._sources = tuple(sources)
@@ -140,7 +148,7 @@ class TelegramListener:
         self._consumer = None
         # консьюмер снят — мы единственный читатель, get() не зависнет
         while not self._buffer.empty():
-            await self._ingest.ingest(await self._buffer.get())
+            await self._emit(await self._buffer.get())
         await self._pool.disconnect_all()
 
     @staticmethod
@@ -178,6 +186,7 @@ class TelegramListener:
             ingest=self._ingest,
             analytics=self._analytics,
             log=self._log,
+            media_policy=self._media_policy,
             max_messages=self._catchup_max_messages,
             max_age_days=self._catchup_max_age_days,
             now=datetime.now(UTC),
@@ -211,4 +220,13 @@ class TelegramListener:
 
     async def _consume(self) -> None:
         while True:
-            await self._ingest.ingest(await self._buffer.get())
+            await self._emit(await self._buffer.get())
+
+    async def _emit(self, event: InboundEvent) -> None:
+        """Скачать медиа по политике (A3) → ingest (live и дослив буфера)."""
+        client = self._clients.get(event.received_by.account_id)
+        if client is not None:
+            event = await enrich_with_downloads(
+                event, client=client, policy=self._media_policy, log=self._log
+            )
+        await self._ingest.ingest(event)
