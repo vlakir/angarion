@@ -1,0 +1,42 @@
+# Пример angarion: зеркало с медиа + аннотация скачанного файла процессором.
+#
+# Один аккаунт в двух группах: новое сообщение из группы A (с вложением или
+# без) пересылается в группу B; при включённом скачивании процессор читает
+# локальный файл вложения и добавляет его метаданные в подпись.
+#
+# Секреты (api_id/api_hash, ключ шифрования сессии) — НЕ здесь, а через
+# переменные окружения (см. README.md). В TOML — только не-секретные параметры.
+
+[accounts.main]
+messenger = "telegram"
+# api_id / api_hash подаются через env:
+#   ANGARION_ACCOUNTS__MAIN__API_ID, ANGARION_ACCOUNTS__MAIN__API_HASH
+
+[storage]
+backend = "sqlite"               # обязателен: сюда login кладёт сессию
+path = "angarion-data/app.db"    # рантайм-каталог (git-ignored)
+
+[queue]
+backend = "memory"               # для примера; боевой — persistqueue
+
+[media]
+download = true                  # скачивать вложения принимающим аккаунтом
+                                 # (нужно, чтобы процессор видел local_path)
+allowed_kinds = ["photo", "video", "document"]  # пусто = все виды
+max_size = 52428800              # 50 МБ; 0 = без лимита
+storage_dir = "angarion-data/media"  # git-ignored рантайм-каталог скачанного
+retention_days = 7               # 0 = бессрочно; чистит фоновая prune-задача
+
+[worker]
+prune_interval = 3600            # период фоновой очистки ретеншна (сек); 0 = выкл.
+
+[pipelines.media]
+processor = "media_note"         # кастомный процессор примера (см. run.py)
+events = ["message_new"]         # только новые сообщения
+# Источник и цель — числовые id супергрупп (вида -100…) или @username.
+# Аккаунт должен состоять в обеих группах.
+sources = [{ account = "main", chat_id = "-100AAAAAAAAAA" }]
+targets = [{ account = "main", chat_id = "-100BBBBBBBBBB" }]
+
+[pipelines.media.processor_config]
+header = "📥 переслано с медиа"   # опциональный заголовок подписи
