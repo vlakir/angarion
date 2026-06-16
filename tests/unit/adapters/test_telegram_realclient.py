@@ -216,6 +216,8 @@ async def test_connect_client_builds_connects_and_wraps(
 ) -> None:
     built = _mock_client()
     built.connect = AsyncMock()
+    built.get_me = AsyncMock()
+    built.catch_up = AsyncMock()
     captured: dict[str, object] = {}
 
     def fake_telegram_client(session: object, api_id: int, api_hash: str) -> object:
@@ -230,6 +232,9 @@ async def test_connect_client_builds_connects_and_wraps(
     assert isinstance(wrapper, TelethonClient)
     assert captured == {'session': 'SS:SESSION', 'api_id': 123, 'api_hash': 'hash'}
     built.connect.assert_awaited_once()
+    # T030: реконсиляция update-state для приёма live-апдейтов
+    built.get_me.assert_awaited_once()
+    built.catch_up.assert_awaited_once()
 
 
 async def test_login_and_export_session_starts_and_saves(

@@ -225,11 +225,21 @@ async def connect_client(
 ) -> TelethonClient:
     """
     Подключить реальный Telethon-клиент по ``StringSession`` (дефолтный
-    ``ClientRegistry.connect``, M3, фаза 5). Единственный сетевой путь —
-    бритвенно-тонкий (W1): построить клиент, ``connect``, обернуть в порт.
+    ``ClientRegistry.connect``, M3, фаза 5). Сетевой путь (W1): построить
+    клиент, ``connect``, выровнять update-state, обернуть в порт.
+
+    ``get_me`` + ``catch_up`` после ``connect`` — обязательны для приёма
+    live-апдейтов (T030): ``StringSession`` не кэширует self и не
+    персистит per-channel ``pts``, поэтому без них Telethon не
+    диспетчеризует ``UpdateNewChannelMessage`` по супергруппам и
+    live-листенинг «молчит» после старта/простоя. Реконсиляция идёт **до**
+    подписки listener'а — пропущенное за простой поднимает app-level
+    catch-up §9.3, здесь лишь «будим» приём новых событий.
     """
     client = TelegramClient(StringSession(session_string), api_id, api_hash)
     await client.connect()
+    await client.get_me()
+    await client.catch_up()
     return TelethonClient(client)
 
 

@@ -38,6 +38,7 @@ from pydantic import (
 from angarion.application import processors
 from angarion.application.delivery import DeliveryWorker
 from angarion.application.ingest import IngestService
+from angarion.application.loop_guard import GuardedSource, LoopGuardSink
 from angarion.application.outbox_consumer import OutboxConsumer
 from angarion.application.router import Router, RouteSpec
 from angarion.application.worker import PipelineBinding, PipelineWorker
@@ -460,6 +461,36 @@ def _make_platform_adapters(
     return tuple(listeners), sinks
 
 
+def _loop_guard_sources(
+    settings: AngarionSettings, accounts: dict[str, _Account]
+) -> tuple[GuardedSource, ...]:
+    """
+    Источники, совпадающие хотя бы с одной целью (петля ``source==target``).
+
+    Сверка идентичности — по ``(messenger, chat_id, thread_id)``; для
+    пометки dedup нужен и ``account_id``, поэтому возвращаем сам источник.
+    Пусто, если ни одна цель не совпадает с источником — guard не нужен.
+    """
+    targets = {
+        (accounts[ep.account].plugin.name, ep.chat_id, ep.thread_id)
+        for cfg in settings.pipelines.values()
+        for ep in cfg.targets
+    }
+    guarded: dict[tuple[str, str, str, str | None], GuardedSource] = {}
+    for cfg in settings.pipelines.values():
+        for ep in cfg.sources:
+            messenger = accounts[ep.account].plugin.name
+            if (messenger, ep.chat_id, ep.thread_id) in targets:
+                key = (messenger, ep.account, ep.chat_id, ep.thread_id)
+                guarded[key] = GuardedSource(
+                    messenger=messenger,
+                    account_id=ep.account,
+                    chat_id=ep.chat_id,
+                    thread_id=ep.thread_id,
+                )
+    return tuple(guarded.values())
+
+
 class AngarionApp(BaseModel):
     """
     Контейнер собранного конвейера (plan 2.9; CLI — M3).
@@ -641,7 +672,13 @@ def build_app(
         backoff_cap=settings.worker.backoff_cap,
         log=get_logger('angarion.worker'),
     )
-    dispatch_sink = _DispatchSink(sinks)
+    dispatch_sink: MessageSinkPort = _DispatchSink(sinks)
+    guarded_sources = _loop_guard_sources(settings, accounts)
+    if guarded_sources:
+        # цель совпала с источником — гасим петлю собственных доставок
+        dispatch_sink = LoopGuardSink(
+            inner=dispatch_sink, dedup=storage.dedup, sources=guarded_sources
+        )
     delivery = DeliveryWorker(
         outbox=storage.outbox,
         sink=dispatch_sink,

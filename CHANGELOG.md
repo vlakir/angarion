@@ -27,6 +27,32 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 <!-- Здесь накапливаются изменения для следующего milestone (M6). -->
 
+### Added
+
+- Интеграционный тестовый контур §13.2 на реальном Telegram-аккаунте
+  (T009, M6): маркер `integration` (default-skip), оснастка
+  `tests/integration/harness.py` (реальный пайплайн через `build_app`
+  на sqlite + persistqueue поверх одного test-owned Telethon-клиента) и
+  сценарии `tests/integration/test_pipeline.py` — live new/edited/deleted,
+  multicast в две цели, catch-up после простоя, дедуп при повторном
+  catch-up, рестарт с непустой очередью, петлевой guard `source==target`.
+  Третья тестовая группа (`TG_TEST_GROUP_C`) в `.secrets.example`.
+- Петлевой guard `source == target` (T009, M6): `LoopGuardSink`
+  (`application/loop_guard.py`) — декоратор `MessageSinkPort`, гасящий
+  петлю собственных доставок dedup-пометкой произведённого сообщения;
+  подключается в `build_app` при совпадении цели с источником. ADR
+  2026-06-16 (ограничение по числовым `chat_id`).
+
+### Changed
+
+- Реконсиляция update-state на подключении Telethon-клиента (T030,
+  всплыло в M6): `connect_client` после `connect()` делает `get_me()` +
+  `catch_up()` — свежеподключённый `StringSession`-клиент принимает
+  live-апдейты предсказуемее (особенно после простоя). Не аварийный фикс:
+  основной прод-сценарий (зеркалирование входящих от других) работал и
+  без этого; ненадёжным был лишь приём собственного исходящего в
+  тест-драйве. ADR 2026-06-16.
+
 ## [0.3.0] — 2026-06-15
 
 Закрытие milestone **M5** — Web-слой: Web API + Web UI (SSR, htmx) + Auth
