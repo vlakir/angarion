@@ -82,7 +82,7 @@ uv run angarion run --config app.toml     # боевой запуск конве
 | M2 | Персистентность: persist-queue, SQLAlchemy + Alembic, DLQ, `angarion.testing` | ✅ готов |
 | M3 | Telegram-адаптер (Telethon): live + catch-up + sender, CLI | ✅ готов |
 | M4 | LLM-процессор + `template`-процессор | ✅ готов |
-| M5 | Web API + Web UI + Auth + админ-операции | ⏳ |
+| M5 | Web API + Web UI + Auth + админ-операции | ✅ готов |
 | M6 | Интеграционный тестовый контур на реальном аккаунте | ✅ готов |
 | M7 | Медиа; второй мессенджер (Matrix) | ⏳ |
 
