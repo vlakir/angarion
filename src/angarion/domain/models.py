@@ -108,6 +108,7 @@ class InboundEvent(DomainModel):
     text: str | None = None
     previous_text: str | None = None
     content_hash: str | None = None
+    media_hash: str | None = None
     reply_to_external_id: str | None = None
     media: list[MediaRef] = Field(default_factory=list)
     event_at: AwareDatetime
@@ -265,6 +266,7 @@ class RegistryRecord(DomainModel):
     external_id: str
     text: str | None = None
     content_hash: str | None = None
+    media_hash: str | None = None
     sender_id: str | None = None
     sender_name: str | None = None
     event_at: AwareDatetime
@@ -277,6 +279,7 @@ class RegistryVersion(DomainModel):
 
     text: str | None = None
     content_hash: str | None = None
+    media_hash: str | None = None
     recorded_at: AwareDatetime
 
 

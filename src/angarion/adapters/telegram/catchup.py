@@ -33,7 +33,7 @@ from angarion.adapters.telegram.client import (
     MESSENGER,
     RawTelegramDeletion,
 )
-from angarion.adapters.telegram.mapping import map_deletion, map_message
+from angarion.adapters.telegram.mapping import map_deletion, map_message, raw_media_hash
 from angarion.domain.keys import make_source_key, normalize_and_hash
 from angarion.domain.models import AnalyticsEvent, EventKind, SourceCursor
 
@@ -187,7 +187,8 @@ async def _emit_messages(
         record = await registry.get(msg_source_key, str(raw.message_id))
         if record is not None and record.deleted_at is None:
             new_hash = normalize_and_hash(raw.text) if raw.text is not None else None
-            if record.content_hash != new_hash:
+            new_media_hash = raw_media_hash(raw)
+            if record.content_hash != new_hash or record.media_hash != new_media_hash:
                 edited = raw.model_copy(update={'kind': EventKind.MESSAGE_EDITED})
                 event = map_message(edited, account_id, origin='catchup')
                 if event is not None:

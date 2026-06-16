@@ -13,6 +13,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from telegram_fakes import FakeTelegramClient, RecordingIngest, raw_message
 
+from angarion.adapters.telegram.client import RawMedia
+
 from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.storage import (
     MemoryAnalytics,
@@ -27,10 +29,11 @@ from angarion.adapters.telegram.catchup import (
 )
 from angarion.application.ingest import IngestService
 from angarion.application.router import Router, RouteSpec
-from angarion.domain.keys import normalize_and_hash
+from angarion.domain.keys import make_media_hash, normalize_and_hash
 from angarion.domain.models import (
     Address,
     EventKind,
+    MediaRef,
     RegistryRecord,
     SourceCursor,
 )
@@ -147,6 +150,50 @@ async def test_edit_detected_by_hash_divergence() -> None:
         (EventKind.MESSAGE_EDITED, '5')
     ]
     assert ingest.events[0].origin == 'catchup'
+
+
+async def test_media_edit_detected_during_catchup() -> None:
+    """M7 A3: подмена вложения за простой при том же тексте → EDITED по media_hash."""
+    registry = MemoryMessageRegistry()
+    await registry.upsert(
+        RegistryRecord(
+            source_key=SOURCE_KEY,
+            external_id='5',
+            text='подпись',
+            content_hash=normalize_and_hash('подпись'),
+            media_hash=make_media_hash([MediaRef(kind='photo', size=10)]),
+            event_at=NOW,
+        )
+    )
+    ingest, *_ = await _run(
+        history=[_hist(5, 'подпись', media=(RawMedia(kind='photo', size=20),))],
+        registry=registry,
+        cursor=_cursor(5),
+    )
+    assert [(e.kind, e.external_id) for e in ingest.events] == [
+        (EventKind.MESSAGE_EDITED, '5')
+    ]
+
+
+async def test_same_media_not_reemitted_during_catchup() -> None:
+    """Те же текст и медиа за простой — не ложная правка."""
+    registry = MemoryMessageRegistry()
+    await registry.upsert(
+        RegistryRecord(
+            source_key=SOURCE_KEY,
+            external_id='5',
+            text='подпись',
+            content_hash=normalize_and_hash('подпись'),
+            media_hash=make_media_hash([MediaRef(kind='photo', size=10)]),
+            event_at=NOW,
+        )
+    )
+    ingest, *_ = await _run(
+        history=[_hist(5, 'подпись', media=(RawMedia(kind='photo', size=10),))],
+        registry=registry,
+        cursor=_cursor(5),
+    )
+    assert ingest.events == []
 
 
 async def test_unchanged_message_skipped() -> None:

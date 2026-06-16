@@ -22,7 +22,11 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from angarion.adapters.registry_rules import effective_ts, id_at_least
+from angarion.adapters.registry_rules import (
+    content_unchanged,
+    effective_ts,
+    id_at_least,
+)
 from angarion.adapters.storage.orm import (
     AnalyticsEventRow,
     AppSettingRow,
@@ -245,6 +249,7 @@ def _row_to_record(row: MessageRow) -> RegistryRecord:
         external_id=row.external_id,
         text=row.text,
         content_hash=row.content_hash,
+        media_hash=row.media_hash,
         sender_id=row.sender_id,
         sender_name=row.sender_name,
         event_at=row.event_at,
@@ -257,6 +262,7 @@ def _apply_record(row: MessageRow, rec: RegistryRecord) -> None:
     """Перезаписать состояние строки целиком — паритет с InMemory."""
     row.text = rec.text
     row.content_hash = rec.content_hash
+    row.media_hash = rec.media_hash
     row.sender_id = rec.sender_id
     row.sender_name = rec.sender_name
     row.event_at = rec.event_at
@@ -284,7 +290,7 @@ class SqliteMessageRegistry:
             stored = _row_to_record(row)
             if effective_ts(rec) < effective_ts(stored):
                 return RegistryDelta(outcome=RegistryOutcome.STALE)
-            if rec.content_hash == stored.content_hash:
+            if content_unchanged(rec, stored):
                 return RegistryDelta(outcome=RegistryOutcome.UNCHANGED)
             session.add(
                 MessageVersionRow(
@@ -292,6 +298,7 @@ class SqliteMessageRegistry:
                     external_id=rec.external_id,
                     text=stored.text,
                     content_hash=stored.content_hash,
+                    media_hash=stored.media_hash,
                     recorded_at=stored.edit_ts or stored.event_at,
                 )
             )
@@ -346,6 +353,7 @@ class SqliteMessageRegistry:
             RegistryVersion(
                 text=row.text,
                 content_hash=row.content_hash,
+                media_hash=row.media_hash,
                 recorded_at=row.recorded_at,
             )
             for row in rows

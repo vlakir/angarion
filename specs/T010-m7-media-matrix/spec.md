@@ -436,9 +436,10 @@ M7 — финальный этап дорожной карты, замыкающ
      + `media_hash` в `make_dedup_key`; подмена файла = EDITED (Q5);
      медиа-only `MESSAGE_EDITED` больше не падает; text-only ключ §7.2
      неизменен. 904 passed, ADR.
-   - **Срез 2 — реестр media-хэш для catch-up.** Хранить `media_hash` в
-     `RegistryRecord` (отдельным полем, text-`content_hash` не ломаем),
-     детекция медиа-only правок при catch-up; миграция Alembic.
+   - **Срез 2 — реестр media-хэш для catch-up. ✅ (2026-06-16)** `media_hash`
+     в `RegistryRecord`/`RegistryVersion`/`InboundEvent` + миграция 0006;
+     общий `content_unchanged` (memory+sqlite) и catch-up сравнивают текст+
+     медиа; контракт реестра дополнен. 912 passed, ADR.
    - **Срез 3 — политика + хранилище + скачивание-fallback.** Конфиг
      (глобальный дефолт + per-pipeline override): `download`, `allowed_kinds`,
      `max_size`, `storage_dir`, ретеншн (prune §17.3); скачивание-при-ingest

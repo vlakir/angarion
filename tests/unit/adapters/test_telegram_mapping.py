@@ -5,8 +5,13 @@ from __future__ import annotations
 from telegram_fakes import raw_deletion, raw_message
 
 from angarion.adapters.telegram.client import RawMedia
-from angarion.adapters.telegram.mapping import map_deletion, map_message
-from angarion.domain.keys import make_dedup_key, make_source_key, normalize_and_hash
+from angarion.adapters.telegram.mapping import map_deletion, map_message, raw_media_hash
+from angarion.domain.keys import (
+    make_dedup_key,
+    make_media_hash,
+    make_source_key,
+    normalize_and_hash,
+)
 from angarion.domain.models import EventKind
 
 ACCOUNT = 'main'
@@ -80,6 +85,22 @@ def test_no_media_yields_empty_list() -> None:
     assert event is not None
     assert event.media == []
     assert event.has_media is False
+
+
+def test_media_hash_on_event_matches_raw_media_hash() -> None:
+    """media_hash события совпадает с raw_media_hash (live ↔ catch-up)."""
+    media = (RawMedia(kind='photo', size=2048),)
+    raw = raw_message(media=media)
+    event = map_message(raw, ACCOUNT)
+    assert event is not None
+    assert event.media_hash == raw_media_hash(raw)
+    assert event.media_hash == make_media_hash(list(event.media))
+
+
+def test_no_media_event_media_hash_none() -> None:
+    event = map_message(raw_message(), ACCOUNT)
+    assert event is not None
+    assert event.media_hash is None
 
 
 def test_media_only_edited_does_not_crash() -> None:

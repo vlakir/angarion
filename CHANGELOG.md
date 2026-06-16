@@ -48,6 +48,12 @@ T-ID между релизами — `CHANGELOG.md` единственное per
   источник недоступен/удалён → деградация до текста. Кросс-аккаунт со
   скачиванием — фаза A3. ADR 2026-06-16 (refetch-fast-path).
 
+- Media-хэш в реестре для catch-up (T010, M7 фаза A3, срез 2): `media_hash`
+  в `RegistryRecord`/`RegistryVersion`/`InboundEvent` (+ миграция 0006:
+  колонки `media_hash` в `messages`/`message_versions`). Детекция изменений
+  в реестре и catch-up учитывает медиа (общий хелпер `content_unchanged`):
+  подмена вложения за простой при том же тексте теперь поднимается как
+  `MESSAGE_EDITED`. Контракт `MessageRegistryPort` дополнен тестом.
 - Media-хэш в дедуп-ключе правок (T010, M7 фаза A3, срез 1): публичный
   хелпер `make_media_hash` (отпечаток опознающих метаданных вложений) +
   параметр `media_hash` в `make_dedup_key`. Правка медиа при том же тексте

@@ -47,6 +47,17 @@ def _str_or_none(value: int | None) -> str | None:
     return str(value) if value is not None else None
 
 
+def raw_media_hash(raw: RawTelegramMessage) -> str | None:
+    """
+    media_hash сырого сообщения (M7 A3) — для catch-up-сверки правок медиа.
+
+    Эквивалентен ``InboundEvent.media_hash`` после ``map_message`` того же
+    сообщения: ``make_media_hash`` игнорирует ``ref``, поэтому ref-пустышка
+    здесь даёт тот же хэш (live и catch-up сходятся, §9.3.5).
+    """
+    return make_media_hash([_to_media_ref(m, '') for m in raw.media])
+
+
 def _to_media_ref(raw: RawMedia, source_ref: str) -> MediaRef:
     """
     Сырое вложение Telethon → доменный ``MediaRef`` (без логики ключей).
@@ -101,6 +112,7 @@ def map_message(
         text=raw.text,
         reply_to_external_id=_str_or_none(raw.reply_to_message_id),
         content_hash=content_hash,
+        media_hash=media_hash,
         media=media,
         event_at=raw.event_at,
         received_at=datetime.now(UTC),

@@ -112,6 +112,7 @@ class MessageRow(Base):
     external_id: Mapped[str] = mapped_column(primary_key=True)
     text: Mapped[str | None]
     content_hash: Mapped[str | None]
+    media_hash: Mapped[str | None]
     sender_id: Mapped[str | None]
     sender_name: Mapped[str | None]
     event_at: Mapped[datetime]
@@ -142,6 +143,7 @@ class MessageVersionRow(Base):
     external_id: Mapped[str]
     text: Mapped[str | None]
     content_hash: Mapped[str | None]
+    media_hash: Mapped[str | None]
     recorded_at: Mapped[datetime]
 
 
