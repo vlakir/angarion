@@ -15,8 +15,10 @@ CLI приложения (§11.8, FR «CLI и запуск»; M3, T005, фаза
 - ``angarion migrate --config app.toml`` — применение миграций Alembic
   (sqlite-бэкенд).
 - ``angarion login --config app.toml --account NAME`` — интерактивная
-  авторизация аккаунта (номер → код → 2FA) → ``StringSession`` в ``app.db``
-  (зашифрован, Q2); дальнейшие ``run`` неинтерактивны.
+  авторизация аккаунта → зашифрованная сессия в ``app.db``; дальнейшие
+  ``run`` неинтерактивны. Шов логина платформо-специфичен и принадлежит
+  плагину (``make_login``, M7 B1): Telegram — номер/код/2FA, Matrix —
+  homeserver/пароль.
 
 structlog конфигурируется здесь (право приложения, plan 2.8): цепочка с
 ``mask_secrets`` (§17.7). Сетевые/интерактивные части (login,
@@ -29,7 +31,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import signal
-from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -38,23 +39,19 @@ import structlog
 
 from angarion.adapters.http.server import serve_api, serve_combined
 from angarion.adapters.storage.engine import apply_migrations
-from angarion.adapters.telegram.plugin import TelegramAccountConfig
-from angarion.adapters.telegram.realclient import login_and_export_session
-from angarion.adapters.telegram.session import EncryptedSessionStore
-from angarion.bootstrap import AngarionApp, build_app, build_storage
+from angarion.bootstrap import AngarionApp, build_app, build_storage, load_plugins
 from angarion.config import load_settings
 from angarion.domain.errors import ConfigError
+from angarion.domain.plugin import LoginContext
 from angarion.log import get_logger, mask_secrets
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
+    from angarion.bootstrap import LoadedPlugins
     from angarion.config import AngarionSettings
 
 _log = get_logger('angarion.cli')
-
-LoginFn = Callable[[int, str], Awaitable[str]]
-"""Интерактивный логин: ``(api_id, api_hash) -> session_string``."""
 
 
 def _configure_logging() -> None:
@@ -154,20 +151,43 @@ async def cmd_login(
     settings: AngarionSettings,
     account_name: str,
     *,
-    login: LoginFn = login_and_export_session,
+    plugins: LoadedPlugins | None = None,
 ) -> None:
-    """Интерактивная авторизация аккаунта → зашифрованная сессия в БД (Q3)."""
+    """
+    Интерактивная авторизация аккаунта → зашифрованная сессия в БД.
+
+    Платформо-агностично: шов логина принадлежит плагину (``make_login``,
+    M7 B1), CLI лишь резолвит плагин по ``messenger`` аккаунта и отдаёт
+    ему непрозрачный ``SessionStorePort`` + ключ шифрования.
+    """
+    registry = plugins if plugins is not None else load_plugins()
     section = settings.accounts.get(account_name)
     if section is None:
         known = ', '.join(sorted(settings.accounts)) or '<пусто>'
         msg = f'аккаунт {account_name!r} не найден в конфиге; известны: {known}'
         raise ConfigError(msg)
-    cfg = TelegramAccountConfig.model_validate(section.model_dump())
-    storage = build_storage(settings)
+    plugin = registry.adapters.get(section.messenger)
+    if plugin is None:
+        known = ', '.join(sorted(registry.adapters)) or '<пусто>'
+        msg = (
+            f'аккаунт {account_name!r}: неизвестный messenger '
+            f'{section.messenger!r}; зарегистрированы: {known}'
+        )
+        raise ConfigError(msg)
+    if plugin.make_login is None:
+        msg = f'платформа {plugin.name!r} не поддерживает `angarion login`'
+        raise ConfigError(msg)
+    cfg = plugin.account_config_model.model_validate(section.model_dump())
+    storage = build_storage(settings, plugins=registry)
     try:
-        session_store = EncryptedSessionStore(storage.session, settings.session_key)
-        session_string = await login(cfg.api_id, cfg.api_hash)
-        await session_store.save(account_name, session_string)
+        await plugin.make_login(
+            LoginContext(
+                account_id=account_name,
+                config=cfg,
+                session=storage.session,
+                session_key=settings.session_key,
+            )
+        )
         _log.info('logged_in', account=account_name)
     finally:
         dispose = getattr(storage, 'dispose', None)

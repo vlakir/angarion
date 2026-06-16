@@ -53,6 +53,14 @@ telegram = [
     "cryptography>=43",
     "tenacity>=9",
 ]
+# Matrix-адаптер (M7 часть B, T010): matrix-nio (async-клиент Matrix) +
+# Fernet-шифрование сессии at-rest (как Telegram). Базовый nio без E2EE;
+# olm/megolm (nio[e2e] → python-olm) подключается с фазы B2. Регистрируется
+# entry point'ом angarion.adapters:matrix.
+matrix = [
+    "matrix-nio>=0.25",
+    "cryptography>=43",
+]
 # LLM-процессор (M4, T007): OpenAI-совместимый HTTP-вызов (httpx,
 # типизирован под mypy --strict) + tenacity-ретраи на сети/5xx/429
 # (Q6). Процессор llm живёт в отдельном модуле и регистрируется entry
@@ -87,6 +95,7 @@ angarion_testing = "angarion._testing_plugin"
 [project.entry-points."angarion.adapters"]
 memory = "angarion.adapters.memory.plugin:PLUGIN"
 telegram = "angarion.adapters.telegram.plugin:PLUGIN"
+matrix = "angarion.adapters.matrix.plugin:PLUGIN"
 
 [project.entry-points."angarion.queues"]
 memory = "angarion.adapters.memory.plugin:QUEUE_BACKEND"
@@ -133,6 +142,7 @@ dev = [
     "fastapi>=0.115",
     "fastapi-users[sqlalchemy]>=15",
     "uvicorn>=0.30",
+    "matrix-nio>=0.25",
 ]
 docs = [
     "mkdocs-material>=9.7.6",

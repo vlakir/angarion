@@ -24,11 +24,12 @@ from typing import TYPE_CHECKING, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from angarion.adapters.telegram.listener import TelegramListener
+from angarion.adapters.telegram.realclient import login_and_export_session
 from angarion.adapters.telegram.registry import ClientRegistry
 from angarion.adapters.telegram.sender import TelegramSender
 from angarion.adapters.telegram.session import EncryptedSessionStore
 from angarion.domain.capabilities import AdapterCapabilities
-from angarion.domain.plugin import AdapterPlugin
+from angarion.domain.plugin import AdapterPlugin, LoginContext
 from angarion.log import get_logger
 
 if TYPE_CHECKING:
@@ -130,11 +131,26 @@ def _make_sender(
     )
 
 
+async def _login(ctx: LoginContext) -> None:
+    """
+    Интерактивный ``angarion login`` Telegram-аккаунта (M7 B1).
+
+    Шов логина перенесён из CLI в плагин (как ``make_listener``/
+    ``make_sender``): ``client.start`` спросит номер/код/2FA, на выходе —
+    ``StringSession``, сохраняемая зашифрованной (Q2 спеки T005).
+    """
+    cfg = TelegramAccountConfig.model_validate(ctx.config.model_dump())
+    store = EncryptedSessionStore(ctx.session, ctx.session_key)
+    session_string = await login_and_export_session(cfg.api_id, cfg.api_hash)
+    await store.save(ctx.account_id, session_string)
+
+
 PLUGIN: Final = AdapterPlugin(
     name='telegram',
     capabilities=TELEGRAM_CAPABILITIES,
     account_config_model=TelegramAccountConfig,
     make_listener=_make_listener,
     make_sender=_make_sender,
+    make_login=_login,
 )
 """Значение entry point ``angarion.adapters:telegram`` (§12.11, фаза 5)."""
