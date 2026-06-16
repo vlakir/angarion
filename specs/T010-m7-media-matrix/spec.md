@@ -431,15 +431,19 @@ M7 — финальный этап дорожной карты, замыкающ
    координатам источника `MediaRef.ref="chat:msg"` (без скачивания, ADR);
    релаксация DROP в passthrough (медиа-only `text=None` → доставка с пустой
    подписью). Кросс-аккаунт со скачиванием — отложено в A3. 895 passed.
-3. **A3 — Политика + реестр + скачивание-fallback.** Конфиг политики
-   (глобальный дефолт + per-pipeline override): `download`, `allowed_kinds`,
-   `max_size`, `storage_dir`, ретеншн (через prune §17.3); скачивание-fallback
-   для кросс-аккаунта (когда отправитель не в источнике); media-хэш
-   **отдельным полем реестра** (text-`content_hash` не ломаем — Analyze),
-   edit-детекция по `(content_hash, media_hash)`. **Must-fix (найдено в A2):**
-   медиа-only `MESSAGE_EDITED` (`text=None`) сейчас падает в `make_dedup_key`
-   (content_hash обязателен для EDITED) — media-хэш закрывает это (хэш есть
-   даже без текста). ADR медиа.
+3. **A3 — Политика + реестр + скачивание-fallback.** (Разбита на срезы.)
+   - **Срез 1 — media-хэш в ключе + must-fix. ✅ (2026-06-16)** `make_media_hash`
+     + `media_hash` в `make_dedup_key`; подмена файла = EDITED (Q5);
+     медиа-only `MESSAGE_EDITED` больше не падает; text-only ключ §7.2
+     неизменен. 904 passed, ADR.
+   - **Срез 2 — реестр media-хэш для catch-up.** Хранить `media_hash` в
+     `RegistryRecord` (отдельным полем, text-`content_hash` не ломаем),
+     детекция медиа-only правок при catch-up; миграция Alembic.
+   - **Срез 3 — политика + хранилище + скачивание-fallback.** Конфиг
+     (глобальный дефолт + per-pipeline override): `download`, `allowed_kinds`,
+     `max_size`, `storage_dir`, ретеншн (prune §17.3); скачивание-при-ingest
+     принимающим аккаунтом (даёт кросс-аккаунт + `local_path` процессорам);
+     sender грузит из `local_path` когда есть. ADR медиа.
 4. **A4 — Update медиа.** README/CHANGELOG/DECISIONS; пример `examples/`
    (зеркало с пересылкой медиа); проверка существующих примеров.
 

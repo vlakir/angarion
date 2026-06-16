@@ -82,6 +82,18 @@ def test_no_media_yields_empty_list() -> None:
     assert event.has_media is False
 
 
+def test_media_only_edited_does_not_crash() -> None:
+    """M7 must-fix: правка медиа-only сообщения (text=None) маппится, не падая
+    в make_dedup_key (раньше: content_hash обязателен для EDITED)."""
+    media = (RawMedia(kind='photo', size=2048),)
+    event = map_message(
+        raw_message(kind=EventKind.MESSAGE_EDITED, text=None, media=media), ACCOUNT
+    )
+    assert event is not None
+    assert event.kind is EventKind.MESSAGE_EDITED
+    assert ':edit:media:' in event.dedup_key
+
+
 def test_thread_id_enters_source_and_key() -> None:
     event = map_message(raw_message(thread_id=55), ACCOUNT)
     assert event is not None

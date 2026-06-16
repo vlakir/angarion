@@ -69,8 +69,8 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
   - Часть B (Matrix+E2EE): B1 каркас+login → B2 listener+маппинг+E2EE →
     B3 sender+catch-up+деградация → B4 интеграционный контур → B5 update+пример.
   - **Текущая фаза: A3** (A1+A2 закрыты 2026-06-16, ветка `T010-a1-mediaref`).
-    A3 включает must-fix: медиа-only `MESSAGE_EDITED` падает в `make_dedup_key`
-    (media-хэш закрывает).
+    A3 по срезам: ~~срез 1 media-хэш в ключе + must-fix~~ ✅ → срез 2 реестр
+    media-хэш (catch-up) → срез 3 политика+хранилище+скачивание-fallback.
   - Acceptance — Success Criteria спеки (§16 M7: медиа сквозь пайплайн +
     Matrix-пайплайн new/edited/deleted; контрактные тесты зелёные; coverage
     ≥ 90%; четыре pre-push проверки чисты).

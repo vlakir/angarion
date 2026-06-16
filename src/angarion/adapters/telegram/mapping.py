@@ -18,7 +18,12 @@ from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from angarion.adapters.telegram.client import MESSENGER
-from angarion.domain.keys import make_dedup_key, make_source_key, normalize_and_hash
+from angarion.domain.keys import (
+    make_dedup_key,
+    make_media_hash,
+    make_source_key,
+    normalize_and_hash,
+)
 from angarion.domain.models import (
     AccountRef,
     Address,
@@ -78,11 +83,15 @@ def map_message(
     thread_id = _str_or_none(raw.thread_id)
     external_id = str(raw.message_id)
     content_hash = normalize_and_hash(raw.text) if raw.text is not None else None
+    media = [_to_media_ref(m, f'{chat_id}:{external_id}') for m in raw.media]
+    media_hash = make_media_hash(media)
     source_key = make_source_key(MESSENGER, account_id, chat_id, thread_id)
     return InboundEvent(
         uid=uuid4(),
         kind=raw.kind,
-        dedup_key=make_dedup_key(raw.kind, source_key, external_id, content_hash),
+        dedup_key=make_dedup_key(
+            raw.kind, source_key, external_id, content_hash, media_hash
+        ),
         origin=origin,
         source=Address(messenger=MESSENGER, chat_id=chat_id, thread_id=thread_id),
         received_by=AccountRef(messenger=MESSENGER, account_id=account_id),
@@ -92,7 +101,7 @@ def map_message(
         text=raw.text,
         reply_to_external_id=_str_or_none(raw.reply_to_message_id),
         content_hash=content_hash,
-        media=[_to_media_ref(m, f'{chat_id}:{external_id}') for m in raw.media],
+        media=media,
         event_at=raw.event_at,
         received_at=datetime.now(UTC),
         raw=raw.model_dump(mode='json'),
