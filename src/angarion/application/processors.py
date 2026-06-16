@@ -108,11 +108,15 @@ async def passthrough(
     svc: ProcessorServices,
 ) -> ProcessingResult:
     """
-    Ретрансляция текста события во все цели как есть (§10.2).
+    Ретрансляция текста и вложений события во все цели как есть (§10.2).
 
     Событие без текста (DELETED, не восстановленный реестром) —
     DROP: ретранслировать нечего; ``text=None`` обязан переживать
-    каждый процессор (§10.1).
+    каждый процессор (§10.1). Вложения (``media``) переносятся транзитом
+    в каждый ``OutboundMessage`` (M7, фаза A1); их доставку реализует
+    sender (фаза A2). Пересмотр условия DROP под медиа-only сообщения
+    (``text=None`` при непустом ``media``) — фаза A2, когда sender умеет
+    слать вложения.
     """
     if event.text is None:
         return ProcessingResult(
@@ -124,6 +128,7 @@ async def passthrough(
             target=spec.target,
             send_via=spec.send_via,
             text=event.text,
+            media=event.media,
         )
         for n, spec in enumerate(ctx.targets)
     ]

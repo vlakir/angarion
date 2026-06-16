@@ -17,6 +17,7 @@ from angarion.domain.models import (
     DeliveryReceipt,
     EventKind,
     InboundEvent,
+    MediaRef,
     OutboundMessage,
     PipelineContextData,
     ProcessingResult,
@@ -63,6 +64,12 @@ def make_event(**overrides: object) -> InboundEvent:
     return InboundEvent.model_validate(fields)
 
 
+def make_media(**overrides: object) -> MediaRef:
+    fields: dict[str, object] = {'kind': 'photo'}
+    fields.update(overrides)
+    return MediaRef.model_validate(fields)
+
+
 def make_outbound(**overrides: object) -> OutboundMessage:
     fields: dict[str, object] = {
         'idempotency_key': 'k->p:c:0',
@@ -80,7 +87,17 @@ def representative_dtos() -> list[BaseModel]:
         make_address(thread_id='55', title='angarion 1'),
         AccountRef(messenger='telegram', account_id='acc1'),
         make_event(previous_text='old', content_hash='abc', raw={'id': 42}),
+        make_media(
+            ref='AgACfile_id',
+            mime_type='image/jpeg',
+            file_name='photo.jpg',
+            size=1024,
+            width=800,
+            height=600,
+        ),
+        make_event(media=[make_media(), make_media(kind='document')]),
         make_outbound(extra={'parse_mode': 'html'}),
+        make_outbound(media=[make_media()]),
         ProcessingResult(verdict=Verdict.DELIVER, outbound=[make_outbound()]),
         AnalyticsEvent(uid=UID, kind='ingested', event_uid=UID, at=NOW),
         PipelineContextData(
@@ -186,7 +203,31 @@ class TestInboundEvent:
         assert event.content_hash is None
         assert event.reply_to_external_id is None
         assert event.has_media is False
+        assert event.media == []
         assert event.raw == {}
+
+    def test_media_carried(self) -> None:
+        event = make_event(media=[make_media(kind='video')])
+        assert [m.kind for m in event.media] == ['video']
+
+
+class TestMediaRef:
+    def test_only_kind_required(self) -> None:
+        media = MediaRef(kind='photo')
+        assert media.kind == 'photo'
+        assert media.ref is None
+        assert media.mime_type is None
+        assert media.file_name is None
+        assert media.size is None
+        assert media.width is None
+        assert media.height is None
+        assert media.duration is None
+        assert media.local_path is None
+
+    def test_kind_is_open_string(self) -> None:
+        """``kind`` — открытая строка (как ``Messenger``): новые платформы
+        регистрируют свои виды вложений без правки домена."""
+        assert MediaRef(kind='lottie_sticker').kind == 'lottie_sticker'
 
 
 class TestQueueEnvelope:

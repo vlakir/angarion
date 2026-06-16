@@ -66,6 +66,33 @@ class EventKind(StrEnum):
     MESSAGE_DELETED = 'message_deleted'
 
 
+class MediaRef(DomainModel):
+    r"""
+    Структурная ссылка на вложение события (§4.2, M7).
+
+    ``kind`` — **открытая строка** (как ``Messenger``): photo / video /
+    document / audio / voice / sticker / … — новые платформы вводят свои
+    виды без правки домена. ``ref`` — непрозрачная платформенная ссылка
+    для пересылки **без скачивания** (Telegram ``file_id``, Matrix
+    ``mxc://``); ``local_path`` ставится при скачивании по требованию
+    (фаза A3 M7), ``None`` = доступны только метаданные.
+
+    Поле аддитивно к домену (§17.8.2): сериализуется без потерь, не ломает
+    существующие гарантии. Размерности/длительность опциональны — адаптер
+    заполняет то, что знает.
+    """
+
+    kind: str
+    ref: str | None = None
+    mime_type: str | None = None
+    file_name: str | None = None
+    size: int | None = None
+    width: int | None = None
+    height: int | None = None
+    duration: int | None = None
+    local_path: str | None = None
+
+
 class InboundEvent(DomainModel):
     """Нормализованное входящее событие (§4.2)."""
 
@@ -83,6 +110,7 @@ class InboundEvent(DomainModel):
     content_hash: str | None = None
     reply_to_external_id: str | None = None
     has_media: bool = False
+    media: list[MediaRef] = Field(default_factory=list)
     event_at: AwareDatetime
     received_at: AwareDatetime
     raw: dict[str, Any] = Field(default_factory=dict)
@@ -95,6 +123,7 @@ class OutboundMessage(DomainModel):
     target: Address
     send_via: AccountRef
     text: str
+    media: list[MediaRef] = Field(default_factory=list)
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
