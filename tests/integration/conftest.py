@@ -10,12 +10,19 @@
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 from telethon import TelegramClient
+from telethon.sessions import SQLiteSession, StringSession
+
+from angarion.application import processors
+from angarion.application.processors import FunctionProcessor
+
+from harness import ECHO_PROCESSOR, echo_processor
 
 ROOT = Path(__file__).resolve().parents[2]
 SECRETS_FILE = ROOT / '.secrets'
@@ -25,6 +32,7 @@ REQUIRED_VARS = (
     'TG_SESSION',
     'TG_TEST_GROUP_A',
     'TG_TEST_GROUP_B',
+    'TG_TEST_GROUP_C',
 )
 
 
@@ -49,11 +57,12 @@ class TgEnv:
     session: str
     group_a: int
     group_b: int
+    group_c: int
 
     @property
-    def groups(self) -> tuple[int, int]:
-        """Обе тестовые группы."""
-        return (self.group_a, self.group_b)
+    def groups(self) -> tuple[int, int, int]:
+        """Все три тестовые группы."""
+        return (self.group_a, self.group_b, self.group_c)
 
 
 @pytest.fixture
@@ -72,6 +81,7 @@ def tg_env() -> TgEnv:
         session=str(ROOT / os.environ['TG_SESSION']),
         group_a=int(os.environ['TG_TEST_GROUP_A']),
         group_b=int(os.environ['TG_TEST_GROUP_B']),
+        group_c=int(os.environ['TG_TEST_GROUP_C']),
     )
 
 
@@ -87,3 +97,42 @@ async def tg_client(tg_env: TgEnv) -> AsyncIterator[TelegramClient]:
         )
     yield client
     await client.disconnect()
+
+
+@pytest.fixture
+def tg_session_string(tg_env: TgEnv) -> str:
+    """
+    Сессия аккаунта как ``StringSession`` (из файлового session). Из неё
+    оснастка поднимает клиент пула; разные клиенты на одном auth-key
+    используются только последовательно (live — клиент пула, idle —
+    отдельный), не одновременно. Skip, если сессия не авторизована.
+    """
+    sqlite_session = SQLiteSession(tg_env.session)
+    try:
+        session_string = StringSession.save(sqlite_session)
+    finally:
+        sqlite_session.close()
+    if not session_string:
+        pytest.skip(
+            'сессия не авторизована — выполни: uv run python scripts/tg_login.py',
+        )
+    return str(session_string)
+
+
+@pytest.fixture
+def nonce() -> str:
+    """Уникальный маркер прогона — для адресной самоочистки сообщений."""
+    return f'angarion-it-{uuid.uuid4().hex[:12]}'
+
+
+@pytest.fixture
+def echo_registered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Регистрирует ``integration_echo`` в реестре процессоров на время теста.
+
+    Изолированная копия реестра (тестовое имя не утекает между тестами,
+    monkeypatch восстанавливает оригинал); ``build_app`` подхватывает его
+    при сборке пайплайнов.
+    """
+    monkeypatch.setattr(processors, '_registry', dict(processors.registered()))
+    processors.register(FunctionProcessor(name=ECHO_PROCESSOR, fn=echo_processor))
