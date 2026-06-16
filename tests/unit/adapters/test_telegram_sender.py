@@ -14,6 +14,7 @@ from angarion.domain.models import (
     Address,
     DeliveryReceipt,
     DynamicSettings,
+    MediaRef,
     OutboundMessage,
 )
 from angarion.log import get_logger
@@ -33,6 +34,27 @@ def _msg(
         send_via=AccountRef(messenger='telegram', account_id=account),
         text=text,
         extra=extra or {},
+    )
+
+
+def _media_msg(
+    *,
+    text: str = 'подпись',
+    ref: str | None = '-100123:42',
+    local_path: str | None = None,
+    chat_id: str = '-100999',
+) -> OutboundMessage:
+    media = (
+        [MediaRef(kind='photo', ref=ref, local_path=local_path)]
+        if ref is not None or local_path is not None
+        else []
+    )
+    return OutboundMessage(
+        idempotency_key=f'k:{chat_id}:media',
+        target=Address(messenger='telegram', chat_id=chat_id),
+        send_via=AccountRef(messenger='telegram', account_id='main'),
+        text=text,
+        media=media,
     )
 
 
@@ -104,6 +126,55 @@ async def test_thread_id_becomes_reply_to() -> None:
     client = FakeTelegramClient()
     await _sender({'main': client}, FakeClock()).send(_msg(thread_id='55'))
     assert client.sent[0]['reply_to'] == 55
+
+
+async def test_media_routed_to_send_media_with_caption() -> None:
+    """A2 (M7): сообщение с media → переотправка медиа по source_ref."""
+    client = FakeTelegramClient()
+    receipt = await _sender({'main': client}, FakeClock()).send(_media_msg())
+    call = client.sent[0]
+    assert call['media'] is True
+    assert call['source_ref'] == '-100123:42'
+    assert call['caption'] == 'подпись'
+    assert call['chat_id'] == -100999  # numeric peer
+    assert receipt.external_id == '1001'
+
+
+async def test_media_only_empty_caption() -> None:
+    client = FakeTelegramClient()
+    await _sender({'main': client}, FakeClock()).send(_media_msg(text=''))
+    assert client.sent[0]['caption'] == ''
+    assert client.sent[0]['media'] is True
+
+
+async def test_media_floodwait_retries_same_message() -> None:
+    """Медиа-путь идёт через ту же FloodWait/transient-обёртку, что текст."""
+    client = FakeTelegramClient(send_effects=[FloodWaitError(seconds=3.0), None])
+    clock = FakeClock()
+    await _sender({'main': client}, clock).send(_media_msg())
+    assert len(client.sent) == 2
+    assert all(call['media'] is True for call in client.sent)
+    assert clock.slept == [3.0]
+
+
+async def test_media_without_ref_falls_back_to_text() -> None:
+    """media без ref/local_path (не fast-path) → текстовая отправка."""
+    client = FakeTelegramClient()
+    await _sender({'main': client}, FakeClock()).send(_media_msg(text='подпись', ref=None))
+    assert 'media' not in client.sent[0]  # ушло через send_message
+    assert client.sent[0]['text'] == 'подпись'
+
+
+async def test_media_local_path_uploaded_from_file() -> None:
+    """A3 (M7): скачанное при ingest (local_path) → заливка файла, не рефетч."""
+    client = FakeTelegramClient()
+    await _sender({'main': client}, FakeClock()).send(
+        _media_msg(ref=None, local_path='/blobs/x.jpg')
+    )
+    call = client.sent[0]
+    assert call['media'] is True
+    assert call['local_path'] == '/blobs/x.jpg'
+    assert call['source_ref'] is None
 
 
 async def test_floodwait_waits_and_retries_same_message() -> None:

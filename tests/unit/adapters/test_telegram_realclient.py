@@ -27,6 +27,8 @@ from angarion.adapters.telegram.realclient import (
 from angarion.domain.models import EventKind
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from angarion.adapters.telegram.client import RawTelegramMessage
 
 NOW = datetime(2026, 6, 13, 12, 0, tzinfo=UTC)
@@ -41,6 +43,7 @@ def _message(**overrides: object) -> SimpleNamespace:
         'sender_id': 777,
         'sender': None,
         'media': None,
+        'file': None,
         'reply_to': None,
     }
     fields.update(overrides)
@@ -61,7 +64,7 @@ def test_to_raw_message_basic_new() -> None:
     assert raw.text == 'привет'
     assert raw.sender_id == 777
     assert raw.sender_name is None
-    assert raw.has_media is False
+    assert raw.media == ()
     assert raw.is_service is False
     assert raw.thread_id is None
     assert raw.reply_to_message_id is None
@@ -76,9 +79,47 @@ def test_edited_uses_edit_date() -> None:
     assert raw.event_at == edited
 
 
-def test_media_detected() -> None:
+def test_media_extracted_from_file() -> None:
+    file = SimpleNamespace(
+        mime_type='image/jpeg',
+        name='photo.jpg',
+        size=2048,
+        width=800,
+        height=600,
+        duration=None,
+    )
+    message = _message(message=None, file=file, photo=object())
+    raw = to_raw_message(_event(message), EventKind.MESSAGE_NEW)
+    assert len(raw.media) == 1
+    media = raw.media[0]
+    assert media.kind == 'photo'
+    assert media.mime_type == 'image/jpeg'
+    assert media.file_name == 'photo.jpg'
+    assert media.size == 2048
+    assert media.width == 800
+    assert media.height == 600
+
+
+def test_media_kind_falls_back_to_document() -> None:
+    file = SimpleNamespace(
+        mime_type='application/pdf', name='doc.pdf', size=10, duration=None
+    )
+    raw = to_raw_message(_event(_message(file=file)), EventKind.MESSAGE_NEW)
+    assert raw.media[0].kind == 'document'
+
+
+def test_voice_duration_coerced_to_int() -> None:
+    file = SimpleNamespace(mime_type='audio/ogg', name=None, size=5, duration=12.7)
+    message = _message(file=file, voice=object())
+    raw = to_raw_message(_event(message), EventKind.MESSAGE_NEW)
+    assert raw.media[0].kind == 'voice'
+    assert raw.media[0].duration == 12
+
+
+def test_no_file_means_no_media() -> None:
+    """Превью ссылки/опрос (``message.file is None``) — не вложение."""
     raw = to_raw_message(_event(_message(media=object())), EventKind.MESSAGE_NEW)
-    assert raw.has_media is True
+    assert raw.media == ()
 
 
 def test_topic_reply_extracts_thread_and_reply() -> None:
@@ -174,6 +215,111 @@ async def test_send_message_delegates_and_returns_id() -> None:
         silent=True,
         link_preview=True,
     )
+
+
+async def test_send_media_refetches_source_and_sends_file() -> None:
+    client = _mock_client()
+    origin = SimpleNamespace(media=object())
+    client.get_messages = AsyncMock(return_value=origin)
+    client.send_file = AsyncMock(return_value=SimpleNamespace(id=555))
+    message_id = await TelethonClient(client).send_media(
+        -100999, source_ref='-100123:42', text='подпись', reply_to=7
+    )
+    assert message_id == 555
+    client.get_messages.assert_awaited_once_with(-100123, ids=42)
+    client.send_file.assert_awaited_once_with(
+        -100999,
+        origin.media,
+        caption='подпись',
+        reply_to=7,
+        parse_mode=None,
+        silent=False,
+    )
+
+
+async def test_send_media_uploads_local_path_without_refetch() -> None:
+    """A3: local_path → send_file файла, без рефетча источника."""
+    client = _mock_client()
+    client.get_messages = AsyncMock()
+    client.send_file = AsyncMock(return_value=SimpleNamespace(id=777))
+    message_id = await TelethonClient(client).send_media(
+        -100999, local_path='/blobs/x.jpg', text='подпись'
+    )
+    assert message_id == 777
+    client.get_messages.assert_not_awaited()
+    client.send_file.assert_awaited_once_with(
+        -100999,
+        '/blobs/x.jpg',
+        caption='подпись',
+        reply_to=None,
+        parse_mode=None,
+        silent=False,
+    )
+
+
+async def test_download_media_refetches_and_returns_path(tmp_path: Path) -> None:
+    """A3: рефетч источника + download_media в каталог → локальный путь."""
+    client = _mock_client()
+    origin = SimpleNamespace(media=object())
+    client.get_messages = AsyncMock(return_value=origin)
+    dest = tmp_path / 'media'
+    written = str(dest / 'photo.jpg')
+    client.download_media = AsyncMock(return_value=written)
+    path = await TelethonClient(client).download_media(
+        source_ref='-100123:42', dest_dir=str(dest)
+    )
+    assert path == written
+    assert dest.is_dir()  # каталог создан
+    client.get_messages.assert_awaited_once_with(-100123, ids=42)
+    client.download_media.assert_awaited_once_with(origin, file=str(dest))
+
+
+async def test_download_media_returns_none_when_no_media(tmp_path: Path) -> None:
+    """Источник без медиа → None, скачивание не вызывается."""
+    client = _mock_client()
+    client.get_messages = AsyncMock(return_value=SimpleNamespace(media=None))
+    client.download_media = AsyncMock()
+    path = await TelethonClient(client).download_media(
+        source_ref='-100123:42', dest_dir=str(tmp_path)
+    )
+    assert path is None
+    client.download_media.assert_not_awaited()
+
+
+async def test_download_media_translates_floodwait(tmp_path: Path) -> None:
+    """Ошибка границы Telethon при скачивании → port-исключение."""
+    client = _mock_client()
+    client.get_messages = AsyncMock(
+        side_effect=errors.FloodWaitError(request=None, capture=5)
+    )
+    with pytest.raises(FloodWaitError) as caught:
+        await TelethonClient(client).download_media(
+            source_ref='-1:2', dest_dir=str(tmp_path)
+        )
+    assert caught.value.seconds == 5
+
+
+async def test_send_media_degrades_to_text_when_source_gone() -> None:
+    client = _mock_client()
+    client.get_messages = AsyncMock(return_value=None)
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=42))
+    client.send_file = AsyncMock()
+    message_id = await TelethonClient(client).send_media(
+        -100999, source_ref='-100123:42', text='подпись'
+    )
+    assert message_id == 42
+    client.send_file.assert_not_awaited()
+    client.send_message.assert_awaited_once()
+
+
+async def test_send_media_translates_floodwait() -> None:
+    client = _mock_client()
+    client.get_messages = AsyncMock(
+        side_effect=errors.FloodWaitError(request=None, capture=9)
+    )
+    with pytest.raises(FloodWaitError) as caught:
+        await TelethonClient(client).send_media(-1, source_ref='-1:2', text='x')
+    assert caught.value.seconds == 9
 
 
 async def test_send_message_translates_floodwait() -> None:

@@ -18,16 +18,23 @@ from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from angarion.adapters.telegram.client import MESSENGER
-from angarion.domain.keys import make_dedup_key, make_source_key, normalize_and_hash
+from angarion.domain.keys import (
+    make_dedup_key,
+    make_media_hash,
+    make_source_key,
+    normalize_and_hash,
+)
 from angarion.domain.models import (
     AccountRef,
     Address,
     EventKind,
     InboundEvent,
+    MediaRef,
 )
 
 if TYPE_CHECKING:
     from angarion.adapters.telegram.client import (
+        RawMedia,
         RawTelegramDeletion,
         RawTelegramMessage,
     )
@@ -38,6 +45,37 @@ Origin = Literal['live', 'catchup']
 
 def _str_or_none(value: int | None) -> str | None:
     return str(value) if value is not None else None
+
+
+def raw_media_hash(raw: RawTelegramMessage) -> str | None:
+    """
+    media_hash сырого сообщения (M7 A3) — для catch-up-сверки правок медиа.
+
+    Эквивалентен ``InboundEvent.media_hash`` после ``map_message`` того же
+    сообщения: ``make_media_hash`` игнорирует ``ref``, поэтому ref-пустышка
+    здесь даёт тот же хэш (live и catch-up сходятся, §9.3.5).
+    """
+    return make_media_hash([_to_media_ref(m, '') for m in raw.media])
+
+
+def _to_media_ref(raw: RawMedia, source_ref: str) -> MediaRef:
+    """
+    Сырое вложение Telethon → доменный ``MediaRef`` (без логики ключей).
+
+    ``ref`` = координаты исходного сообщения ``"chat_id:message_id"`` —
+    sender по ним рефетчит источник и переотправляет медиа без скачивания
+    (M7 A2, refetch-fast-path). Парсит обратно Telegram-sender.
+    """
+    return MediaRef(
+        kind=raw.kind,
+        ref=source_ref,
+        mime_type=raw.mime_type,
+        file_name=raw.file_name,
+        size=raw.size,
+        width=raw.width,
+        height=raw.height,
+        duration=raw.duration,
+    )
 
 
 def map_message(
@@ -56,11 +94,15 @@ def map_message(
     thread_id = _str_or_none(raw.thread_id)
     external_id = str(raw.message_id)
     content_hash = normalize_and_hash(raw.text) if raw.text is not None else None
+    media = [_to_media_ref(m, f'{chat_id}:{external_id}') for m in raw.media]
+    media_hash = make_media_hash(media)
     source_key = make_source_key(MESSENGER, account_id, chat_id, thread_id)
     return InboundEvent(
         uid=uuid4(),
         kind=raw.kind,
-        dedup_key=make_dedup_key(raw.kind, source_key, external_id, content_hash),
+        dedup_key=make_dedup_key(
+            raw.kind, source_key, external_id, content_hash, media_hash
+        ),
         origin=origin,
         source=Address(messenger=MESSENGER, chat_id=chat_id, thread_id=thread_id),
         received_by=AccountRef(messenger=MESSENGER, account_id=account_id),
@@ -70,7 +112,8 @@ def map_message(
         text=raw.text,
         reply_to_external_id=_str_or_none(raw.reply_to_message_id),
         content_hash=content_hash,
-        has_media=raw.has_media,
+        media_hash=media_hash,
+        media=media,
         event_at=raw.event_at,
         received_at=datetime.now(UTC),
         raw=raw.model_dump(mode='json'),

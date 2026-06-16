@@ -25,9 +25,62 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ## [Unreleased]
 
-<!-- Здесь накапливаются изменения для следующего milestone (M6). -->
+<!-- Здесь накапливаются изменения для следующих milestone (M6, M7). -->
 
 ### Added
+
+- Домен медиа (T010, M7 фаза A1): доменный DTO `MediaRef` (открытый
+  строковый `kind`; платформенная ссылка `ref` для пересылки без
+  скачивания; опц. mime/имя/размер/размерности/длительность; `local_path`)
+  и аддитивные поля `InboundEvent.media` / `OutboundMessage.media`
+  (default `[]`). Встроенный `passthrough` переносит вложения транзитом в
+  каждый исходящий.
+- Извлечение медиа из Telegram (T010, M7 фаза A2, inbound): Telethon
+  `message.file` → структурный `MediaRef` (kind photo/video/voice/audio/
+  sticker/animation/document + mime/имя/размер/размерности/длительность);
+  гейт по `message.file` отсекает превью ссылок/опросы. `InboundEvent.media`
+  теперь несёт реальные вложения; маппинг покрыт юнит-тестами на стабах.
+- Пересылка медиа в Telegram (T010, M7 фаза A2, sender): `passthrough`
+  доставляет медиа-only сообщения (пустая подпись), Telegram-sender
+  переотправляет вложения **без скачивания** — рефетч исходного сообщения
+  аккаунтом-отправителем по координатам `MediaRef.ref` (`"chat:msg"`) +
+  `send_file` с подписью (FloodWait/transient-обёртка как у текста);
+  источник недоступен/удалён → деградация до текста. Кросс-аккаунт со
+  скачиванием — фаза A3. ADR 2026-06-16 (refetch-fast-path).
+
+- Политика медиа + скачивание при ingest (T010, M7 фаза A3, срез 3):
+  глобальная секция `[media]` (`download`/`allowed_kinds`/`max_size`/
+  `storage_dir`/`retention_days`; по умолчанию не качаем — только
+  метаданные). При `download=true` принимающий аккаунт скачивает подходящие
+  вложения в git-ignored каталог и проставляет `MediaRef.local_path` (хук
+  `enrich_with_downloads` в live и catch-up); процессоры получают локальный
+  путь к контенту. Sender при наличии `local_path` грузит файл напрямую —
+  включает **кросс-аккаунт/кросс-платформа** доставку (без `local_path` —
+  refetch-fast-path A2). Ретеншн скачанных файлов — в фоновой prune-задаче
+  (по mtime, §17.3). Новый метод порта `TelegramClientPort.download_media`.
+  Per-pipeline переопределение пересылки медиа отложено (→ BACKLOG T033).
+  ADR 2026-06-16.
+- Media-хэш в реестре для catch-up (T010, M7 фаза A3, срез 2): `media_hash`
+  в `RegistryRecord`/`RegistryVersion`/`InboundEvent` (+ миграция 0006:
+  колонки `media_hash` в `messages`/`message_versions`). Детекция изменений
+  в реестре и catch-up учитывает медиа (общий хелпер `content_unchanged`):
+  подмена вложения за простой при том же тексте теперь поднимается как
+  `MESSAGE_EDITED`. Контракт `MessageRegistryPort` дополнен тестом.
+- Media-хэш в дедуп-ключе правок (T010, M7 фаза A3, срез 1): публичный
+  хелпер `make_media_hash` (отпечаток опознающих метаданных вложений) +
+  параметр `media_hash` в `make_dedup_key`. Правка медиа при том же тексте
+  теперь = новая версия (Q5); **исправлен краш** медиа-only `MESSAGE_EDITED`
+  (`text=None`) в `make_dedup_key` (для EDITED раньше был обязателен
+  `content_hash`). Ключ EDITED для текста-без-медиа — байт-в-байт прежний
+  (golden §7.2 не меняется). ADR 2026-06-16.
+
+### Changed
+
+- `InboundEvent.has_media` стал производным свойством от `media` (T010,
+  M7 A2): доступ `event.has_media` сохранён, но это больше не входное поле
+  (в JSON-дамп не входит — выводится из сериализуемого `media`). ADR
+  2026-06-16 (`@property` вместо `@computed_field` — без pydantic-плагина
+  mypy и `type: ignore`).
 
 - Интеграционный тестовый контур §13.2 на реальном Telegram-аккаунте
   (T009, M6): маркер `integration` (default-skip), оснастка

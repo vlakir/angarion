@@ -64,6 +64,30 @@ class MessageRegistryContract:
             RegistryVersion(text='hello', content_hash='hash-a', recorded_at=NOW)
         ]
 
+    async def test_media_change_with_same_text_is_changed(
+        self, registry: MessageRegistryPort
+    ) -> None:
+        """
+        M7 A3: подмена вложения при том же тексте — правка; архив несёт
+        прежний media_hash (иначе catch-up проморгал бы медиа-правку).
+        """
+        await registry.upsert(make_record(media_hash='m1'))
+        swapped = make_record(media_hash='m2', edit_ts=NOW + timedelta(minutes=1))
+        delta = await registry.upsert(swapped)
+        assert delta.outcome is RegistryOutcome.TEXT_CHANGED
+        assert await registry.get(SOURCE_KEY, '42') == swapped
+        versions = await registry.versions(SOURCE_KEY, '42')
+        assert [v.media_hash for v in versions] == ['m1']
+
+    async def test_same_text_and_media_unchanged(
+        self, registry: MessageRegistryPort
+    ) -> None:
+        await registry.upsert(make_record(media_hash='m1'))
+        delta = await registry.upsert(
+            make_record(media_hash='m1', edit_ts=NOW + timedelta(seconds=5))
+        )
+        assert delta == RegistryDelta(outcome=RegistryOutcome.UNCHANGED)
+
     async def test_upsert_stale_is_ignored(self, registry: MessageRegistryPort) -> None:
         current = make_record(text='hello!', content_hash='hash-b', edit_ts=NOW)
         await registry.upsert(current)

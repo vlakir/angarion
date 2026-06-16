@@ -33,7 +33,8 @@ from angarion.adapters.telegram.client import (
     MESSENGER,
     RawTelegramDeletion,
 )
-from angarion.adapters.telegram.mapping import map_deletion, map_message
+from angarion.adapters.telegram.mapping import map_deletion, map_message, raw_media_hash
+from angarion.adapters.telegram.media import enrich_with_downloads
 from angarion.domain.keys import make_source_key, normalize_and_hash
 from angarion.domain.models import AnalyticsEvent, EventKind, SourceCursor
 
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
         TelegramClientPort,
     )
     from angarion.application.ingest import IngestService
+    from angarion.config import MediaConfig
     from angarion.domain.ports import (
         AnalyticsPort,
         CursorStorePort,
@@ -78,6 +80,7 @@ async def run_catchup(
     ingest: IngestService,
     analytics: AnalyticsPort,
     log: FilteringBoundLogger,
+    media_policy: MediaConfig,
     max_messages: int,
     max_age_days: int,
     now: AwareDatetime,
@@ -103,6 +106,9 @@ async def run_catchup(
         account_id=account_id,
         registry=registry,
         ingest=ingest,
+        client=client,
+        media_policy=media_policy,
+        log=log,
         last_seen=last_seen,
     )
     if thread_id is None:
@@ -174,6 +180,9 @@ async def _emit_messages(
     account_id: str,
     registry: MessageRegistryPort,
     ingest: IngestService,
+    client: TelegramClientPort,
+    media_policy: MediaConfig,
+    log: FilteringBoundLogger,
     last_seen: int,
 ) -> None:
     """NEW (id > курсора, неизвестно) / EDITED (известно, хэш расходится)."""
@@ -187,14 +196,21 @@ async def _emit_messages(
         record = await registry.get(msg_source_key, str(raw.message_id))
         if record is not None and record.deleted_at is None:
             new_hash = normalize_and_hash(raw.text) if raw.text is not None else None
-            if record.content_hash != new_hash:
+            new_media_hash = raw_media_hash(raw)
+            if record.content_hash != new_hash or record.media_hash != new_media_hash:
                 edited = raw.model_copy(update={'kind': EventKind.MESSAGE_EDITED})
                 event = map_message(edited, account_id, origin='catchup')
                 if event is not None:
+                    event = await enrich_with_downloads(
+                        event, client=client, policy=media_policy, log=log
+                    )
                     await ingest.ingest(event)
         elif record is None and raw.message_id > last_seen:
             event = map_message(raw, account_id, origin='catchup')
             if event is not None:
+                event = await enrich_with_downloads(
+                    event, client=client, policy=media_policy, log=log
+                )
                 await ingest.ingest(event)
 
 

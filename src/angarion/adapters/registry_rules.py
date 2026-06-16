@@ -20,6 +20,18 @@ def effective_ts(rec: RegistryRecord) -> AwareDatetime:
     return rec.deleted_at or rec.edit_ts or rec.event_at
 
 
+def content_unchanged(new: RegistryRecord, stored: RegistryRecord) -> bool:
+    """
+    Содержимое не изменилось: совпадают **и** текстовый, **и** медиа хэши
+    (§9.2, M7 A3). Медиа-хэш ловит подмену вложения при том же тексте — иначе
+    catch-up проморгал бы медиа-правку. Логика общая для всех реализаций
+    ``MessageRegistryPort`` (SC-4: поведение совпадает дословно).
+    """
+    return (
+        new.content_hash == stored.content_hash and new.media_hash == stored.media_hash
+    )
+
+
 def id_at_least(external_id: str, min_id: str) -> bool:
     """Числовое сравнение для десятичных id, иначе лексикографика (§5)."""
     if external_id.isdecimal() and min_id.isdecimal():

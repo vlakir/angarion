@@ -16,10 +16,17 @@ import pytest
 from angarion.domain.keys import (
     make_dedup_key,
     make_idempotency_key,
+    make_media_hash,
     make_source_key,
     normalize_and_hash,
 )
-from angarion.domain.models import Address, AccountRef, EventKind, InboundEvent
+from angarion.domain.models import (
+    AccountRef,
+    Address,
+    EventKind,
+    InboundEvent,
+    MediaRef,
+)
 
 SOURCE_KEY = 'telegram:acc1:-1003385167603'
 
@@ -120,6 +127,65 @@ class TestMakeDedupKey:
             content_hash=normalize_and_hash('x'),
         )
         assert len({new, deleted, edited}) == 3
+
+    def test_edited_text_only_key_unchanged_by_media_param(self) -> None:
+        """§7.2 (M7): media_hash=None — ключ EDITED байт-в-байт прежний."""
+        content_hash = normalize_and_hash('v2')
+        assert make_dedup_key(
+            EventKind.MESSAGE_EDITED, SOURCE_KEY, '42', content_hash=content_hash
+        ) == f'{SOURCE_KEY}:42:edit:{content_hash}'
+
+    def test_edited_media_only_does_not_raise(self) -> None:
+        """M7 must-fix: медиа-only правка (нет content_hash) — ключ по media."""
+        media_hash = make_media_hash([MediaRef(kind='photo', size=10)])
+        key = make_dedup_key(
+            EventKind.MESSAGE_EDITED, SOURCE_KEY, '42', media_hash=media_hash
+        )
+        assert key == f'{SOURCE_KEY}:42:edit:media:{media_hash}'
+
+    def test_edited_media_swap_changes_key_with_same_text(self) -> None:
+        """Q5: подмена вложения при том же тексте → другой ключ EDITED."""
+        ch = normalize_and_hash('подпись')
+        key_a = make_dedup_key(
+            EventKind.MESSAGE_EDITED,
+            SOURCE_KEY,
+            '42',
+            content_hash=ch,
+            media_hash=make_media_hash([MediaRef(kind='photo', size=10)]),
+        )
+        key_b = make_dedup_key(
+            EventKind.MESSAGE_EDITED,
+            SOURCE_KEY,
+            '42',
+            content_hash=ch,
+            media_hash=make_media_hash([MediaRef(kind='photo', size=20)]),
+        )
+        assert key_a != key_b
+
+    def test_edited_requires_text_or_media(self) -> None:
+        """Ни текста, ни медиа — опознавать нечего, как и прежде → raise."""
+        with pytest.raises(ValueError, match='content_hash'):
+            make_dedup_key(EventKind.MESSAGE_EDITED, SOURCE_KEY, '42')
+
+
+class TestMakeMediaHash:
+    def test_empty_is_none(self) -> None:
+        assert make_media_hash([]) is None
+
+    def test_deterministic(self) -> None:
+        media = [MediaRef(kind='photo', size=10, mime_type='image/jpeg')]
+        assert make_media_hash(media) == make_media_hash(list(media))
+
+    def test_changes_on_metadata(self) -> None:
+        assert make_media_hash([MediaRef(kind='photo', size=10)]) != make_media_hash(
+            [MediaRef(kind='photo', size=11)]
+        )
+
+    def test_ignores_ref_and_local_path(self) -> None:
+        """ref постоянен в пределах сообщения, local_path — доставка: не в хэше."""
+        base = MediaRef(kind='photo', size=10)
+        with_ref = MediaRef(kind='photo', size=10, ref='-100:42', local_path='/tmp/x')
+        assert make_media_hash([base]) == make_media_hash([with_ref])
 
 
 def _event(dedup_key: str) -> InboundEvent:

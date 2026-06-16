@@ -13,6 +13,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from telegram_fakes import FakeTelegramClient, RecordingIngest, raw_message
 
+from angarion.adapters.telegram.client import RawMedia
+
 from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.storage import (
     MemoryAnalytics,
@@ -25,12 +27,14 @@ from angarion.adapters.telegram.catchup import (
     LAST_SEEN_KEY,
     run_catchup,
 )
+from angarion.config import MediaConfig
 from angarion.application.ingest import IngestService
 from angarion.application.router import Router, RouteSpec
-from angarion.domain.keys import normalize_and_hash
+from angarion.domain.keys import make_media_hash, normalize_and_hash
 from angarion.domain.models import (
     Address,
     EventKind,
+    MediaRef,
     RegistryRecord,
     SourceCursor,
 )
@@ -78,6 +82,8 @@ async def _run(
     max_messages: int = 2000,
     max_age_days: int = 7,
     thread_id: str | None = None,
+    media_policy: MediaConfig | None = None,
+    client: FakeTelegramClient | None = None,
 ) -> tuple[RecordingIngest, MemoryCursorStore, MemoryAnalytics, FakeTelegramClient]:
     registry = registry or MemoryMessageRegistry()
     ingest = ingest or RecordingIngest()
@@ -85,7 +91,7 @@ async def _run(
     cursors = cursors or MemoryCursorStore()
     if cursor is not None:
         await cursors.save(cursor)
-    client = FakeTelegramClient(history={CHAT: history})  # type: ignore[arg-type]
+    client = client or FakeTelegramClient(history={CHAT: history})  # type: ignore[arg-type]
     await run_catchup(
         client=client,
         account_id='main',
@@ -96,6 +102,7 @@ async def _run(
         ingest=ingest,  # type: ignore[arg-type]
         analytics=analytics,
         log=get_logger('test'),
+        media_policy=media_policy or MediaConfig(),
         max_messages=max_messages,
         max_age_days=max_age_days,
         now=NOW,
@@ -147,6 +154,66 @@ async def test_edit_detected_by_hash_divergence() -> None:
         (EventKind.MESSAGE_EDITED, '5')
     ]
     assert ingest.events[0].origin == 'catchup'
+
+
+async def test_media_edit_detected_during_catchup() -> None:
+    """M7 A3: подмена вложения за простой при том же тексте → EDITED по media_hash."""
+    registry = MemoryMessageRegistry()
+    await registry.upsert(
+        RegistryRecord(
+            source_key=SOURCE_KEY,
+            external_id='5',
+            text='подпись',
+            content_hash=normalize_and_hash('подпись'),
+            media_hash=make_media_hash([MediaRef(kind='photo', size=10)]),
+            event_at=NOW,
+        )
+    )
+    ingest, *_ = await _run(
+        history=[_hist(5, 'подпись', media=(RawMedia(kind='photo', size=20),))],
+        registry=registry,
+        cursor=_cursor(5),
+    )
+    assert [(e.kind, e.external_id) for e in ingest.events] == [
+        (EventKind.MESSAGE_EDITED, '5')
+    ]
+
+
+async def test_same_media_not_reemitted_during_catchup() -> None:
+    """Те же текст и медиа за простой — не ложная правка."""
+    registry = MemoryMessageRegistry()
+    await registry.upsert(
+        RegistryRecord(
+            source_key=SOURCE_KEY,
+            external_id='5',
+            text='подпись',
+            content_hash=normalize_and_hash('подпись'),
+            media_hash=make_media_hash([MediaRef(kind='photo', size=10)]),
+            event_at=NOW,
+        )
+    )
+    ingest, *_ = await _run(
+        history=[_hist(5, 'подпись', media=(RawMedia(kind='photo', size=10),))],
+        registry=registry,
+        cursor=_cursor(5),
+    )
+    assert ingest.events == []
+
+
+async def test_catchup_media_downloaded_when_policy_on() -> None:
+    """M7 A3: catch-up качает медиа нового сообщения при включённой политике."""
+    client = FakeTelegramClient(
+        history={CHAT: [_hist(11, 'подпись', media=(RawMedia(kind='photo'),))]},
+        download_effects=['/blobs/-100123_11.bin'],
+    )
+    ingest, *_ = await _run(
+        history=[],
+        client=client,
+        cursor=_cursor(10),
+        media_policy=MediaConfig(download=True, storage_dir='/blobs'),
+    )
+    assert ingest.events[0].media[0].local_path == '/blobs/-100123_11.bin'
+    assert client.downloads == [{'source_ref': '-100123:11', 'dest_dir': '/blobs'}]
 
 
 async def test_unchanged_message_skipped() -> None:
@@ -299,6 +366,7 @@ async def test_redelivery_deduped_end_to_end() -> None:
         'ingest': ingest,
         'analytics': analytics,
         'log': get_logger('test'),
+        'media_policy': MediaConfig(),
         'max_messages': 2000,
         'max_age_days': 7,
         'now': NOW,

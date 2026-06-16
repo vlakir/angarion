@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from telegram_fakes import raw_deletion, raw_message
 
-from angarion.adapters.telegram.mapping import map_deletion, map_message
-from angarion.domain.keys import make_dedup_key, make_source_key, normalize_and_hash
+from angarion.adapters.telegram.client import RawMedia
+from angarion.adapters.telegram.mapping import map_deletion, map_message, raw_media_hash
+from angarion.domain.keys import (
+    make_dedup_key,
+    make_media_hash,
+    make_source_key,
+    normalize_and_hash,
+)
 from angarion.domain.models import EventKind
 
 ACCOUNT = 'main'
@@ -51,12 +57,62 @@ def test_reply_sets_reply_to_external_id() -> None:
     assert event.reply_to_external_id == '10'
 
 
-def test_media_flag_propagates() -> None:
-    event = map_message(raw_message(has_media=True, text=None), ACCOUNT)
+def test_media_maps_to_media_ref() -> None:
+    media = (
+        RawMedia(
+            kind='photo',
+            mime_type='image/jpeg',
+            file_name='p.jpg',
+            size=2048,
+            width=800,
+            height=600,
+        ),
+    )
+    event = map_message(raw_message(media=media, text=None), ACCOUNT)
     assert event is not None
     assert event.has_media is True
+    assert [m.kind for m in event.media] == ['photo']
+    assert event.media[0].mime_type == 'image/jpeg'
+    assert event.media[0].size == 2048
+    # ref = координаты источника "chat_id:message_id" (refetch-fast-path A2)
+    assert event.media[0].ref == '-100123:42'
     assert event.text is None
     assert event.content_hash is None
+
+
+def test_no_media_yields_empty_list() -> None:
+    event = map_message(raw_message(), ACCOUNT)
+    assert event is not None
+    assert event.media == []
+    assert event.has_media is False
+
+
+def test_media_hash_on_event_matches_raw_media_hash() -> None:
+    """media_hash события совпадает с raw_media_hash (live ↔ catch-up)."""
+    media = (RawMedia(kind='photo', size=2048),)
+    raw = raw_message(media=media)
+    event = map_message(raw, ACCOUNT)
+    assert event is not None
+    assert event.media_hash == raw_media_hash(raw)
+    assert event.media_hash == make_media_hash(list(event.media))
+
+
+def test_no_media_event_media_hash_none() -> None:
+    event = map_message(raw_message(), ACCOUNT)
+    assert event is not None
+    assert event.media_hash is None
+
+
+def test_media_only_edited_does_not_crash() -> None:
+    """M7 must-fix: правка медиа-only сообщения (text=None) маппится, не падая
+    в make_dedup_key (раньше: content_hash обязателен для EDITED)."""
+    media = (RawMedia(kind='photo', size=2048),)
+    event = map_message(
+        raw_message(kind=EventKind.MESSAGE_EDITED, text=None, media=media), ACCOUNT
+    )
+    assert event is not None
+    assert event.kind is EventKind.MESSAGE_EDITED
+    assert ':edit:media:' in event.dedup_key
 
 
 def test_thread_id_enters_source_and_key() -> None:

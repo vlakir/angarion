@@ -21,10 +21,11 @@ from angarion.adapters.memory.storage import (
     MemoryDedupStore,
     MemoryMessageRegistry,
 )
+from angarion.adapters.telegram.client import RawMedia
 from angarion.adapters.telegram.listener import TelegramListener
 from angarion.application.ingest import IngestService
 from angarion.application.router import Router, RouteSpec
-from angarion.config import EndpointConfig
+from angarion.config import EndpointConfig, MediaConfig
 from angarion.domain.models import Address, EventKind
 from angarion.log import get_logger
 
@@ -42,6 +43,7 @@ def _listener(
     clients: dict[str, FakeTelegramClient],
     sources: Sequence[EndpointConfig],
     ingest: RecordingIngest,
+    media_policy: MediaConfig | None = None,
 ) -> TelegramListener:
     return TelegramListener(
         ingest=cast('IngestService', ingest),
@@ -51,6 +53,7 @@ def _listener(
         cursors=MemoryCursorStore(),
         analytics=MemoryAnalytics(),
         log=get_logger('test'),
+        media_policy=media_policy or MediaConfig(),
     )
 
 
@@ -79,6 +82,37 @@ async def test_new_message_reaches_ingest() -> None:
     await listener.stop()
     assert [e.external_id for e in ingest.events] == ['42']
     assert ingest.events[0].kind is EventKind.MESSAGE_NEW
+
+
+async def test_live_media_downloaded_when_policy_on() -> None:
+    """Включённая [media] качает вложение live-события до ingest (A3)."""
+    client = FakeTelegramClient(
+        peer_ids={'@grp': -100123}, download_effects=['/blobs/-100123_42.bin']
+    )
+    ingest = RecordingIngest()
+    listener = _listener(
+        {'main': client},
+        [_ep('main', '@grp')],
+        ingest,
+        media_policy=MediaConfig(download=True, storage_dir='/blobs'),
+    )
+    await listener.start()
+    await client.fire_new(raw_message(media=(RawMedia(kind='photo'),)))
+    await listener.stop()
+    assert ingest.events[0].media[0].local_path == '/blobs/-100123_42.bin'
+    assert client.downloads == [{'source_ref': '-100123:42', 'dest_dir': '/blobs'}]
+
+
+async def test_live_media_not_downloaded_by_default() -> None:
+    """Без opt-in'а медиа остаётся метаданными (только ref, без local_path)."""
+    client = FakeTelegramClient(peer_ids={'@grp': -100123})
+    ingest = RecordingIngest()
+    listener = _listener({'main': client}, [_ep('main', '@grp')], ingest)
+    await listener.start()
+    await client.fire_new(raw_message(media=(RawMedia(kind='photo'),)))
+    await listener.stop()
+    assert ingest.events[0].media[0].local_path is None
+    assert client.downloads == []
 
 
 async def test_running_consumer_drains_live() -> None:

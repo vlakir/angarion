@@ -19,6 +19,7 @@ from angarion.domain.keys import make_idempotency_key
 from angarion.domain.models import (
     EventKind,
     InboundEvent,
+    MediaRef,
     PipelineContextData,
     ProcessingResult,
     ProcessorServices,
@@ -99,6 +100,41 @@ class TestPassthrough:
         assert result.verdict is Verdict.DROP
         assert result.outbound == []
         assert result.note is not None
+
+    async def test_media_forwarded_to_all_targets(self) -> None:
+        """A1 (M7): вложения события транзитом переносятся в каждый
+        OutboundMessage (sender научится их слать в A2)."""
+        proc = get_processor('passthrough')
+        media = [MediaRef(kind='photo', ref='file42')]
+        event = make_event(media=media)
+        targets = [make_target('-100111'), make_target('-100222')]
+        ctx = make_context(targets=targets)
+        result = await proc.process(event, ctx, make_services())
+        assert result.verdict is Verdict.DELIVER
+        assert [msg.media for msg in result.outbound] == [media, media]
+
+    async def test_no_media_yields_empty_outbound_media(self) -> None:
+        """Без вложений OutboundMessage.media пуст (а не None)."""
+        proc = get_processor('passthrough')
+        result = await proc.process(make_event(), make_context(), make_services())
+        assert all(msg.media == [] for msg in result.outbound)
+
+    async def test_media_only_delivered_with_empty_caption(self) -> None:
+        """A2 (M7): медиа-only (text=None, есть media) — доставка с text=''."""
+        proc = get_processor('passthrough')
+        media = [MediaRef(kind='photo', ref='-100123:42')]
+        event = make_event(text=None, media=media)
+        result = await proc.process(event, make_context(), make_services())
+        assert result.verdict is Verdict.DELIVER
+        assert [msg.text for msg in result.outbound] == ['']
+        assert [msg.media for msg in result.outbound] == [media]
+
+    async def test_no_text_no_media_dropped(self) -> None:
+        """DROP только когда нечего слать: ни текста, ни вложений."""
+        proc = get_processor('passthrough')
+        event = make_event(kind=EventKind.MESSAGE_DELETED, text=None, media=[])
+        result = await proc.process(event, make_context(), make_services())
+        assert result.verdict is Verdict.DROP
 
 
 class TestTemplate:

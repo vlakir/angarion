@@ -108,6 +108,7 @@ def _make_listener(
         catchup_max_age_days=catchup.max_age_days,
         catchup_interval=catchup.interval,
         buffer_soft_limit=deps.settings.telegram.live_buffer_soft_limit,
+        media_policy=deps.settings.media,
     )
 
 

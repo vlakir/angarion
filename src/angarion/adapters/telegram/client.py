@@ -63,6 +63,29 @@ class TransientSendError(Exception):
     """Временный сбой отправки (сеть/таймаут/5xx) — повторяемый (§8)."""
 
 
+class RawMedia(BaseModel):
+    """
+    Нормализованное сырое вложение Telethon до маппинга (M7 A2).
+
+    Раскладывается из ``message.file`` обёрткой (``realclient``) в плоские
+    поля; ``mapping`` переводит в доменный ``MediaRef`` без логики ключей.
+    ``kind`` — производное от типа сообщения (photo/video/voice/…), метаданные
+    — из ``File`` Telethon. ``ref`` (платформенная ссылка для пересылки без
+    скачивания) заполняется на sender-фазе A2.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    kind: str
+    ref: str | None = None
+    mime_type: str | None = None
+    file_name: str | None = None
+    size: int | None = None
+    width: int | None = None
+    height: int | None = None
+    duration: int | None = None
+
+
 class RawTelegramMessage(BaseModel):
     """
     Нормализованное сырое сообщение Telethon (NEW/EDITED) до маппинга.
@@ -70,7 +93,9 @@ class RawTelegramMessage(BaseModel):
     Числовые id — как их отдаёт Telethon (знаковый chat_id для
     супергрупп ``-100…``); строковыми их делает уже ``mapping`` под
     доменный контракт. ``is_service`` — ``MessageService`` (вступления,
-    пины), отсеивается на входе адаптера (FR «Маппинг»).
+    пины), отсеивается на входе адаптера (FR «Маппинг»). ``media`` — кортеж
+    вложений (0..1 на сообщение в MTProto; кортеж — под доменный
+    ``list[MediaRef]`` и будущие альбомы/платформы).
     """
 
     model_config = ConfigDict(frozen=True, extra='forbid')
@@ -83,7 +108,7 @@ class RawTelegramMessage(BaseModel):
     sender_id: int | None = None
     sender_name: str | None = None
     reply_to_message_id: int | None = None
-    has_media: bool = False
+    media: tuple[RawMedia, ...] = ()
     is_service: bool = False
     event_at: AwareDatetime
 
@@ -151,6 +176,44 @@ class TelegramClientPort(Protocol):
         ``TransientSendError`` транслируются обёрткой из ошибок Telethon
         (FR «Sender»). ``reply_to`` — таргетинг топика, не перенос
         reply-связи (§7 out of scope).
+        """
+
+    async def download_media(self, *, source_ref: str, dest_dir: str) -> str | None:
+        """
+        Скачать вложение исходного сообщения в ``dest_dir`` (M7 A3).
+
+        ``source_ref`` = ``"chat_id:message_id"``: обёртка рефетчит источник
+        **принимающим аккаунтом** и сохраняет его медиа в каталог (имя — от
+        Telethon, обычно исходное ``file_name``); возвращает локальный путь.
+        Источник недоступен/удалён или без медиа → ``None`` (метаданные
+        остаются, файла нет). Ошибки Telethon → port-исключения.
+
+        Включает кросс-аккаунт/кросс-платформа доставку (sender грузит файл
+        из ``local_path``) и доступ процессоров к контенту (§3.A спеки T010).
+        """
+
+    async def send_media(
+        self,
+        chat_id: int | str,
+        *,
+        source_ref: str | None = None,
+        local_path: str | None = None,
+        text: str,
+        reply_to: int | None = None,
+        parse_mode: str | None = None,
+        silent: bool = False,
+    ) -> int:
+        """
+        Отправить вложение в чат/топик с подписью ``text`` (M7 A2/A3).
+
+        При заданном ``local_path`` (медиа скачано при ingest, A3) шлёт файл
+        напрямую (``send_file`` по пути) — работает кросс-аккаунт/кросс-
+        платформа. Иначе ``source_ref`` = ``"chat_id:message_id"``: обёртка
+        рефетчит исходное сообщение **аккаунтом-отправителем** и шлёт его
+        медиа (refetch-fast-path без скачивания, файл-ссылка обновляется при
+        рефетче, диск не используется). Источник недоступен/удалён (или у
+        аккаунта нет доступа — кросс-аккаунт без скачивания) → деградация до
+        текстовой отправки ``text``. Ошибки Telethon → port-исключения.
         """
 
     def on_new_message(self, handler: RawMessageHandler) -> None:

@@ -25,7 +25,7 @@ from pydantic_settings import (
 )
 
 from angarion.domain.errors import ConfigError
-from angarion.domain.models import EventKind, Messenger
+from angarion.domain.models import EventKind, MediaRef, Messenger
 
 
 class AccountConfig(BaseModel):
@@ -81,6 +81,56 @@ class StorageConfig(BaseModel):
             )
             raise ValueError(msg)
         return self
+
+
+class MediaConfig(BaseModel):
+    """
+    Секция ``[media]`` (M7 A3): глобальная политика скачивания/хранения/
+    ретеншна вложений (§3.A спеки T010).
+
+    Скачивание физически выполняет **принимающий аккаунт** при ingest (до
+    fan-out в пайплайны), поэтому политика глобальная, account/source-level;
+    per-pipeline переопределение пересылки медиа — отдельный follow-up
+    (T033, решение Владимира 2026-06-16). По умолчанию **не скачиваем**
+    (только метаданные, fast-path пересылки по платформенной ссылке §3.A):
+    дёшево, безопасно, диск не растёт. ``download=True`` — явный opt-in для
+    кросс-аккаунт/кросс-платформа доставки и доступа процессоров к
+    ``local_path``.
+
+    Конвенция ``0`` = «без ограничения»: ``max_size=0`` — лимита размера
+    нет; ``retention_days=0`` — храним бессрочно (как §17.3 для прочих
+    окон). ``allowed_kinds`` пуст — разрешены все виды.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    download: bool = False
+    allowed_kinds: frozenset[str] = frozenset()
+    max_size: int = Field(default=0, ge=0)
+    storage_dir: str = 'data/media'
+    retention_days: int = Field(default=0, ge=0)
+
+    @property
+    def storage_path(self) -> Path:
+        """Каталог скачанных файлов (git-ignored, рядом с ``data/``)."""
+        return Path(self.storage_dir)
+
+    def should_download(self, media: MediaRef) -> bool:
+        """
+        Качать ли это вложение принимающим аккаунтом (M7 A3).
+
+        ``False`` при выключенной политике, уже скачанном (``local_path``),
+        отсутствии платформенной ссылки (``ref`` — без неё рефетчить нечего),
+        виде вне whitelist'а или превышении ``max_size``. Размер неизвестен
+        (``size=None``) — лимит не применяется (best-effort).
+        """
+        if not self.download or media.ref is None or media.local_path is not None:
+            return False
+        if self.allowed_kinds and media.kind not in self.allowed_kinds:
+            return False
+        if self.max_size and media.size is not None:
+            return media.size <= self.max_size
+        return True
 
 
 class QueueConfig(BaseModel):
@@ -262,6 +312,7 @@ class AngarionSettings(BaseSettings):
 
     accounts: dict[str, AccountConfig] = Field(default_factory=dict)
     storage: StorageConfig = StorageConfig()
+    media: MediaConfig = MediaConfig()
     queue: QueueConfig = QueueConfig()
     worker: WorkerConfig = WorkerConfig()
     catchup: CatchupConfig = CatchupConfig()

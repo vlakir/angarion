@@ -101,6 +101,7 @@ class IngestService:
                 external_id=event.external_id,
                 text=event.text,
                 content_hash=event.content_hash,
+                media_hash=event.media_hash,
                 sender_id=event.sender_id,
                 sender_name=event.sender_name,
                 event_at=event.event_at,

@@ -14,7 +14,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from angarion.adapters.registry_rules import effective_ts, id_at_least
+from angarion.adapters.registry_rules import (
+    content_unchanged,
+    effective_ts,
+    id_at_least,
+)
 from angarion.domain.models import (
     CommandStatus,
     DynamicSettings,
@@ -177,12 +181,13 @@ class MemoryMessageRegistry:
             return RegistryDelta(outcome=RegistryOutcome.IS_NEW)
         if effective_ts(rec) < effective_ts(stored):
             return RegistryDelta(outcome=RegistryOutcome.STALE)
-        if rec.content_hash == stored.content_hash:
+        if content_unchanged(rec, stored):
             return RegistryDelta(outcome=RegistryOutcome.UNCHANGED)
         self._versions.setdefault(key, []).append(
             RegistryVersion(
                 text=stored.text,
                 content_hash=stored.content_hash,
+                media_hash=stored.media_hash,
                 recorded_at=stored.edit_ts or stored.event_at,
             )
         )

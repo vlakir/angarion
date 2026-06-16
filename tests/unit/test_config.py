@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -10,15 +10,13 @@ from pydantic import ValidationError
 from angarion.config import (
     AngarionSettings,
     EndpointConfig,
+    MediaConfig,
     PipelineConfig,
     StorageConfig,
     load_settings,
 )
 from angarion.domain.errors import ConfigError
-from angarion.domain.models import EventKind
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from angarion.domain.models import EventKind, MediaRef
 
 SAMPLE_TOML = """
 [accounts.main]
@@ -223,6 +221,84 @@ def test_telegram_section_parsed_from_toml(tmp_path: Path) -> None:
     assert settings.telegram.sender.flood_max_retries == 2
     assert settings.catchup.interval == 900
     assert settings.worker.prune_interval == 3600
+
+
+def test_media_defaults_conservative() -> None:
+    """[media] по умолчанию не качает (только метаданные, §3.A)."""
+    settings = AngarionSettings()
+    media = settings.media
+    assert media.download is False
+    assert media.allowed_kinds == frozenset()
+    assert media.max_size == 0
+    assert media.storage_dir == 'data/media'
+    assert media.storage_path == Path('data/media')
+    assert media.retention_days == 0
+
+
+def test_media_section_parsed_from_toml(tmp_path: Path) -> None:
+    """[media] разбирается из TOML с whitelist/лимитом/ретеншном."""
+    toml = (
+        '[media]\n'
+        'download = true\n'
+        'allowed_kinds = ["photo", "video"]\n'
+        'max_size = 1048576\n'
+        'storage_dir = "data/blobs"\n'
+        'retention_days = 7\n'
+    )
+    settings = load_settings(write_toml(tmp_path, toml))
+    assert settings.media.download is True
+    assert settings.media.allowed_kinds == frozenset({'photo', 'video'})
+    assert settings.media.max_size == 1048576
+    assert settings.media.storage_path == Path('data/blobs')
+    assert settings.media.retention_days == 7
+
+
+def test_media_unknown_key_fails(tmp_path: Path) -> None:
+    """Незнакомый ключ [media] — fail-fast (extra='forbid')."""
+    with pytest.raises(ConfigError):
+        load_settings(write_toml(tmp_path, '[media]\nbogus = 1\n'))
+
+
+def _media(**overrides: object) -> MediaRef:
+    fields: dict[str, object] = {'kind': 'photo', 'ref': '123:42', 'size': 1000}
+    fields.update(overrides)
+    return MediaRef.model_validate(fields)
+
+
+def test_should_download_off_by_default() -> None:
+    """Выключенная политика — не качаем ничего."""
+    assert MediaConfig().should_download(_media()) is False
+
+
+def test_should_download_enabled_passes_matching() -> None:
+    """Включённая политика без фильтров качает любое вложение с ref."""
+    assert MediaConfig(download=True).should_download(_media()) is True
+
+
+def test_should_download_skips_when_no_ref() -> None:
+    """Без платформенной ссылки рефетчить нечего."""
+    assert MediaConfig(download=True).should_download(_media(ref=None)) is False
+
+
+def test_should_download_skips_already_downloaded() -> None:
+    """Уже скачанное (local_path) повторно не качаем."""
+    media = _media(local_path='/tmp/x.jpg')
+    assert MediaConfig(download=True).should_download(media) is False
+
+
+def test_should_download_respects_allowed_kinds() -> None:
+    """Вид вне whitelist'а — пропускаем."""
+    policy = MediaConfig(download=True, allowed_kinds=frozenset({'video'}))
+    assert policy.should_download(_media(kind='photo')) is False
+    assert policy.should_download(_media(kind='video')) is True
+
+
+def test_should_download_respects_max_size() -> None:
+    """Превышение max_size — пропускаем; неизвестный размер — качаем."""
+    policy = MediaConfig(download=True, max_size=500)
+    assert policy.should_download(_media(size=1000)) is False
+    assert policy.should_download(_media(size=400)) is True
+    assert policy.should_download(_media(size=None)) is True
 
 
 def test_session_key_from_env(
