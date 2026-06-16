@@ -34,8 +34,20 @@ T-ID между релизами — `CHANGELOG.md` единственное per
   скачивания; опц. mime/имя/размер/размерности/длительность; `local_path`)
   и аддитивные поля `InboundEvent.media` / `OutboundMessage.media`
   (default `[]`). Встроенный `passthrough` переносит вложения транзитом в
-  каждый исходящий. Извлечение из Telethon и отправка — фаза A2; ADR
-  2026-06-16 (последовательность фаз, `has_media`→computed отложен в A2).
+  каждый исходящий.
+- Извлечение медиа из Telegram (T010, M7 фаза A2, inbound): Telethon
+  `message.file` → структурный `MediaRef` (kind photo/video/voice/audio/
+  sticker/animation/document + mime/имя/размер/размерности/длительность);
+  гейт по `message.file` отсекает превью ссылок/опросы. `InboundEvent.media`
+  теперь несёт реальные вложения; маппинг покрыт юнит-тестами на стабах.
+
+### Changed
+
+- `InboundEvent.has_media` стал производным свойством от `media` (T010,
+  M7 A2): доступ `event.has_media` сохранён, но это больше не входное поле
+  (в JSON-дамп не входит — выводится из сериализуемого `media`). ADR
+  2026-06-16 (`@property` вместо `@computed_field` — без pydantic-плагина
+  mypy и `type: ignore`).
 
 - Интеграционный тестовый контур §13.2 на реальном Telegram-аккаунте
   (T009, M6): маркер `integration` (default-skip), оснастка

@@ -109,11 +109,22 @@ class InboundEvent(DomainModel):
     previous_text: str | None = None
     content_hash: str | None = None
     reply_to_external_id: str | None = None
-    has_media: bool = False
     media: list[MediaRef] = Field(default_factory=list)
     event_at: AwareDatetime
     received_at: AwareDatetime
     raw: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def has_media(self) -> bool:
+        """
+        Факт наличия вложений (§4.2): производное от ``media`` (M7 A2).
+
+        Обратная совместимость по **доступу** (``event.has_media`` — как до
+        M7); задаётся только через ``media``. В JSON-дамп не входит (выводится
+        из ``media``, который сериализуется) — ``@computed_field`` потребовал
+        бы pydantic-плагина mypy (project-wide config), осознанно не вводим.
+        """
+        return bool(self.media)
 
 
 class OutboundMessage(DomainModel):

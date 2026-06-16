@@ -210,6 +210,15 @@ class TestInboundEvent:
         event = make_event(media=[make_media(kind='video')])
         assert [m.kind for m in event.media] == ['video']
 
+    def test_has_media_derives_from_media(self) -> None:
+        assert make_event().has_media is False
+        assert make_event(media=[make_media()]).has_media is True
+
+    def test_has_media_not_an_input_field(self) -> None:
+        """``has_media`` — производное свойство, не поле ввода (M7 A2)."""
+        with pytest.raises(ValidationError):
+            make_event(has_media=True)
+
 
 class TestMediaRef:
     def test_only_kind_required(self) -> None:

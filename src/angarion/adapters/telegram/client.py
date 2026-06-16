@@ -63,6 +63,29 @@ class TransientSendError(Exception):
     """Временный сбой отправки (сеть/таймаут/5xx) — повторяемый (§8)."""
 
 
+class RawMedia(BaseModel):
+    """
+    Нормализованное сырое вложение Telethon до маппинга (M7 A2).
+
+    Раскладывается из ``message.file`` обёрткой (``realclient``) в плоские
+    поля; ``mapping`` переводит в доменный ``MediaRef`` без логики ключей.
+    ``kind`` — производное от типа сообщения (photo/video/voice/…), метаданные
+    — из ``File`` Telethon. ``ref`` (платформенная ссылка для пересылки без
+    скачивания) заполняется на sender-фазе A2.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    kind: str
+    ref: str | None = None
+    mime_type: str | None = None
+    file_name: str | None = None
+    size: int | None = None
+    width: int | None = None
+    height: int | None = None
+    duration: int | None = None
+
+
 class RawTelegramMessage(BaseModel):
     """
     Нормализованное сырое сообщение Telethon (NEW/EDITED) до маппинга.
@@ -70,7 +93,9 @@ class RawTelegramMessage(BaseModel):
     Числовые id — как их отдаёт Telethon (знаковый chat_id для
     супергрупп ``-100…``); строковыми их делает уже ``mapping`` под
     доменный контракт. ``is_service`` — ``MessageService`` (вступления,
-    пины), отсеивается на входе адаптера (FR «Маппинг»).
+    пины), отсеивается на входе адаптера (FR «Маппинг»). ``media`` — кортеж
+    вложений (0..1 на сообщение в MTProto; кортеж — под доменный
+    ``list[MediaRef]`` и будущие альбомы/платформы).
     """
 
     model_config = ConfigDict(frozen=True, extra='forbid')
@@ -83,7 +108,7 @@ class RawTelegramMessage(BaseModel):
     sender_id: int | None = None
     sender_name: str | None = None
     reply_to_message_id: int | None = None
-    has_media: bool = False
+    media: tuple[RawMedia, ...] = ()
     is_service: bool = False
     event_at: AwareDatetime
 

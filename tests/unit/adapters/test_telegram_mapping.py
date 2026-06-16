@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from telegram_fakes import raw_deletion, raw_message
 
+from angarion.adapters.telegram.client import RawMedia
 from angarion.adapters.telegram.mapping import map_deletion, map_message
 from angarion.domain.keys import make_dedup_key, make_source_key, normalize_and_hash
 from angarion.domain.models import EventKind
@@ -51,12 +52,32 @@ def test_reply_sets_reply_to_external_id() -> None:
     assert event.reply_to_external_id == '10'
 
 
-def test_media_flag_propagates() -> None:
-    event = map_message(raw_message(has_media=True, text=None), ACCOUNT)
+def test_media_maps_to_media_ref() -> None:
+    media = (
+        RawMedia(
+            kind='photo',
+            mime_type='image/jpeg',
+            file_name='p.jpg',
+            size=2048,
+            width=800,
+            height=600,
+        ),
+    )
+    event = map_message(raw_message(media=media, text=None), ACCOUNT)
     assert event is not None
     assert event.has_media is True
+    assert [m.kind for m in event.media] == ['photo']
+    assert event.media[0].mime_type == 'image/jpeg'
+    assert event.media[0].size == 2048
     assert event.text is None
     assert event.content_hash is None
+
+
+def test_no_media_yields_empty_list() -> None:
+    event = map_message(raw_message(), ACCOUNT)
+    assert event is not None
+    assert event.media == []
+    assert event.has_media is False
 
 
 def test_thread_id_enters_source_and_key() -> None:

@@ -24,10 +24,12 @@ from angarion.domain.models import (
     Address,
     EventKind,
     InboundEvent,
+    MediaRef,
 )
 
 if TYPE_CHECKING:
     from angarion.adapters.telegram.client import (
+        RawMedia,
         RawTelegramDeletion,
         RawTelegramMessage,
     )
@@ -38,6 +40,20 @@ Origin = Literal['live', 'catchup']
 
 def _str_or_none(value: int | None) -> str | None:
     return str(value) if value is not None else None
+
+
+def _to_media_ref(raw: RawMedia) -> MediaRef:
+    """Сырое вложение Telethon → доменный ``MediaRef`` (без логики ключей)."""
+    return MediaRef(
+        kind=raw.kind,
+        ref=raw.ref,
+        mime_type=raw.mime_type,
+        file_name=raw.file_name,
+        size=raw.size,
+        width=raw.width,
+        height=raw.height,
+        duration=raw.duration,
+    )
 
 
 def map_message(
@@ -70,7 +86,7 @@ def map_message(
         text=raw.text,
         reply_to_external_id=_str_or_none(raw.reply_to_message_id),
         content_hash=content_hash,
-        has_media=raw.has_media,
+        media=[_to_media_ref(m) for m in raw.media],
         event_at=raw.event_at,
         received_at=datetime.now(UTC),
         raw=raw.model_dump(mode='json'),

@@ -27,6 +27,7 @@ from telethon.tl.types import MessageReplyHeader, MessageService
 
 from angarion.adapters.telegram.client import (
     FloodWaitError,
+    RawMedia,
     RawTelegramDeletion,
     RawTelegramMessage,
     TransientSendError,
@@ -71,6 +72,57 @@ def _reply_id(reply: MessageReplyHeader | None) -> int | None:
     return reply_id
 
 
+_MEDIA_KINDS: tuple[tuple[str, str], ...] = (
+    ('photo', 'photo'),
+    ('voice', 'voice'),
+    ('video_note', 'video_note'),
+    ('video', 'video'),
+    ('audio', 'audio'),
+    ('sticker', 'sticker'),
+    ('gif', 'animation'),
+)
+"""Признак-атрибут сообщения Telethon → доменный ``kind`` (порядок важен:
+voice/video_note раньше video/audio, иначе перекрываются)."""
+
+
+def _media_kind(message: Message) -> str:
+    """Тип вложения по флаговым свойствам сообщения; иначе ``document``."""
+    for attr, kind in _MEDIA_KINDS:
+        if getattr(message, attr, None):
+            return kind
+    return 'document'
+
+
+def _int_or_none(value: object) -> int | None:
+    """Длительность Telethon (может быть float) → int секунд; ``None`` как есть."""
+    return int(value) if isinstance(value, (int, float)) else None
+
+
+def _extract_media(message: Message) -> tuple[RawMedia, ...]:
+    """
+    Вложения сообщения → ``RawMedia`` по ``message.file`` (M7 A2).
+
+    Гейт — ``message.file`` (скачиваемый файл): отсекает превью ссылок
+    (``MessageMediaWebPage``), опросы и гео, которые медиа-файлами не
+    являются. В MTProto на сообщение приходится ≤ 1 файла. ``ref`` (для
+    пересылки без скачивания) заполнит sender-фаза A2.
+    """
+    file = getattr(message, 'file', None)
+    if file is None:
+        return ()
+    return (
+        RawMedia(
+            kind=_media_kind(message),
+            mime_type=getattr(file, 'mime_type', None),
+            file_name=getattr(file, 'name', None),
+            size=getattr(file, 'size', None),
+            width=getattr(file, 'width', None),
+            height=getattr(file, 'height', None),
+            duration=_int_or_none(getattr(file, 'duration', None)),
+        ),
+    )
+
+
 def to_raw_message(
     event: events.NewMessage.Event, kind: EventKind
 ) -> RawTelegramMessage:
@@ -89,7 +141,7 @@ def to_raw_message(
         sender_id=message.sender_id,
         sender_name=utils.get_display_name(message.sender) or None,
         reply_to_message_id=_reply_id(message.reply_to),
-        has_media=message.media is not None,
+        media=_extract_media(message),
         is_service=service,
         event_at=event_at,
     )
@@ -107,7 +159,7 @@ def to_raw_history_message(message: Message) -> RawTelegramMessage:
         sender_id=message.sender_id,
         sender_name=utils.get_display_name(message.sender) or None,
         reply_to_message_id=_reply_id(message.reply_to),
-        has_media=message.media is not None,
+        media=_extract_media(message),
         is_service=service,
         event_at=message.date,
     )

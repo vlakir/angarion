@@ -41,6 +41,7 @@ def _message(**overrides: object) -> SimpleNamespace:
         'sender_id': 777,
         'sender': None,
         'media': None,
+        'file': None,
         'reply_to': None,
     }
     fields.update(overrides)
@@ -61,7 +62,7 @@ def test_to_raw_message_basic_new() -> None:
     assert raw.text == 'привет'
     assert raw.sender_id == 777
     assert raw.sender_name is None
-    assert raw.has_media is False
+    assert raw.media == ()
     assert raw.is_service is False
     assert raw.thread_id is None
     assert raw.reply_to_message_id is None
@@ -76,9 +77,47 @@ def test_edited_uses_edit_date() -> None:
     assert raw.event_at == edited
 
 
-def test_media_detected() -> None:
+def test_media_extracted_from_file() -> None:
+    file = SimpleNamespace(
+        mime_type='image/jpeg',
+        name='photo.jpg',
+        size=2048,
+        width=800,
+        height=600,
+        duration=None,
+    )
+    message = _message(message=None, file=file, photo=object())
+    raw = to_raw_message(_event(message), EventKind.MESSAGE_NEW)
+    assert len(raw.media) == 1
+    media = raw.media[0]
+    assert media.kind == 'photo'
+    assert media.mime_type == 'image/jpeg'
+    assert media.file_name == 'photo.jpg'
+    assert media.size == 2048
+    assert media.width == 800
+    assert media.height == 600
+
+
+def test_media_kind_falls_back_to_document() -> None:
+    file = SimpleNamespace(
+        mime_type='application/pdf', name='doc.pdf', size=10, duration=None
+    )
+    raw = to_raw_message(_event(_message(file=file)), EventKind.MESSAGE_NEW)
+    assert raw.media[0].kind == 'document'
+
+
+def test_voice_duration_coerced_to_int() -> None:
+    file = SimpleNamespace(mime_type='audio/ogg', name=None, size=5, duration=12.7)
+    message = _message(file=file, voice=object())
+    raw = to_raw_message(_event(message), EventKind.MESSAGE_NEW)
+    assert raw.media[0].kind == 'voice'
+    assert raw.media[0].duration == 12
+
+
+def test_no_file_means_no_media() -> None:
+    """Превью ссылки/опрос (``message.file is None``) — не вложение."""
     raw = to_raw_message(_event(_message(media=object())), EventKind.MESSAGE_NEW)
-    assert raw.has_media is True
+    assert raw.media == ()
 
 
 def test_topic_reply_extracts_thread_and_reply() -> None:
