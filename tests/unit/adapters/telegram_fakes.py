@@ -133,6 +133,35 @@ class FakeTelegramClient:
         self._next_message_id += 1
         return self._next_message_id
 
+    async def send_media(
+        self,
+        chat_id: int | str,
+        *,
+        source_ref: str,
+        text: str,
+        reply_to: int | None = None,
+        parse_mode: str | None = None,
+        silent: bool = False,
+    ) -> int:
+        """Записать попытку переотправки медиа; разыграть эффект (как send)."""
+        self.sent.append(
+            {
+                'chat_id': chat_id,
+                'source_ref': source_ref,
+                'caption': text,
+                'reply_to': reply_to,
+                'parse_mode': parse_mode,
+                'silent': silent,
+                'media': True,
+            }
+        )
+        if self._send_effects:
+            effect = self._send_effects.pop(0)
+            if effect is not None:
+                raise effect
+        self._next_message_id += 1
+        return self._next_message_id
+
     def on_new_message(self, handler: RawMessageHandler) -> None:
         self._on_new.append(handler)
 

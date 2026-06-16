@@ -236,6 +236,51 @@ class TelethonClient:
         message_id: int = sent.id
         return message_id
 
+    async def send_media(
+        self,
+        chat_id: int | str,
+        *,
+        source_ref: str,
+        text: str,
+        reply_to: int | None = None,
+        parse_mode: str | None = None,
+        silent: bool = False,
+    ) -> int:
+        """
+        Рефетч источника + ``send_file`` его медиа с подписью (M7 A2).
+
+        ``source_ref`` = ``"chat_id:message_id"``. Источник недоступен/удалён
+        или без медиа → деградация до текстовой отправки (медиа потеряно, но
+        сообщение не теряется). Ошибки Telethon → port-исключения.
+        """
+        source_chat, _, source_msg = source_ref.rpartition(':')
+        try:
+            origin = await self._client.get_messages(
+                as_peer(source_chat), ids=int(source_msg)
+            )
+            if origin is None or origin.media is None:
+                return await self.send_message(
+                    chat_id,
+                    text,
+                    reply_to=reply_to,
+                    parse_mode=parse_mode,
+                    silent=silent,
+                )
+            sent = await self._client.send_file(
+                chat_id,
+                origin.media,
+                caption=text,
+                reply_to=reply_to,
+                parse_mode=parse_mode,
+                silent=silent,
+            )
+        except errors.FloodWaitError as exc:
+            raise FloodWaitError(seconds=exc.seconds) from exc
+        except _TRANSIENT_ERRORS as exc:
+            raise TransientSendError(str(exc)) from exc
+        message_id: int = sent.id
+        return message_id
+
     async def disconnect(self) -> None:
         """Закрыть соединение клиента (``ClientRegistry.disconnect_all``)."""
         await self._client.disconnect()

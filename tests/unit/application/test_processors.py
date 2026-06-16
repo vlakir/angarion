@@ -119,6 +119,23 @@ class TestPassthrough:
         result = await proc.process(make_event(), make_context(), make_services())
         assert all(msg.media == [] for msg in result.outbound)
 
+    async def test_media_only_delivered_with_empty_caption(self) -> None:
+        """A2 (M7): медиа-only (text=None, есть media) — доставка с text=''."""
+        proc = get_processor('passthrough')
+        media = [MediaRef(kind='photo', ref='-100123:42')]
+        event = make_event(text=None, media=media)
+        result = await proc.process(event, make_context(), make_services())
+        assert result.verdict is Verdict.DELIVER
+        assert [msg.text for msg in result.outbound] == ['']
+        assert [msg.media for msg in result.outbound] == [media]
+
+    async def test_no_text_no_media_dropped(self) -> None:
+        """DROP только когда нечего слать: ни текста, ни вложений."""
+        proc = get_processor('passthrough')
+        event = make_event(kind=EventKind.MESSAGE_DELETED, text=None, media=[])
+        result = await proc.process(event, make_context(), make_services())
+        assert result.verdict is Verdict.DROP
+
 
 class TestTemplate:
     """Встроенный процессор ``template`` (§10.2, FR §3 спеки T007).

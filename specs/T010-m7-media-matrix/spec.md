@@ -424,17 +424,22 @@ M7 — финальный этап дорожной карты, замыкающ
    placeholder/потеря сигнала, см. ADR). `idempotency_key` **не менялся**
    (Analyze: `dedup_key` несёт `external_id`, коллизий медиа-only нет).
    Релаксация DROP под медиа-only — в A2. 880 passed, coverage 96.6%, ADR.
-2. **A2 — Telegram inbound/outbound медиа.** Маппинг Telethon `message.media`
-   → `list[MediaRef]` (реальные виды/метаданные); `has_media` →
-   `@computed_field` от `media`; sender fast-path переотправки по
-   `file_id`/`InputMedia`; скачивание-по-требованию (кросс-аккаунт/обработка);
-   релаксация DROP в passthrough (медиа-only `text=None` → доставка). Фикстуры
-   маппинга.
-3. **A3 — Политика + реестр.** Конфиг политики (глобальный дефолт +
-   per-pipeline override): `download`, `allowed_kinds`, `max_size`,
-   `storage_dir`, ретеншн (через prune §17.3); media-хэш **отдельным полем
-   реестра** (text-`content_hash` не ломаем — Analyze), edit-детекция по
-   `(content_hash, media_hash)`. ADR медиа.
+2. **A2 — Telegram inbound/outbound медиа. ✅ (2026-06-16)** Маппинг Telethon
+   `message.file` → `list[MediaRef]` (реальные виды/метаданные); `has_media` →
+   `@property` от `media` (не `@computed_field` — без pydantic-плагина mypy/
+   `type: ignore`, ADR); sender **refetch-fast-path** переотправки по
+   координатам источника `MediaRef.ref="chat:msg"` (без скачивания, ADR);
+   релаксация DROP в passthrough (медиа-only `text=None` → доставка с пустой
+   подписью). Кросс-аккаунт со скачиванием — отложено в A3. 895 passed.
+3. **A3 — Политика + реестр + скачивание-fallback.** Конфиг политики
+   (глобальный дефолт + per-pipeline override): `download`, `allowed_kinds`,
+   `max_size`, `storage_dir`, ретеншн (через prune §17.3); скачивание-fallback
+   для кросс-аккаунта (когда отправитель не в источнике); media-хэш
+   **отдельным полем реестра** (text-`content_hash` не ломаем — Analyze),
+   edit-детекция по `(content_hash, media_hash)`. **Must-fix (найдено в A2):**
+   медиа-only `MESSAGE_EDITED` (`text=None`) сейчас падает в `make_dedup_key`
+   (content_hash обязателен для EDITED) — media-хэш закрывает это (хэш есть
+   даже без текста). ADR медиа.
 4. **A4 — Update медиа.** README/CHANGELOG/DECISIONS; пример `examples/`
    (зеркало с пересылкой медиа); проверка существующих примеров.
 

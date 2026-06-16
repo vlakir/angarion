@@ -110,24 +110,22 @@ async def passthrough(
     """
     Ретрансляция текста и вложений события во все цели как есть (§10.2).
 
-    Событие без текста (DELETED, не восстановленный реестром) —
-    DROP: ретранслировать нечего; ``text=None`` обязан переживать
-    каждый процессор (§10.1). Вложения (``media``) переносятся транзитом
-    в каждый ``OutboundMessage`` (M7, фаза A1); их доставку реализует
-    sender (фаза A2). Пересмотр условия DROP под медиа-only сообщения
-    (``text=None`` при непустом ``media``) — фаза A2, когда sender умеет
-    слать вложения.
+    DROP только когда нечего ретранслировать — нет ни текста, ни вложений
+    (DELETED без восстановления реестром): ``text=None`` обязан переживать
+    каждый процессор (§10.1). Медиа-only сообщение (``text=None`` при
+    непустом ``media``) — доставляется с пустой подписью (M7, фаза A2);
+    ``media`` переносится транзитом, sender переотправляет вложения.
     """
-    if event.text is None:
+    if event.text is None and not event.media:
         return ProcessingResult(
-            verdict=Verdict.DROP, note='passthrough: событие без текста'
+            verdict=Verdict.DROP, note='passthrough: ни текста, ни вложений'
         )
     outbound = [
         OutboundMessage(
             idempotency_key=svc.make_idempotency_key(event, spec.target, n),
             target=spec.target,
             send_via=spec.send_via,
-            text=event.text,
+            text=event.text or '',
             media=event.media,
         )
         for n, spec in enumerate(ctx.targets)

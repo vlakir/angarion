@@ -69,6 +69,8 @@ def test_media_maps_to_media_ref() -> None:
     assert [m.kind for m in event.media] == ['photo']
     assert event.media[0].mime_type == 'image/jpeg'
     assert event.media[0].size == 2048
+    # ref = координаты источника "chat_id:message_id" (refetch-fast-path A2)
+    assert event.media[0].ref == '-100123:42'
     assert event.text is None
     assert event.content_hash is None
 

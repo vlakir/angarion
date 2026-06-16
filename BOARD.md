@@ -64,11 +64,13 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 - **T010** — **M7: медиа + Matrix-адаптер** (зонтичная задача,
   `specs/T010-m7-media-matrix/spec.md`, статус **Analyzed**). Реализация
   фазами под одним T-ID, каждая фаза — отдельная ветка/PR `T010: <фаза>`:
-  - Часть A (медиа): ~~A1 домен `MediaRef`+транзит~~ ✅ → **A2** Telegram in/out
-    → A3 политика+реестр → A4 update+пример.
+  - Часть A (медиа): ~~A1 домен `MediaRef`+транзит~~ ✅ → ~~A2 Telegram in/out~~
+    ✅ → **A3** политика+реестр+скачивание-fallback → A4 update+пример.
   - Часть B (Matrix+E2EE): B1 каркас+login → B2 listener+маппинг+E2EE →
     B3 sender+catch-up+деградация → B4 интеграционный контур → B5 update+пример.
-  - **Текущая фаза: A2** (A1 закрыта 2026-06-16, ветка `T010-a1-mediaref`).
+  - **Текущая фаза: A3** (A1+A2 закрыты 2026-06-16, ветка `T010-a1-mediaref`).
+    A3 включает must-fix: медиа-only `MESSAGE_EDITED` падает в `make_dedup_key`
+    (media-хэш закрывает).
   - Acceptance — Success Criteria спеки (§16 M7: медиа сквозь пайплайн +
     Matrix-пайплайн new/edited/deleted; контрактные тесты зелёные; coverage
     ≥ 90%; четыре pre-push проверки чисты).

@@ -215,6 +215,49 @@ async def test_send_message_delegates_and_returns_id() -> None:
     )
 
 
+async def test_send_media_refetches_source_and_sends_file() -> None:
+    client = _mock_client()
+    origin = SimpleNamespace(media=object())
+    client.get_messages = AsyncMock(return_value=origin)
+    client.send_file = AsyncMock(return_value=SimpleNamespace(id=555))
+    message_id = await TelethonClient(client).send_media(
+        -100999, source_ref='-100123:42', text='подпись', reply_to=7
+    )
+    assert message_id == 555
+    client.get_messages.assert_awaited_once_with(-100123, ids=42)
+    client.send_file.assert_awaited_once_with(
+        -100999,
+        origin.media,
+        caption='подпись',
+        reply_to=7,
+        parse_mode=None,
+        silent=False,
+    )
+
+
+async def test_send_media_degrades_to_text_when_source_gone() -> None:
+    client = _mock_client()
+    client.get_messages = AsyncMock(return_value=None)
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=42))
+    client.send_file = AsyncMock()
+    message_id = await TelethonClient(client).send_media(
+        -100999, source_ref='-100123:42', text='подпись'
+    )
+    assert message_id == 42
+    client.send_file.assert_not_awaited()
+    client.send_message.assert_awaited_once()
+
+
+async def test_send_media_translates_floodwait() -> None:
+    client = _mock_client()
+    client.get_messages = AsyncMock(
+        side_effect=errors.FloodWaitError(request=None, capture=9)
+    )
+    with pytest.raises(FloodWaitError) as caught:
+        await TelethonClient(client).send_media(-1, source_ref='-1:2', text='x')
+    assert caught.value.seconds == 9
+
+
 async def test_send_message_translates_floodwait() -> None:
     client = _mock_client()
     client.send_message = AsyncMock(

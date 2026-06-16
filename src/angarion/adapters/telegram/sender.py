@@ -130,16 +130,54 @@ class TelegramSender:
         reply_to = (
             int(msg.target.thread_id) if msg.target.thread_id is not None else None
         )
-        message_id = await self._send_resilient(
-            client=client,
-            peer=as_peer(msg.target.chat_id),
-            text=msg.text,
-            reply_to=reply_to,
-            opts=opts,
+        peer = as_peer(msg.target.chat_id)
+        do_send = self._send_op(
+            client=client, peer=peer, msg=msg, reply_to=reply_to, opts=opts
         )
+        message_id = await self._send_resilient(do_send=do_send, peer=peer)
         return DeliveryReceipt(
             external_id=str(message_id), delivered_at=datetime.now(UTC)
         )
+
+    @staticmethod
+    def _send_op(
+        *,
+        client: TelegramClientPort,
+        peer: int | str,
+        msg: OutboundMessage,
+        reply_to: int | None,
+        opts: TelegramSendOptions,
+    ) -> Callable[[], Awaitable[int]]:
+        """
+        Выбрать операцию отправки: медиа-переотправка (есть ``media`` с
+        ``ref``) либо текст. Возвращает 0-арный корутин-факторий для
+        ``_send_resilient`` (FloodWait/transient-обёртка едина для обоих).
+        """
+        source_ref = msg.media[0].ref if msg.media else None
+        if source_ref is not None:
+
+            async def do_send() -> int:
+                return await client.send_media(
+                    peer,
+                    source_ref=source_ref,
+                    text=msg.text,
+                    reply_to=reply_to,
+                    parse_mode=opts.parse_mode,
+                    silent=opts.silent,
+                )
+        else:
+
+            async def do_send() -> int:
+                return await client.send_message(
+                    peer,
+                    msg.text,
+                    reply_to=reply_to,
+                    parse_mode=opts.parse_mode,
+                    silent=opts.silent,
+                    link_preview=not opts.disable_preview,
+                )
+
+        return do_send
 
     async def _apply_dynamic_limits(self) -> None:
         """
@@ -193,25 +231,13 @@ class TelegramSender:
         return bucket
 
     async def _send_resilient(
-        self,
-        *,
-        client: TelegramClientPort,
-        peer: int | str,
-        text: str,
-        reply_to: int | None,
-        opts: TelegramSendOptions,
+        self, *, do_send: Callable[[], Awaitable[int]], peer: int | str
     ) -> int:
         """FloodWait-повтор поверх transient-ретраев (tenacity)."""
         floods = 0
         while True:
             try:
-                return await self._send_with_transient_retry(
-                    client=client,
-                    peer=peer,
-                    text=text,
-                    reply_to=reply_to,
-                    opts=opts,
-                )
+                return await self._send_with_transient_retry(do_send)
             except FloodWaitError as exc:
                 floods += 1
                 if floods > self._flood_max_retries:
@@ -222,13 +248,7 @@ class TelegramSender:
                 await self._sleep(exc.seconds)
 
     async def _send_with_transient_retry(
-        self,
-        *,
-        client: TelegramClientPort,
-        peer: int | str,
-        text: str,
-        reply_to: int | None,
-        opts: TelegramSendOptions,
+        self, do_send: Callable[[], Awaitable[int]]
     ) -> int:
         retryer = AsyncRetrying(
             retry=retry_if_exception_type(TransientSendError),
@@ -237,12 +257,4 @@ class TelegramSender:
             sleep=self._sleep,
             reraise=True,
         )
-        return await retryer(
-            client.send_message,
-            peer,
-            text,
-            reply_to=reply_to,
-            parse_mode=opts.parse_mode,
-            silent=opts.silent,
-            link_preview=not opts.disable_preview,
-        )
+        return await retryer(do_send)

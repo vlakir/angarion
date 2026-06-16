@@ -178,6 +178,28 @@ class TelegramClientPort(Protocol):
         reply-связи (§7 out of scope).
         """
 
+    async def send_media(
+        self,
+        chat_id: int | str,
+        *,
+        source_ref: str,
+        text: str,
+        reply_to: int | None = None,
+        parse_mode: str | None = None,
+        silent: bool = False,
+    ) -> int:
+        """
+        Переотправить вложение исходного сообщения в чат/топик с подписью
+        ``text`` (M7 A2, refetch-fast-path без скачивания).
+
+        ``source_ref`` = ``"chat_id:message_id"`` источника: обёртка
+        рефетчит исходное сообщение **аккаунтом-отправителем** и шлёт его
+        медиа (``send_file``) — файл-ссылка обновляется при рефетче, диск не
+        используется. Источник недоступен/удалён (или у аккаунта нет доступа —
+        кросс-аккаунт; скачивание-fallback — A3) → деградация до текстовой
+        отправки ``text``. Ошибки Telethon → port-исключения (FR «Sender»).
+        """
+
     def on_new_message(self, handler: RawMessageHandler) -> None:
         """Подписать колбэк на новые сообщения (`events.NewMessage`)."""
 

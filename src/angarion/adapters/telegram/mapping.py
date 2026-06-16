@@ -42,11 +42,17 @@ def _str_or_none(value: int | None) -> str | None:
     return str(value) if value is not None else None
 
 
-def _to_media_ref(raw: RawMedia) -> MediaRef:
-    """Сырое вложение Telethon → доменный ``MediaRef`` (без логики ключей)."""
+def _to_media_ref(raw: RawMedia, source_ref: str) -> MediaRef:
+    """
+    Сырое вложение Telethon → доменный ``MediaRef`` (без логики ключей).
+
+    ``ref`` = координаты исходного сообщения ``"chat_id:message_id"`` —
+    sender по ним рефетчит источник и переотправляет медиа без скачивания
+    (M7 A2, refetch-fast-path). Парсит обратно Telegram-sender.
+    """
     return MediaRef(
         kind=raw.kind,
-        ref=raw.ref,
+        ref=source_ref,
         mime_type=raw.mime_type,
         file_name=raw.file_name,
         size=raw.size,
@@ -86,7 +92,7 @@ def map_message(
         text=raw.text,
         reply_to_external_id=_str_or_none(raw.reply_to_message_id),
         content_hash=content_hash,
-        media=[_to_media_ref(m) for m in raw.media],
+        media=[_to_media_ref(m, f'{chat_id}:{external_id}') for m in raw.media],
         event_at=raw.event_at,
         received_at=datetime.now(UTC),
         raw=raw.model_dump(mode='json'),
