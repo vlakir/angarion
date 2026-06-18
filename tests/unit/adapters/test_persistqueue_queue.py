@@ -79,6 +79,83 @@ async def test_acked_envelope_not_redelivered_after_reopen(
     assert await restarted.depth() == QueueDepth(pending=0, unacked=0)
 
 
+def _row_count(tmp_path: Path) -> int:
+    """Всего строк в таблице очереди (pending + unacked + acked + failed)."""
+    with closing(sqlite3.connect(tmp_path / 'queue.db')) as conn:
+        (count,) = conn.execute('SELECT COUNT(*) FROM ack_queue_default').fetchone()
+    return int(count)
+
+
+async def _put_ack(queue: PersistQueue, count: int) -> None:
+    """Положить и сразу подтвердить ``count`` envelope'ов (→ acked-строки)."""
+    for i in range(count):
+        await queue.put(make_envelope(pipeline=f'p{i}'))
+    for _ in range(count):
+        await queue.ack(await queue.get())
+
+
+async def test_purge_acked_deletes_old_keeping_latest(
+    open_queue: Callable[[], PersistQueue], tmp_path: Path
+) -> None:
+    """T016: ретеншн оставляет новейшие ``keep_latest`` acked-строк."""
+    total, keep = 5, 2
+    queue = open_queue()
+    await _put_ack(queue, total)
+    assert _row_count(tmp_path) == total  # acked копятся в queue.db
+
+    deleted = await queue.purge_acked(keep_latest=keep)
+
+    assert deleted == total - keep
+    assert _row_count(tmp_path) == keep
+    # чистка персистентна — переживает «рестарт процесса»
+    assert _row_count(tmp_path) == keep
+    restarted = open_queue()
+    assert await restarted.recover() == 0  # ничего не воскрешается
+
+
+async def test_purge_acked_keep_zero_deletes_all_acked(
+    open_queue: Callable[[], PersistQueue], tmp_path: Path
+) -> None:
+    queue = open_queue()
+    await _put_ack(queue, 4)
+    assert await queue.purge_acked(keep_latest=0) == 4
+    assert _row_count(tmp_path) == 0
+
+
+async def test_purge_acked_leaves_pending_and_unacked(
+    open_queue: Callable[[], PersistQueue], tmp_path: Path
+) -> None:
+    """Чистятся только acked: pending и unacked остаются на диске."""
+    queue = open_queue()
+    await queue.put(make_envelope(pipeline='acked'))
+    await queue.ack(await queue.get())  # 1 acked
+    await queue.put(make_envelope(pipeline='pending'))
+    await queue.get()  # взята → 1 unacked
+    await queue.put(make_envelope(pipeline='pending2'))  # 1 pending
+
+    deleted = await queue.purge_acked(keep_latest=0)
+
+    assert deleted == 1  # удалена только подтверждённая
+    assert _row_count(tmp_path) == 2  # 1 pending + 1 unacked уцелели
+    assert await queue.depth() == QueueDepth(pending=1, unacked=1)
+
+
+async def test_purge_acked_is_idempotent(
+    open_queue: Callable[[], PersistQueue],
+) -> None:
+    queue = open_queue()
+    await _put_ack(queue, 3)
+    await queue.purge_acked(keep_latest=0)
+    assert await queue.purge_acked(keep_latest=0) == 0
+
+
+async def test_purge_acked_after_close_raises(tmp_path: Path) -> None:
+    queue = PersistQueue(path=tmp_path / 'queue.db')
+    queue.close()
+    with pytest.raises(RuntimeError, match='закрыта'):
+        await queue.purge_acked(keep_latest=0)
+
+
 async def test_db_stores_envelope_as_json_text_not_pickle(
     open_queue: Callable[[], PersistQueue], tmp_path: Path
 ) -> None:

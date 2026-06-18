@@ -76,6 +76,15 @@ _(пусто)_
 <!-- T006, T008, T022, T023, T024, T025 перенесены в CHANGELOG.md
      [0.3.0] — 2026-06-15 (milestone M5 закрыт). -->
 
+- **T016** — Ретеншн acked-строк `queue.db` [closed 2026-06-18, текущий PR].
+  `SQLiteAckQueue` не вычищал подтверждённые записи → `queue.db` рос бессрочно.
+  Решение: `EventQueuePort.purge_acked(keep_latest)` (persistqueue → обёртка
+  `clear_acked_data`, memory → no-op), вызов из существующего `_prune_loop`;
+  политика — ключ `[queue] keep_acked` (дефолт 1000; `0` = бессрочно).
+  Обратная совместимость: чистка только при `prune_interval > 0`. ADR 2026-06-18.
+  Acceptance выполнен: политика зафиксирована (ADR + конфиг), `queue.db` не
+  растёт при штатной работе (adapter-тест по `COUNT(*)`). Ветка
+  `T016-queue-acked-retention`.
 - **T035** — Флак e2e kill-теста `test_..._keeps_delivery[before_ack]` на
   Python 3.12 в CI [closed 2026-06-18, текущий PR]. Диагноз: kill на `queue.ack`
   застаёт мишень уже в outbox, конкурентный `DeliveryWorker` в окне

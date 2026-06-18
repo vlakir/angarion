@@ -152,6 +152,26 @@ class PersistQueue:
         """Текущие pending/unacked (§17.5)."""
         return await asyncio.to_thread(self._call, self._depth_sync)
 
+    async def purge_acked(self, keep_latest: int) -> int:
+        """
+        Ретеншн (§17.3, T016): удалить acked-строки сверх новейших
+        ``keep_latest``, вернуть число удалённых. SQLiteAckQueue не
+        вычищает подтверждённые записи сам — без чистки ``queue.db`` растёт
+        бессрочно (T016). nacked/failed (``clear_ack_failed=False``) и
+        pending/unacked не затрагиваются.
+        """
+        return await asyncio.to_thread(self._call, self._purge_acked_sync, keep_latest)
+
+    def _purge_acked_sync(self, keep_latest: int) -> int:
+        before: int = self._queue.acked_count()
+        if before <= keep_latest:  # чистить нечего сверх буфера
+            return 0  # и заодно: clear_acked_data c OFFSET без LIMIT — syntax error
+        # max_delete = before (а не 0): за вызов выгребаем весь хвост сверх
+        # буфера — активная очередь не должна копить acked между prune-циклами;
+        # одновременно это даёт LIMIT, без которого SQLite отвергает OFFSET.
+        self._queue.clear_acked_data(max_delete=before, keep_latest=keep_latest)
+        return before - self._queue.acked_count()
+
     def close(self) -> None:
         """
         Закрыть соединения с ``queue.db``; идемпотентно. Сверх порта

@@ -143,6 +143,14 @@ class QueueConfig(BaseModel):
 
     backend: str = 'memory'
     depth_warn: int = Field(default=500, ge=1)
+    keep_acked: int = Field(default=1000, ge=0)
+    """
+    Ретеншн подтверждённых записей очереди (§17.3, T016): сколько
+    новейших acked-строк держать как буфер; остальные удаляются фоновой
+    prune-задачей. ``0`` — хранить бессрочно (чистка выключена, как
+    прочие окна §17.3). Чистка в любом случае работает только при
+    ``[worker] prune_interval > 0``.
+    """
 
 
 class WorkerConfig(BaseModel):

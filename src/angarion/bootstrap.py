@@ -579,6 +579,7 @@ class AngarionApp(BaseModel):
                 now, storage_cfg.analytics_retention_days, self.storage.analytics
             )
             await self._prune_once(now, storage_cfg.dedup_ttl_days, self.storage.outbox)
+            await self._purge_queue_acked(self.queue, self.settings.queue.keep_acked)
             self._prune_media(now, self.settings.media)
 
     @staticmethod
@@ -586,6 +587,13 @@ class AngarionApp(BaseModel):
         if days <= 0:  # 0 = бессрочно (§17.3) → не чистим
             return
         await store.prune(now - timedelta(days=days))
+
+    @staticmethod
+    async def _purge_queue_acked(queue: EventQueuePort, keep_acked: int) -> None:
+        """Ретеншн acked-строк очереди (§17.3, T016); ``0`` — бессрочно."""
+        if keep_acked <= 0:  # 0 = бессрочно (§17.3) → не чистим
+            return
+        await queue.purge_acked(keep_latest=keep_acked)
 
     @staticmethod
     def _prune_media(now: datetime, media: MediaConfig) -> None:

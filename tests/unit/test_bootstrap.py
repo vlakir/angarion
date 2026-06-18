@@ -486,6 +486,15 @@ class _PruneSpy:
         return 0
 
 
+class _PurgeSpy:
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+
+    async def purge_acked(self, keep_latest: int) -> int:
+        self.calls.append(keep_latest)
+        return 0
+
+
 class TestPruneAndDispose:
     """§17.3: фоновая prune-задача рантайма + закрытие ресурсов хранилища."""
 
@@ -498,6 +507,17 @@ class TestPruneAndDispose:
         spy = _PruneSpy()
         await AngarionApp._prune_once(datetime.now(UTC), 7, spy)
         assert spy.calls == 1
+
+    async def test_purge_queue_acked_skips_when_unbounded(self) -> None:
+        """keep_acked=0 — acked-строки храним бессрочно (§17.3, T016)."""
+        spy = _PurgeSpy()
+        await AngarionApp._purge_queue_acked(spy, 0)
+        assert spy.calls == []
+
+    async def test_purge_queue_acked_runs_for_positive_keep(self) -> None:
+        spy = _PurgeSpy()
+        await AngarionApp._purge_queue_acked(spy, 1000)
+        assert spy.calls == [1000]
 
     def test_prune_media_skips_unbounded_retention(self, tmp_path: Path) -> None:
         """retention_days=0 — храним бессрочно (файлы не трогаем)."""
