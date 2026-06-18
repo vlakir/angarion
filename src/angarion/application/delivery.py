@@ -20,6 +20,7 @@ from uuid import uuid4
 
 import structlog
 
+from angarion.application.draining import shielded_drain
 from angarion.domain.models import AnalyticsEvent
 
 if TYPE_CHECKING:
@@ -42,6 +43,7 @@ class DeliveryWorker:
         backoff_base: float = 1.0,
         backoff_cap: float = 60.0,
         poll_interval: float = 1.0,
+        shutdown_drain_seconds: float = 5.0,
         log: FilteringBoundLogger | None = None,
     ) -> None:
         self._outbox = outbox
@@ -51,6 +53,7 @@ class DeliveryWorker:
         self._backoff_base = backoff_base
         self._backoff_cap = backoff_cap
         self._poll_interval = poll_interval
+        self._shutdown_drain_seconds = shutdown_drain_seconds
         self._log: FilteringBoundLogger = (
             log if log is not None else structlog.get_logger('angarion.delivery')
         )
@@ -58,16 +61,13 @@ class DeliveryWorker:
     async def run(self) -> None:
         """
         Бесконечный цикл доставки. При отмене задачи текущая запись
-        дообрабатывается (graceful, зеркально ``PipelineWorker.run``);
-        отмена срабатывает на poll-ожидании.
+        дообрабатывается (graceful, зеркально ``PipelineWorker.run``), но не
+        дольше ``shutdown_drain_seconds`` (T031: залипший в throttle/FloodWait
+        sleep send иначе подвешивал бы стоп); отмена срабатывает на poll-ожидании.
         """
         while True:
             handling = asyncio.ensure_future(self.deliver_next())
-            try:
-                delivered = await asyncio.shield(handling)
-            except asyncio.CancelledError:
-                await handling
-                raise
+            delivered = await shielded_drain(handling, self._shutdown_drain_seconds)
             if not delivered:
                 await asyncio.sleep(self._poll_interval)
 

@@ -44,6 +44,7 @@ class DeliveryHarness:
         backoff_base: float = 0.0,
         backoff_cap: float = 60.0,
         poll_interval: float = 0.001,
+        shutdown_drain_seconds: float = 5.0,
     ) -> None:
         self.outbox = MemoryOutbox()
         self.sink = sink if sink is not None else MemorySink()
@@ -56,6 +57,7 @@ class DeliveryHarness:
             backoff_base=backoff_base,
             backoff_cap=backoff_cap,
             poll_interval=poll_interval,
+            shutdown_drain_seconds=shutdown_drain_seconds,
         )
 
     async def kinds(self) -> list[str]:
@@ -165,6 +167,24 @@ class TestRunLifecycle:
         record = await harness.outbox.get(msg.idempotency_key)
         assert record is not None
         assert record.status is OutboxStatus.SENT  # дообработано
+
+    async def test_run_bounded_stop_when_sink_hangs(self) -> None:
+        """T031: залипший в send (throttle/FloodWait) sink не виснет стоп."""
+        started = asyncio.Event()
+
+        class HungSink(MemorySink):
+            async def send(self, msg: OutboundMessage) -> DeliveryReceipt:
+                started.set()
+                await asyncio.sleep(100)  # «залип» в долгом ожидании
+                return await super().send(msg)
+
+        harness = DeliveryHarness(sink=HungSink(), shutdown_drain_seconds=0.05)
+        await harness.outbox.put(make_outbound())
+        task = asyncio.create_task(harness.worker.run())
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1.0)  # не 100 c
 
     async def test_run_cancel_while_idle(self) -> None:
         harness = DeliveryHarness(poll_interval=60.0)

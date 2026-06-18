@@ -706,6 +706,7 @@ def build_app(
         max_retries=settings.worker.max_retries,
         backoff_base=settings.worker.backoff_base,
         backoff_cap=settings.worker.backoff_cap,
+        shutdown_drain_seconds=settings.worker.shutdown_drain_seconds,
         log=get_logger('angarion.worker'),
     )
     dispatch_sink: MessageSinkPort = _DispatchSink(sinks)
@@ -723,6 +724,7 @@ def build_app(
         backoff_base=settings.worker.backoff_base,
         backoff_cap=settings.worker.backoff_cap,
         poll_interval=settings.worker.poll_interval,
+        shutdown_drain_seconds=settings.worker.shutdown_drain_seconds,
         log=get_logger('angarion.delivery'),
     )
     restart_event = asyncio.Event()

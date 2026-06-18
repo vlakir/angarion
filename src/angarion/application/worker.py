@@ -32,6 +32,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 from structlog.typing import FilteringBoundLogger
 
+from angarion.application.draining import shielded_drain
 from angarion.domain.keys import make_idempotency_key
 from angarion.domain.models import (
     AnalyticsEvent,
@@ -117,6 +118,7 @@ class PipelineWorker:
         max_retries: int = 5,
         backoff_base: float = 1.0,
         backoff_cap: float = 60.0,
+        shutdown_drain_seconds: float = 5.0,
         log: FilteringBoundLogger | None = None,
     ) -> None:
         self._queue = queue
@@ -129,6 +131,7 @@ class PipelineWorker:
         self._max_retries = max_retries
         self._backoff_base = backoff_base
         self._backoff_cap = backoff_cap
+        self._shutdown_drain_seconds = shutdown_drain_seconds
         self._log: FilteringBoundLogger = (
             log if log is not None else structlog.get_logger('angarion.worker')
         )
@@ -136,17 +139,14 @@ class PipelineWorker:
     async def run(self) -> None:
         """
         Бесконечный цикл worker'а. При отмене задачи текущий item
-        дообрабатывается (graceful-остановка, plan 2.9); отмена
-        срабатывает на ожидании очереди.
+        дообрабатывается (graceful-остановка, plan 2.9), но не дольше
+        ``shutdown_drain_seconds`` (T031: иначе залипший в throttle/FloodWait
+        sleep item подвешивал бы стоп); отмена срабатывает на ожидании очереди.
         """
         while True:
             item = await self._queue.get()
             handling = asyncio.ensure_future(self._handle(item))
-            try:
-                await asyncio.shield(handling)
-            except asyncio.CancelledError:
-                await handling
-                raise
+            await shielded_drain(handling, self._shutdown_drain_seconds)
 
     async def process_one(self) -> None:
         """Дождаться и обработать ровно один элемент очереди."""
