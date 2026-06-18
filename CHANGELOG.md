@@ -29,6 +29,48 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Added
 
+- Пример Matrix-пайплайна (T010, M7 фаза B5): `examples/matrix/` — зеркало
+  сообщений (текст + вложения, `passthrough`) между двумя Matrix-комнатами,
+  с парольным `angarion login` и поддержкой E2EE-источника; аналог
+  `examples/forward` на втором адаптере. README дополнен: roadmap M7 ✅,
+  раздел «Ограничения платформ» (§17.9: UTD E2EE-истории, профиль Matrix),
+  бэкап E2EE key-store (§17.6).
+- Интеграционный контур Matrix (T010, M7 фаза B4): весь Matrix-конвейер
+  (приём → пайплайн → отправка) на **живом локальном homeserver'е** —
+  new/edited/deleted сквозь пайплайн, доставка из **E2EE-комнаты**, транзит
+  медиа (`passthrough`). Маркер `integration` (default-skip); стенд —
+  `tests/integration/matrix/` (docker-compose с Synapse либо Synapse из
+  PyPI). Драйв источника тем же устройством, что и listener (для E2EE
+  снимает кросс-девайсный обмен ключами — проверяется наш decrypt→map→
+  deliver). Прогон зелёный против Synapse 1.155 (3 passed). ADR 2026-06-18.
+- Matrix sender + catch-up (T010, M7 фаза B3): замкнута отправка и дозабор
+  второго адаптера. `MatrixSender` (`MessageSinkPort`) доставляет
+  `OutboundMessage` в комнату/тред (E2EE автоматически), переотправляет
+  медиа по `mxc`-ссылке или заливкой скачанного файла (кросс-аккаунт/кросс-
+  платформа), деградирует медиа→текст при недоступности и переживает
+  rate-limit (`M_LIMIT_EXCEEDED`) / transient-сбои ретраями. Catch-up по
+  `/messages` (`MatrixListener.catchup` + прогон на старте): Matrix-история
+  несёт **явные** события (правка — отдельное `m.replace`, удаление —
+  redaction), поэтому new/edited/deleted мапятся напрямую — без сверки
+  хэшей/absence-детекции Telegram; дедуп гасит пересечения. Медиа-enrich
+  (скачивание `mxc` принимающим аккаунтом по политике `[media]`) даёт
+  процессорам `local_path` и кросс-платформенную пересылку. Listener и
+  sender делят один пул nio-клиентов (мемо в `deps.shared`). Деградация по
+  матрице возможностей §12.10 — generic-механизм (Matrix полнопрофилен,
+  не деградирует). ADR 2026-06-18.
+- Matrix listener + E2EE-приём (T010, M7 фаза B2): наполнен приём второго
+  боевого адаптера. `MatrixListener` поверх границы `MatrixClientPort`
+  (matrix-nio sync-loop) принимает live-события — new / edited (`m.replace`) /
+  deleted (redaction) — и маппит в `InboundEvent` через те же публичные
+  хелперы ключей, что и Telegram, включая `mxc`-вложения в `MediaRef`.
+  **E2EE-комнаты** поддержаны (`matrix-nio[e2e]` → `python-olm`/`libolm`):
+  key-store (olm/megolm) — отдельный sqlite в `[matrix].store_dir`
+  (git-ignored), токен/`device_id` остаются в `app.db`. Нерасшифрованные
+  события (UTD, нет ключа сессии) помечаются в аналитику и пропускаются —
+  platform limitation Matrix E2EE, не падение (§17.9). Курсор — непрозрачный
+  account-level `next_batch` sync (возобновление после простоя); глубокий
+  catch-up по `/messages` и отправка — фаза B3. Маппинг покрыт юнит-тестами
+  на nio-фикстурах (CI без живого homeserver). ADR 2026-06-18.
 - Каркас Matrix-адаптера + парольный login (T010, M7 фаза B1): пакет
   `adapters/matrix/` (extra `angarion[matrix]`, entry point
   `angarion.adapters:matrix`) — матрица возможностей полного профиля

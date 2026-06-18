@@ -463,17 +463,38 @@ M7 — финальный этап дорожной карты, замыкающ
    своя крипта `MatrixEncryptedSessionStore` (не из telegram); telegram-логин
    переведён на тот же `make_login`. `make_listener`/`make_sender` —
    fail-fast-заглушки до B2/B3. 985 passed, coverage 96.5%, 2 ADR 2026-06-16.
-6. **B2 — Listener + маппинг + курсор + E2EE.** matrix-nio sync-loop;
-   расшифровка E2EE; map new / edited (`m.replace`) / deleted (redaction) →
-   `InboundEvent` (+ `mxc`-медиа в `MediaRef`); непрозрачный курсор (sync
-   `next_batch` + history `prev_batch`); UTD-пометка как platform limitation
-   (Analyze); фикстуры; контрактные тесты портов (`angarion.testing`).
-7. **B3 — Sender + catch-up + деградация.** Отправка в комнату/тред (вкл.
-   E2EE и `mxc`-медиа); catch-up по `/messages`; тест деградации по матрице
-   (переиспользовать существующий синтетический адаптер, если есть).
-8. **B4 — Интеграционный контур Matrix.** Маркер `integration`, default-skip,
-   на self-hosted homeserver: new/edited/deleted, медиа, E2EE-комната;
-   `.secrets`-образец; самоочистка (как Telegram M6).
+6. **B2 — Listener + маппинг + курсор + E2EE. ✅ (2026-06-18)** matrix-nio
+   sync-loop (`MatrixListener` поверх границы `MatrixClientPort`); E2EE-приём
+   (`nio[e2e]`/libolm, key-store в `[matrix].store_dir`); map new / edited
+   (`m.replace`, `event_id`=оригинал) / deleted (redaction) → `InboundEvent`
+   (+ `mxc`-медиа в `MediaRef`); непрозрачный account-level `next_batch`-курсор
+   (history `prev_batch`/`/messages` — B3); UTD (`MegolmEvent` без ключа) →
+   аналитика + skip (platform limitation §17.9). Раскрытие правок/медиа/тредов
+   — pure `to_raw_*` на nio-фикстурах (CI без homeserver). `catchup()`
+   fail-fast до B3. Без live-буфера (sync-колбэки inline). Решение Владимира:
+   B2 одной фазой (E2EE не дробим), libolm ставит мейнтейнер + инструкция в
+   README. ADR 2026-06-18.
+7. **B3 — Sender + catch-up + деградация. ✅ (2026-06-18)** `MatrixSender`
+   (`MessageSinkPort`): отправка в комнату/тред (E2EE автоматически),
+   медиа по `mxc`-ссылке или заливкой `local_path` (кросс-аккаунт/платформа),
+   деградация медиа→текст, rate-limit (`M_LIMIT_EXCEEDED`)/transient ретраи.
+   Catch-up по `/messages` — Matrix-история несёт **явные** edit (`m.replace`)
+   и redaction события, поэтому new/edited/deleted мапятся напрямую (без
+   сверки хэшей/absence-детекции Telegram); прогон на старте + по запросу,
+   дедуп гасит пересечения. Media-enrich (скачивание `mxc` по политике
+   `[media]`) → `local_path`. Listener+sender делят пул nio-клиентов
+   (`deps.shared`). Деградация §12.10 — generic guard (Matrix полнопрофилен,
+   синтетический адаптер не плодим — покрыто memory-платформой). ADR 2026-06-18.
+8. **B4 — Интеграционный контур Matrix. ✅ (2026-06-18)** Маркер `integration`,
+   default-skip, на локальном homeserver'е (Synapse: docker-compose либо PyPI,
+   `tests/integration/matrix/`): new/edited/deleted сквозь пайплайн, доставка
+   из E2EE-комнаты, транзит медиа (`passthrough`) — `build_app` + синтетический
+   matrix-плагин над реальным `MatrixClient`, драйв источника listener-
+   устройством (для E2EE снимает кросс-девайсный обмен ключами), чтение цели
+   отдельным девайсом. `.secrets`-образец дополнен; стенд эфемерный (самоочистка
+   не нужна). Прогон зелёный против Synapse 1.155 (3 passed). Стенд — Synapse-
+   из-PyPI (Docker-реестры в окружении были недоступны); docker-compose
+   приложен для сред с доступом. ADR 2026-06-18.
 9. **B5 — Update Matrix.** README (roadmap M7 ✅), CHANGELOG/DECISIONS, бэкап-
    гайд (E2EE-стор §17.6), реестр ограничений платформ §17.9 (UTD, профиль
    Matrix); пример Matrix-пайплайна и/или кросс Telegram↔Matrix.

@@ -218,6 +218,25 @@ class TelegramConfig(BaseModel):
     sender: SenderConfig = SenderConfig()
 
 
+class MatrixConfig(BaseModel):
+    """
+    Секция ``[matrix]`` (M7 B2, T010): runtime-тюнеры Matrix-адаптера.
+
+    ``store_dir`` — каталог E2EE key-store ``matrix-nio`` (olm/megolm):
+    отдельный sqlite на ФС, который nio ведёт сам. Единственное
+    отступление от «вся сессия в app.db» (§6 спеки T010): git-ignored,
+    как ``data/``; токен/``device_id`` всё так же в ``app.db``.
+
+    Буфер live-событий не нужен: sync-колбэки nio ингестятся inline (в
+    отличие от concurrent-апдейтов Telethon), глубокий catch-up по
+    ``/messages`` — фаза B3.
+    """
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    store_dir: str = 'data/matrix-e2e'
+
+
 class NotifyConfig(BaseModel):
     """
     Секция ``[api.notify]`` (§12.7/§12.9, T024): цель уведомления о
@@ -317,6 +336,7 @@ class AngarionSettings(BaseSettings):
     worker: WorkerConfig = WorkerConfig()
     catchup: CatchupConfig = CatchupConfig()
     telegram: TelegramConfig = TelegramConfig()
+    matrix: MatrixConfig = MatrixConfig()
     api: ApiConfig = ApiConfig()
     pipelines: dict[str, PipelineConfig] = Field(default_factory=dict)
     session_key: str = ''

@@ -39,6 +39,148 @@ ADR-Lite: компактный лог архитектурных решений 
 
 <!-- Реальные решения добавляются сюда, новые сверху. -->
 
+### 2026-06-18 — Интеграционный контур Matrix: локальный homeserver, drive источника listener-устройством (T010, M7 фаза B4)
+
+- **Решение:** контур §13.2 для Matrix зеркалит Telegram M6 (`build_app` +
+  синтетический matrix-плагин над реальным `MatrixClient`, sqlite +
+  persistqueue), но с двумя отличиями:
+  - **Drive источника — тем же устройством, что и listener** (его nio-клиент,
+    `source_poster`), а не отдельным драйвером. Для E2EE это снимает
+    кросс-девайсный обмен megolm-ключами: устройство расшифровывает
+    собственное событие (owns the outbound session). Так контур проверяет
+    **наш** путь decrypt→map→deliver, а обмен ключами между устройствами —
+    забота nio, не адаптера. Цель (незашифрованную) читает отдельный
+    девайс-«читатель» без E2EE (нет лишних key-запросов/UTD-шумов).
+  - **Стенд — локальный Synapse**, поднятый из **PyPI** (`uv pip install
+    matrix-synapse`), т.к. Docker-реестры в рабочем окружении были
+    недоступны (TLS-reset к registry-1.docker.io/ghcr). `docker-compose.yml`
+    (Synapse с ghcr) приложен для сред с доступом — тест homeserver-агностичен
+    (адрес из `MATRIX_HOMESERVER`).
+- **Контекст:** у Владимира нет готового homeserver'а (решение 2026-06-18:
+  «локальный homeserver в Docker»); реестры заблокированы → Synapse из PyPI
+  даёт тот же локальный стенд. Контур — маркер `integration`, default-skip
+  (обязательный CI — на фикстурах B2/B3).
+- **Альтернативы:**
+  - Отдельный драйвер-девайс (как задумано изначально) — отвергнут: nio
+    кросс-девайсный E2EE-обмен ключами оказался хрупким (UTD: listener не
+    получал megolm-ключ до отправки), а тестировать нужно наш код, не
+    key-exchange nio.
+  - matrix.org / публичный аккаунт — отвергли (Владимир выбрал docker/локально).
+  - Conduit вместо Synapse — Synapse референсный, поставился из PyPI и
+    провалидирован; compose для обоих сред.
+- **Последствия:** `pytest -m integration tests/integration/test_matrix_access.py`
+  зелёный (3 passed) против Synapse 1.155 — new/edited/deleted + E2EE-комната +
+  media. Для повторяемых прогонов стенду нужны поднятые `rc_*` rate-limits
+  (особенно `rc_login.account` — 6 логинов контура иначе ловят 429); набор —
+  в `tests/integration/matrix/README.md`. Часть B остаётся — B5 (update + пример).
+
+### 2026-06-18 — Matrix sender + catch-up: явные события истории, общий пул клиентов (T010, M7 фаза B3)
+
+- **Решение:** замкнута отправка и дозабор Matrix-адаптера.
+  - **`MatrixSender` (`MessageSinkPort`)** поверх `MatrixClientPort`:
+    резолв комнаты → `room_send` (E2EE автоматически, `ignore_unverified_
+    devices=True` — trust-on-first-use для зеркала, Analyze). Медиа:
+    переотправка по `mxc`-ссылке (reupload-by-reference) или заливка
+    скачанного `local_path` (`upload`→`mxc`, кросс-аккаунт/платформа);
+    деградация медиа→текст живёт в границе nio (`send_media`), sender не
+    дублирует (как Telegram). Rate-limit (`M_LIMIT_EXCEEDED`) → ожидание
+    `retry_after` + повтор; transient → backoff-ретраи. Без token-bucket
+    троттлинга Telegram (реактивного rate-limit-ожидания хватает второму
+    адаптеру; вынести в общий механизм — позже).
+  - **Catch-up по `/messages`** проще Telegram: Matrix-история несёт
+    **явные** события — правка отдельным `m.replace`-событием (граница nio
+    уже размечает `kind`+`event_id` оригинала), удаление redaction-событием
+    с `redacts`. Поэтому new/edited/deleted мапятся напрямую (`raw.kind`),
+    **без** сверки content/media-хэшей и **без** absence-детекции удалений
+    (надёжнее: удаление — явное событие, а не пропавший id). Дедуп гасит
+    пересечения с live и повторные прогоны; `previous_text` правок достаёт
+    `IngestService` из реестра. Прогон на старте listener'а (gated
+    `[catchup].enabled`) + по запросу (`catchup(source_key)`); UTD-история
+    шифрованных комнат до входа устройства просто отсутствует в чанке
+    (`MegolmEvent` не маппится — platform limitation B2).
+  - **Общий пул клиентов** (`_shared_clients`, мемо в `deps.shared`): один
+    nio `AsyncClient` на аккаунт обслуживает приём (sync-loop) и отправку —
+    listener и sender делят инстансы (как Telegram-`ClientRegistry`).
+    `restore()` идемпотентен (дёргают оба; в роль-сплите §12.9 sender сам
+    поднимает клиента перед первой отправкой).
+  - **Медиа-enrich в listener** (`_enrich`): принимающий аккаунт качает
+    `mxc` по политике `[media]` (`should_download`) → `local_path`
+    процессорам и кросс-платформенной пересылке (как Telegram A3, но через
+    `MatrixClient.download_media`).
+- **Контекст:** B3 замыкает Matrix-конвейер (Matrix↔Matrix и кросс
+  Telegram↔Matrix new/edited/deleted + медиа). Деградация §12.10 — generic
+  guard в bootstrap, покрыт тестом на memory-платформе (`history_fetch=False`);
+  Matrix полнопрофилен (`test_capabilities_full_profile`) — синтетический
+  адаптер не плодим (спека C-сквозное).
+- **Альтернативы:**
+  - Catch-up удалений по absence (как Telegram: known_ids − present) —
+    отвергнуто: Matrix даёт redaction явным событием в истории, absence по
+    бесконечной ленте `/messages` ненадёжен и дорог.
+  - Catch-up edited по сверке хэшей с реестром — не нужно: edit в Matrix —
+    отдельное событие, `kind` известен из `m.replace`.
+  - Раздельные клиенты listener/sender — отвергнуто: дублировало бы nio-
+    соединение и E2EE-стор на аккаунт; один клиент на оба — модель Matrix.
+  - Token-bucket троттлинг как у Telegram — отложено: реактивного
+    rate-limit-ожидания достаточно; общий троттлинг-механизм — отдельно.
+- **Последствия:** Matrix-пайплайн полон (приём B2 + отправка/дозабор B3);
+  интеграционный контур на живом homeserver — B4. E2EE-медиа (шифрование
+  блоба при заливке в зашифрованную комнату) реализовано через nio, точная
+  корректность — на стенде B4 (граница тонкая, юнит-тесты на fake).
+
+### 2026-06-18 — Matrix listener: sync-loop, next_batch-курсор, E2EE с UTD-деградацией (T010, M7 фаза B2)
+
+- **Решение:** наполнен Matrix-listener (заглушка B1 → рабочий приём).
+  Структура зеркалит Telegram: узкая граница `MatrixClientPort` + raw-DTO
+  (`RawMatrixMessage`/`RawMatrixDeletion`/`RawMatrixUndecryptable`) +
+  **чистый** `mapping` (new/edited/deleted + `mxc`-медиа) + `MatrixListener`
+  поверх портов. Узлы:
+  - **E2EE — целиком в B2** (решение Владимира 2026-06-18, развилка
+    «дробление B2»): не дробим на plaintext/E2EE-срезы. Extra
+    `angarion[matrix]` = `matrix-nio[e2e]` (тянет `python-olm` →
+    системная `libolm`). libolm ставит мейнтейнер окружения; для
+    пользователя — инструкция в `README` (prerequisite Matrix E2EE).
+  - **E2EE key-store** (olm/megolm) — отдельный sqlite на ФС в
+    `[matrix].store_dir` (per-account подкаталог; default `data/matrix-e2e`,
+    git-ignored через `data/`). Единственное отступление от «вся сессия в
+    `app.db`» (§6 спеки); токен/`device_id` всё так же в `app.db`. nio ведёт
+    стор сам (`AsyncClientConfig(encryption_enabled=True, store_path=…)`).
+  - **UTD как platform limitation, не падение** (Analyze 🔴): нерасшифрованное
+    событие (`MegolmEvent` без ключа сессии — например историческое до входа
+    устройства) listener помечает в аналитику (`matrix_undecryptable`) и
+    **пропускает**. Это фундаментальное свойство Matrix E2EE, не баг
+    адаптера (§17.9).
+  - **Курсор — account-level `next_batch`** sync, непрозрачный, в
+    `CursorStorePort` под зарезервированным `source_key` (chat-сегмент
+    `_sync`). Возобновление после простоя — сервер отдаёт пропущенное за
+    токеном. Глубокий catch-up по `/messages` (per-room `prev_batch`) —
+    фаза B3: `MatrixListener.catchup` пока fail-fast (`NotSupportedError`,
+    «B3»), хотя `history_fetch=True` (capability задекларирована, тело — B3).
+  - **Без live-буфера:** sync-колбэки nio выполняются inline в цикле sync
+    (back-pressure естественный), в отличие от concurrent-апдейтов Telethon —
+    `LiveBuffer` не нужен. `[matrix]` несёт только `store_dir`.
+  - **Раскрытие правок — в границе nio:** Matrix-edit это новое событие с
+    `m.replace`; `to_raw_message` подставляет в `event_id` id оригинала и
+    `kind=MESSAGE_EDITED` (текст из `m.new_content`) — `external_id`
+    совпадает с записью реестра, `previous_text` достаётся в `IngestService`
+    (как Telegram). Redaction → один `MESSAGE_DELETED` (chat-уровень).
+- **Контекст:** B2 наполняет приём второго боевого адаптера и впервые гоняет
+  E2EE на живом профиле. Spec/Analyze пройдены (T010); развилки закрыты
+  Владимиром 2026-06-18 (B2 целиком; libolm ставит мейнтейнер).
+- **Альтернативы:**
+  - Дробить E2EE в отдельный срез (как A3) — отвергнуто Владимиром (B2 одной
+    фазой; libolm доступна на стенде).
+  - Только незашифрованные комнаты в M7 — отвергнуто (отступление от
+    Resolved Q11 не понадобилось: libolm ставится без проблем).
+  - Хранить `next_batch` per-room — отвергнуто: sync-токен в Matrix
+    account-level (один на весь sync), per-room позиция — это `prev_batch`
+    истории (`/messages`), приходит в B3.
+  - `catchup()` как no-op — отвергнуто в пользу честного fail-fast: тело
+    реализуется в B3, тихий no-op маскировал бы незавершённость.
+- **Последствия:** Matrix-пайплайн принимает new/edited/deleted (вкл.
+  E2EE-комнаты) с B2; отправка/деградация/глубокий catch-up — B3,
+  интеграционный контур — B4. Граница nio тонкая: `to_raw_*` тестируются
+  на nio-фикстурах (`Event.from_dict`), сетевой путь — на стенде (B4).
+
 ### 2026-06-16 — Шов логина в контракте плагина: `make_login` на `AdapterPlugin` (T010, M7 фаза B1)
 
 - **Решение:** интерактивный логин (`angarion login`) перенесён из
