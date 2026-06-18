@@ -38,6 +38,7 @@ from angarion.domain.models import (
     AnalyticsEvent,
     DynamicSettings,
     InboundEvent,
+    MediaRef,
     OutboxStatus,
     PipelineContextData,
     ProcessingResult,
@@ -89,6 +90,7 @@ class WorkerHarness:
         max_retries: int = 5,
         backoff_base: float = 0.0,
         backoff_cap: float = 60.0,
+        forward_media: bool = True,
     ) -> None:
         self.queue = RecordingQueue()
         self.outbox = MemoryOutbox()
@@ -99,6 +101,7 @@ class WorkerHarness:
         binding = PipelineBinding(
             processor=FunctionProcessor(name='test', fn=fn),
             ctx=make_context(targets=targets),
+            forward_media=forward_media,
         )
         self.worker = PipelineWorker(
             queue=self.queue,
@@ -446,3 +449,48 @@ class TestRunLifecycle:
         with pytest.raises(asyncio.CancelledError):
             await task
         assert len(await harness.outbox.due(limit=10)) == 2
+
+
+class TestForwardMedia:
+    """T033: per-pipeline стрип медиа у исходящих (forward_media)."""
+
+    @staticmethod
+    def _envelope_with_media() -> QueueEnvelope:
+        ref = MediaRef(kind='photo', ref='chat:1')
+        return make_envelope(event=make_event(media=[ref]))
+
+    async def test_default_keeps_media(self) -> None:
+        """По умолчанию (forward_media=True) медиа транзитом — как с M7."""
+        harness = WorkerHarness(passthrough)
+        envelope = self._envelope_with_media()
+        await harness.queue.put(envelope)
+        await harness.worker.process_one()
+        key = make_idempotency_key('digest', envelope.event, make_target().target, 0)
+        record = await harness.outbox.get(key)
+        assert record is not None
+        assert len(record.msg.media) == 1
+        assert record.msg.media[0].kind == 'photo'
+
+    async def test_false_strips_media(self) -> None:
+        """forward_media=False → media снята, текст не тронут."""
+        harness = WorkerHarness(passthrough, forward_media=False)
+        envelope = self._envelope_with_media()
+        await harness.queue.put(envelope)
+        await harness.worker.process_one()
+        key = make_idempotency_key('digest', envelope.event, make_target().target, 0)
+        record = await harness.outbox.get(key)
+        assert record is not None
+        assert record.msg.media == []
+        assert record.msg.text == 'hello'
+
+    async def test_false_without_media_is_noop(self) -> None:
+        """forward_media=False на событии без медиа — обычная доставка."""
+        harness = WorkerHarness(passthrough, forward_media=False)
+        envelope = make_envelope()  # без media
+        await harness.queue.put(envelope)
+        await harness.worker.process_one()
+        key = make_idempotency_key('digest', envelope.event, make_target().target, 0)
+        record = await harness.outbox.get(key)
+        assert record is not None
+        assert record.msg.media == []
+        assert record.msg.text == 'hello'

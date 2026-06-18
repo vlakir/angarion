@@ -39,6 +39,29 @@ ADR-Lite: компактный лог архитектурных решений 
 
 <!-- Реальные решения добавляются сюда, новые сверху. -->
 
+### 2026-06-18 — Per-pipeline `forward_media`: стрип медиа в worker, processor-agnostic (T033)
+
+- **Решение:** введён флаг `[pipelines.*].forward_media` (`bool`, дефолт
+  `True`). Стрип медиа выполняет **worker** (`_process_and_stage`) — после
+  процессора, перед `OutboxPort.put`: при `forward_media=False` исходящие с
+  медиа пересобираются `out.model_copy(update={'media': []})`. Флаг едет
+  `PipelineConfig` → `PipelineBinding.forward_media` → worker (bootstrap
+  прокидывает `cfg.forward_media`). Processor-agnostic: процессоры о флаге не
+  знают, работает для `passthrough`/`template`/`llm`/кастомных.
+- **Контекст:** отложено из M7/A3 (Q3 спеки T010): скачивание медиа —
+  account/source-level (глобальная `[media]`, до fan-out), а **пересылка** —
+  send-time concern уровня пайплайна. Мотив: один источник питает
+  пайплайн-зеркало с медиа и текст-только пайплайн одновременно.
+- **Альтернативы:**
+  - Флаг в `ctx.settings` + honor в `passthrough` — отвергнуто: покрыл бы
+    только passthrough, не общий случай (template/llm/кастом эмитят медиа).
+  - Стрип в sender — отвергнуто: sender per-account, пайплайн ему не виден.
+  - Worker — единственная точка, где сходятся pipeline-config и
+    произведённые `OutboundMessage`, до фиксации в outbox.
+- **Последствия:** дефолт `True` — обратная совместимость (медиа транзитом,
+  как с M7). Идемпотентность не затронута (ключ строится до стрипа). Покрыто
+  тестами воркера (default keeps / False strips / False без медиа — no-op).
+
 ### 2026-06-18 — Интеграционный контур Matrix: локальный homeserver, drive источника listener-устройством (T010, M7 фаза B4)
 
 - **Решение:** контур §13.2 для Matrix зеркалит Telegram M6 (`build_app` +

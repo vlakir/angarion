@@ -76,6 +76,11 @@ _(пусто)_
 <!-- T006, T008, T022, T023, T024, T025 перенесены в CHANGELOG.md
      [0.3.0] — 2026-06-15 (milestone M5 закрыт). -->
 
+- **T033** — Per-pipeline `forward_media` (флаг `[pipelines.*]`, дефолт `true`;
+  при `false` worker стрипает медиа у исходящих перед outbox, processor-
+  agnostic) [closed 2026-06-18, текущий PR]. Acceptance выполнен: тесты воркера
+  (default keeps / `false` strips / `false` без медиа — no-op); ADR 2026-06-18.
+  Ветка `T033-forward-media`. Отложено было из M7/A3.
 - **T010** — **M7: медиа + Matrix-адаптер** (зонтичная, `specs/T010-m7-media-matrix/`)
   [closed 2026-06-18]. Закрыта целиком. Часть A (медиа): `MediaRef` + транзит,
   Telegram in/out, политика/реестр/скачивание, пример `examples/media` (T034).

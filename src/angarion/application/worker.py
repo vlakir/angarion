@@ -97,6 +97,8 @@ class PipelineBinding(BaseModel):
 
     processor: ProcessorPort
     ctx: PipelineContextData
+    forward_media: bool = True
+    """Пересылать ли медиа исходящих (T033); ``False`` — worker стрипает ``media``."""
 
 
 class PipelineWorker:
@@ -182,8 +184,13 @@ class PipelineWorker:
         result = await binding.processor.process(envelope.event, binding.ctx, svc)
         if result.verdict is Verdict.DELIVER:
             for out in result.outbound:
+                staged = (
+                    out
+                    if binding.forward_media or not out.media
+                    else out.model_copy(update={'media': []})
+                )
                 await self._outbox.put(
-                    out,
+                    staged,
                     pipeline=envelope.pipeline,
                     event_uid=envelope.event.uid,
                 )
