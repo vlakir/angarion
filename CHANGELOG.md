@@ -29,6 +29,14 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Added
 
+- Ретеншн подтверждённых записей очереди (T016): `SQLiteAckQueue` не вычищал
+  acked-строки сам → `queue.db` рос бессрочно на долгоживущем развёртывании.
+  Добавлен `EventQueuePort.purge_acked(keep_latest)` (persistqueue — обёртка
+  `clear_acked_data`; memory — no-op), вызывается из фоновой prune-задачи.
+  Политика — ключ `[queue] keep_acked` (дефолт `1000` новейших acked как буфер;
+  `0` — бессрочно, как окна §17.3). Обратная совместимость: чистка работает
+  только при `[worker] prune_interval > 0` (дефолт `0` — выключена). pending/
+  unacked/nacked и семантика at-least-once не затронуты. ADR 2026-06-18.
 - Per-pipeline пересылка медиа (T033): флаг `[pipelines.*].forward_media`
   (дефолт `true` — обратная совместимость). При `false` worker отстригает
   вложения у исходящих перед outbox (processor-agnostic, send-time concern) —

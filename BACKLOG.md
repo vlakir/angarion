@@ -44,14 +44,6 @@ BACKLOG.md, BOARD.md и CHANGELOG.md) + 1`. ID не переиспользует
 <!-- T033 (per-pipeline forward_media) — взят в работу 2026-06-18,
      переехал в BOARD.md → Doing (ветка T033-forward-media). -->
 
-- **T016** — [2026-06-12] Ретеншн acked-строк `queue.db`: persistqueue
-  не удаляет подтверждённые записи (status=acked копится бессрочно),
-  есть `clear_acked_data(max_delete, keep_latest)`. Решить политику и
-  место вызова (например, рядом с фоновыми prune-задачами M3, §17.3).
-  Всплыло при реализации persistqueue-адаптера (T003 фаза 2).
-  Acceptance: политика зафиксирована (ADR или вызов в коде), queue.db
-  не растёт бесконечно при штатной работе.
-
 - **T012** — [2026-06-11] Перенести из dreamteam механизм публикации:
   `scripts/publish.sh` + `.secrets`/`.secrets.example` (PYPI_TOKEN,
   twine check перед upload) — пригодится к следующему релизу на PyPI.

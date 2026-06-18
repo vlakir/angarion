@@ -66,3 +66,8 @@ class MemoryQueue:
     async def depth(self) -> QueueDepth:
         """Текущие pending/unacked."""
         return QueueDepth(pending=len(self._pending), unacked=len(self._unacked))
+
+    async def purge_acked(self, keep_latest: int) -> int:
+        """No-op (§17.3, T016): ack сразу удаляет элемент, acked не копятся."""
+        _ = keep_latest
+        return 0

@@ -65,6 +65,14 @@ class EventQueuePort(Protocol):
     async def depth(self) -> QueueDepth:
         """Диагностика: количество pending/unacked (§17.5)."""
 
+    async def purge_acked(self, keep_latest: int) -> int:
+        """
+        Ретеншн (§17.3, T016): удалить подтверждённые (acked) записи сверх
+        новейших ``keep_latest``, вернуть число удалённых. pending/unacked
+        и аварийно возвращённые (nacked) не затрагиваются. ``keep_latest=0``
+        — удалить все acked. Эфемерные очереди, не копящие acked, — no-op (0).
+        """
+
 
 @runtime_checkable
 class MessageSinkPort(Protocol):

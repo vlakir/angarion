@@ -109,3 +109,30 @@ class EventQueueContract:
         self, queue: EventQueuePort
     ) -> None:
         assert await queue.recover() == 0
+
+    async def test_purge_acked_keeps_pending_and_unacked_intact(
+        self, queue: EventQueuePort
+    ) -> None:
+        """
+        Ретеншн acked-строк (§17.3, T016): ``purge_acked`` чистит только
+        подтверждённые записи и НЕ трогает pending/unacked — depth не
+        меняется, unacked не теряется и не выдаётся повторно.
+        """
+        acked = make_envelope(pipeline='acked')
+        await queue.put(acked)
+        await queue.ack(await queue.get())  # подтверждена → кандидат на чистку
+        await queue.put(make_envelope(pipeline='pending'))  # ждёт в очереди
+        inflight = await queue.get()  # взята, не подтверждена → unacked
+        await queue.put(make_envelope(pipeline='tail'))
+
+        deleted = await queue.purge_acked(keep_latest=0)
+
+        assert deleted >= 0
+        assert await queue.depth() == QueueDepth(pending=1, unacked=1)
+        await queue.ack(inflight)
+        assert await queue.depth() == QueueDepth(pending=1, unacked=0)
+
+    async def test_purge_acked_on_empty_queue_is_zero(
+        self, queue: EventQueuePort
+    ) -> None:
+        assert await queue.purge_acked(keep_latest=0) == 0

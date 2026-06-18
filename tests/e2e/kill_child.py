@@ -210,6 +210,9 @@ class KillingQueue:
     async def depth(self) -> QueueDepth:
         return await self._inner.depth()
 
+    async def purge_acked(self, keep_latest: int) -> int:
+        return await self._inner.purge_acked(keep_latest)
+
 
 class FilesinkAccountConfig(BaseModel):
     """Секция ``[accounts.*]`` платформы filesink: только ``messenger``."""

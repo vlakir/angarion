@@ -12,6 +12,7 @@ from angarion.config import (
     EndpointConfig,
     MediaConfig,
     PipelineConfig,
+    QueueConfig,
     StorageConfig,
     load_settings,
 )
@@ -67,6 +68,7 @@ def test_defaults_without_any_config() -> None:
     assert settings.storage.analytics_retention_days == 90
     assert settings.queue.backend == 'memory'
     assert settings.queue.depth_warn == 500
+    assert settings.queue.keep_acked == 1000
     assert settings.worker.max_retries == 5
     assert settings.worker.backoff_base == 1.0
     assert settings.worker.backoff_cap == 60.0
@@ -178,6 +180,14 @@ def test_pipeline_rejects_unknown_event_kind() -> None:
                 'targets': [{'account': 'main', 'chat_id': '-2'}],
             }
         )
+
+
+def test_queue_keep_acked_parses_and_rejects_negative() -> None:
+    """[queue] keep_acked — ретеншн acked-строк (T016): ≥0, 0 = бессрочно."""
+    assert QueueConfig.model_validate({'keep_acked': 0}).keep_acked == 0
+    assert QueueConfig.model_validate({'keep_acked': 500}).keep_acked == 500
+    with pytest.raises(ValidationError, match='keep_acked'):
+        QueueConfig.model_validate({'keep_acked': -1})
 
 
 def test_settings_are_frozen() -> None:
