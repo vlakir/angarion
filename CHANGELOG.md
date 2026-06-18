@@ -180,6 +180,15 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Fixed
 
+- Подвисание graceful shutdown при заблокированном sender (T031): `app.stop()`
+  отменял таски, но `PipelineWorker`/`DeliveryWorker` на отмене дожидались
+  in-flight операции (shield-drain против обрыва частичной записи C-9) — если
+  она залипла в долгом throttle/`FloodWait` sleep (§12.8), стоп подвисал на всю
+  длину сна (всплыло в T009/M6). Введён общий `shielded_drain` с границей
+  `[worker] shutdown_drain_seconds` (дефолт `5.0`): по истечении операция
+  обрывается (граница — на самом sleep или в окне `send→mark_sent`, т.е.
+  возможный дубль покрывает at-least-once §7.1). Быстрые операции по-прежнему
+  дообрабатываются. ADR 2026-06-18.
 - Флак e2e kill-теста `test_deterministic_kill_point_keeps_delivery[before_ack]`
   на Python 3.12 в CI (T035): ассерт мишени приведён к семантике at-least-once.
   Kill-точка `before_ack` роняет процесс на `queue.ack`, когда мишень уже в

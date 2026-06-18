@@ -169,6 +169,13 @@ class WorkerConfig(BaseModel):
     prune_interval: float = Field(default=0.0, ge=0)
     outbox_poll_seconds: float = Field(default=5.0, gt=0)
     """Период опроса командного outbox consumer'ом (§12.9, FR-5; default 5)."""
+    shutdown_drain_seconds: float = Field(default=5.0, gt=0)
+    """
+    Граница graceful-дренажа воркеров при остановке (§3.2, T031): сколько
+    ждать завершения in-flight операции, прежде чем оборвать её. Защищает
+    ``app.stop()`` от подвисания на залипшем в throttle/``FloodWait`` sleep
+    воркере; возможный дубль от обрыва покрывает at-least-once (§7.1).
+    """
 
 
 class CatchupConfig(BaseModel):

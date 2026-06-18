@@ -14,6 +14,7 @@ from angarion.config import (
     PipelineConfig,
     QueueConfig,
     StorageConfig,
+    WorkerConfig,
     load_settings,
 )
 from angarion.domain.errors import ConfigError
@@ -73,6 +74,7 @@ def test_defaults_without_any_config() -> None:
     assert settings.worker.backoff_base == 1.0
     assert settings.worker.backoff_cap == 60.0
     assert settings.worker.poll_interval == 1.0
+    assert settings.worker.shutdown_drain_seconds == 5.0
     assert settings.catchup.enabled is True
     assert settings.catchup.max_messages_per_source == 2000
     assert settings.catchup.max_age_days == 7
@@ -188,6 +190,14 @@ def test_queue_keep_acked_parses_and_rejects_negative() -> None:
     assert QueueConfig.model_validate({'keep_acked': 500}).keep_acked == 500
     with pytest.raises(ValidationError, match='keep_acked'):
         QueueConfig.model_validate({'keep_acked': -1})
+
+
+def test_worker_shutdown_drain_seconds_must_be_positive() -> None:
+    """[worker] shutdown_drain_seconds — граница graceful-дренажа (T031): > 0."""
+    cfg = WorkerConfig.model_validate({'shutdown_drain_seconds': 2.5})
+    assert cfg.shutdown_drain_seconds == 2.5
+    with pytest.raises(ValidationError, match='shutdown_drain_seconds'):
+        WorkerConfig.model_validate({'shutdown_drain_seconds': 0})
 
 
 def test_settings_are_frozen() -> None:

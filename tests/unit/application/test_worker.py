@@ -91,6 +91,7 @@ class WorkerHarness:
         backoff_base: float = 0.0,
         backoff_cap: float = 60.0,
         forward_media: bool = True,
+        shutdown_drain_seconds: float = 5.0,
     ) -> None:
         self.queue = RecordingQueue()
         self.outbox = MemoryOutbox()
@@ -114,6 +115,7 @@ class WorkerHarness:
             max_retries=max_retries,
             backoff_base=backoff_base,
             backoff_cap=backoff_cap,
+            shutdown_drain_seconds=shutdown_drain_seconds,
         )
 
     async def pause(self, *pipelines: str) -> None:
@@ -437,6 +439,25 @@ class TestRunLifecycle:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+    async def test_run_bounded_stop_when_processor_hangs(self) -> None:
+        """T031: залипший процессор не подвешивает стоп дольше таймаута."""
+        started = asyncio.Event()
+
+        async def hung(
+            event: InboundEvent, ctx: PipelineContextData, svc: ProcessorServices
+        ) -> ProcessingResult:
+            started.set()
+            await asyncio.sleep(100)  # «залип» (throttle/FloodWait)
+            return ProcessingResult(verdict=Verdict.DROP)
+
+        harness = WorkerHarness(hung, shutdown_drain_seconds=0.05)
+        await harness.queue.put(make_envelope())
+        task = asyncio.create_task(harness.worker.run())
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1.0)  # не 100 c
 
     async def test_run_processes_sequentially(self) -> None:
         harness = WorkerHarness(passthrough)
