@@ -76,6 +76,15 @@ _(пусто)_
 <!-- T006, T008, T022, T023, T024, T025 перенесены в CHANGELOG.md
      [0.3.0] — 2026-06-15 (milestone M5 закрыт). -->
 
+- **T035** — Флак e2e kill-теста `test_..._keeps_delivery[before_ack]` на
+  Python 3.12 в CI [closed 2026-06-18, текущий PR]. Диагноз: kill на `queue.ack`
+  застаёт мишень уже в outbox, конкурентный `DeliveryWorker` в окне
+  `send→mark_sent` (§7.1) даёт легитимный at-least-once дубль; тест ждал «ровно
+  1» и падал `2 == 1` под нагрузкой CI. Воспроизведено локально (1/25 под CPU-
+  нагрузкой), фикс — ассерт мишени `>= 1` (верхняя граница уже у
+  `_assert_dup_budget`); после фикса 30/30 под нагрузкой зелёные. Продакшен-код
+  не менялся. Acceptance (вариант 2): ассерт приведён к at-least-once с
+  обоснованием. Ветка `T035-flaky-before-ack-at-least-once`.
 - **T033** — Per-pipeline `forward_media` (флаг `[pipelines.*]`, дефолт `true`;
   при `false` worker стрипает медиа у исходящих перед outbox, processor-
   agnostic) [closed 2026-06-18, текущий PR]. Acceptance выполнен: тесты воркера
