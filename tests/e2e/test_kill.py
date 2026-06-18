@@ -149,10 +149,19 @@ def test_deterministic_kill_point_keeps_delivery(
     counts = _assert_no_loss(tmp_path)
     _assert_dup_budget(counts, kills=1)
     if point == POINT_AFTER_SEND:
-        # окно C-9 поймано гарантированно: ровно один дубль мишени
+        # kill внутри send (до mark_sent) детерминированно ловит окно C-9:
+        # ровно один дубль мишени — гарантия конструкции kill-точки.
         assert counts[TARGET_KEY] == 2  # noqa: PLR2004
     else:
-        assert counts[TARGET_KEY] == 1
+        # before_ack / between_put_and_mark: kill приходится не на доставку,
+        # но мишень к этому моменту уже в outbox, а доставкой занят отдельный
+        # конкурентный DeliveryWorker. Его send→mark_sent — то же окно C-9
+        # (§7.1, at-least-once): kill может совпасть с ним и дать дубль
+        # мишени. Это не потеря и не нарушение контракта, поэтому ждём
+        # at-least-once, а не «ровно один»; верхнюю границу (≤ 1 дубль на
+        # kill) уже проверил _assert_dup_budget. Иначе тест флачит на 3.12
+        # под нагрузкой CI (T035): legitimate дубль ловится как 2 == 1.
+        assert counts[TARGET_KEY] >= 1
 
 
 def test_random_kills_keep_delivery(
