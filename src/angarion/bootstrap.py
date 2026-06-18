@@ -356,6 +356,7 @@ def _build_pipelines(
             ctx=PipelineContextData(
                 pipeline=name, targets=targets, settings=cfg.processor_config
             ),
+            forward_media=cfg.forward_media,
         )
     return routes, bindings
 

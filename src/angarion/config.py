@@ -314,6 +314,15 @@ class PipelineConfig(BaseModel):
     sources: tuple[EndpointConfig, ...] = Field(min_length=1)
     targets: tuple[EndpointConfig, ...] = Field(min_length=1)
     processor_config: dict[str, Any] = Field(default_factory=dict)
+    forward_media: bool = True
+    """
+    Пересылать ли вложения исходного события получателям этого пайплайна
+    (T033, send-time concern). По умолчанию ``True`` — медиа транзитом
+    (как с M7). При ``False`` worker отстригает ``media`` у исходящих перед
+    outbox: один источник может питать пайплайн-зеркало с медиа и
+    текст-только пайплайн одновременно. Скачивание медиа — отдельная
+    глобальная ``[media]``-политика (account/source-level, до fan-out).
+    """
 
 
 class AngarionSettings(BaseSettings):
