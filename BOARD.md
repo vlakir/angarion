@@ -61,23 +61,7 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
      разработчика, иначе теряется фокус (классическое WIP-limit
      правило из Kanban). -->
 
-- **T010** — **M7: медиа + Matrix-адаптер** (зонтичная задача,
-  `specs/T010-m7-media-matrix/spec.md`, статус **Analyzed**). Реализация
-  фазами под одним T-ID, каждая фаза — отдельная ветка/PR `T010: <фаза>`:
-  - Часть A (медиа): ~~A1 домен `MediaRef`+транзит~~ ✅ → ~~A2 Telegram in/out~~
-    ✅ → ~~A3 политика+реестр+скачивание-fallback~~ ✅ → **A4** update+пример.
-  - Часть B (Matrix+E2EE): ~~B1 каркас+login~~ ✅ → **B2** listener+маппинг+E2EE →
-    B3 sender+catch-up+деградация → B4 интеграционный контур → B5 update+пример.
-  - **Часть A закрыта по коду; B1 закрыт по коду — следующая фаза B2**
-    (A1+A2+A3 закрыты 2026-06-16; B1 закрыт 2026-06-16, ветка
-    `T010-b1-matrix-skeleton`: каркас Matrix-плагина + `make_login` в контракте +
-    парольный login, ADR 2026-06-16).
-    A3 по срезам: ~~срез 1 media-хэш в ключе + must-fix~~ ✅ → ~~срез 2 реестр
-    media-хэш (catch-up)~~ ✅ → ~~срез 3 политика+хранилище+скачивание-fallback~~ ✅.
-    Per-pipeline media-forward вынесен в BACKLOG **T033**.
-  - Acceptance — Success Criteria спеки (§16 M7: медиа сквозь пайплайн +
-    Matrix-пайплайн new/edited/deleted; контрактные тесты зелёные; coverage
-    ≥ 90%; четыре pre-push проверки чисты).
+_(пусто)_
 
 ## Done
 
@@ -92,6 +76,15 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 <!-- T006, T008, T022, T023, T024, T025 перенесены в CHANGELOG.md
      [0.3.0] — 2026-06-15 (milestone M5 закрыт). -->
 
+- **T010** — **M7: медиа + Matrix-адаптер** (зонтичная, `specs/T010-m7-media-matrix/`)
+  [closed 2026-06-18]. Закрыта целиком. Часть A (медиа): `MediaRef` + транзит,
+  Telegram in/out, политика/реестр/скачивание, пример `examples/media` (T034).
+  Часть B (Matrix+E2EE): B1 каркас+login — PR #26; B2–B5 (listener+E2EE-приём,
+  sender+catch-up по `/messages`, интеграционный контур на живом Synapse —
+  3 passed, пример `examples/matrix` + docs) — ветка `T010-b2-matrix-listener`,
+  squash-PR части B. Acceptance Success Criteria §16 M7 выполнен: медиа сквозь
+  пайплайн; Matrix new/edited/deleted + E2EE-комната; coverage ≥ 90%; четыре
+  pre-push проверки чисты. Per-pipeline media-forward вынесен в BACKLOG **T033**.
 - **T034** — Пример медиа `examples/media/` (M7/A4): зеркало одним аккаунтом
   + процессор `media_note`, читающий `local_path` скачанного вложения
   [closed 2026-06-16, текущий PR]. Acceptance выполнен: на реальном аккаунте

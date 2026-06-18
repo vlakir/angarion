@@ -1,0 +1,36 @@
+# Локальный Matrix-homeserver для интеграционного контура M7 (B4, T010).
+#
+# Synapse (референсная реализация, полный E2EE). Один контейнер + том данных.
+# Образ с ghcr (Docker Hub в некоторых сетях недоступен).
+#
+# Первый запуск (генерация конфига):
+#   docker compose -f tests/integration/matrix/docker-compose.yml run --rm \
+#     homeserver generate
+#   затем в data/homeserver.yaml дописать блок «регистрация + rate-limits»
+#   из README.md (без поднятых rc_* серия запросов контура ловит 429).
+#
+# Запуск:
+#   docker compose -f tests/integration/matrix/docker-compose.yml up -d
+#
+# Регистрация тестового аккаунта (после старта):
+#   docker compose -f tests/integration/matrix/docker-compose.yml exec homeserver \
+#     register_new_matrix_user -u bot -p botpass123 --admin \
+#     -k angarion-it-secret http://localhost:8008
+#
+# Прогон контура:
+#   MATRIX_HOMESERVER=http://localhost:8008 MATRIX_USER=@bot:localhost \
+#     MATRIX_PASSWORD=botpass123 uv run pytest -m integration \
+#     tests/integration/test_matrix_access.py
+#
+# Данные тома — git-ignored (см. .gitignore: tests/integration/matrix/data/).
+
+services:
+  homeserver:
+    image: ghcr.io/element-hq/synapse:latest
+    environment:
+      SYNAPSE_SERVER_NAME: localhost
+      SYNAPSE_REPORT_STATS: "no"
+    ports:
+      - "8008:8008"
+    volumes:
+      - ./data:/data

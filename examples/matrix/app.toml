@@ -1,0 +1,34 @@
+# Пример angarion: зеркало сообщений между двумя Matrix-комнатами.
+#
+# Скопируй и подставь свои значения. Секреты (пароль аккаунта, ключ
+# шифрования сессии) — НЕ здесь, а через переменные окружения (см.
+# README.md). В TOML — только не-секретные параметры.
+
+[accounts.main]
+messenger = "matrix"
+homeserver = "https://matrix.example.org"   # URL твоего homeserver'а
+user_id = "@bot:matrix.example.org"          # полный MXID аккаунта
+# Пароль — через env ANGARION_MATRIX_PASSWORD (секрет), не в TOML.
+# Первый `angarion login` обменяет его на access_token + device_id.
+
+[matrix]
+# E2EE key-store (olm/megolm) — отдельный sqlite на ФС (git-ignored).
+# Токен/device_id живут в app.db; ключи устройства — здесь.
+store_dir = "angarion-data/matrix-e2e"
+
+[storage]
+backend = "sqlite"               # обязателен: сюда login кладёт сессию
+path = "angarion-data/app.db"    # рантайм-каталог (git-ignored)
+
+[queue]
+backend = "memory"               # для примера; боевой — persistqueue
+
+[pipelines.mirror]
+processor = "passthrough"        # ретрансляция текста и вложений как есть
+events = ["message_new"]         # только новые сообщения
+# Источник и цель — room_id (вида !abc:server) или alias (#room:server).
+# Аккаунт должен состоять в обеих комнатах. Зашифрованные комнаты
+# поддержаны: listener расшифрует входящее (нужен extra angarion[matrix]
+# с nio[e2e] → системная libolm, см. README репозитория).
+sources = [{ account = "main", chat_id = "!SOURCE_ROOM:matrix.example.org" }]
+targets = [{ account = "main", chat_id = "!TARGET_ROOM:matrix.example.org" }]

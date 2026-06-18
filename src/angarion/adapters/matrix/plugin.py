@@ -19,19 +19,23 @@ pydantic-моделей вычисляются в runtime; типы bootstrap/co
 
 import os
 from getpass import getpass
-from typing import TYPE_CHECKING, Final, Literal, NoReturn
+from pathlib import Path
+from typing import TYPE_CHECKING, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from angarion.adapters.matrix.realclient import password_login
+from angarion.adapters.matrix.listener import MatrixListener
+from angarion.adapters.matrix.realclient import MatrixClient, password_login
+from angarion.adapters.matrix.sender import MatrixSender
 from angarion.adapters.matrix.session import MatrixEncryptedSessionStore
 from angarion.domain.capabilities import AdapterCapabilities
-from angarion.domain.errors import NotSupportedError
 from angarion.domain.plugin import AdapterPlugin, LoginContext
+from angarion.log import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from angarion.adapters.matrix.client import MatrixClientPort
     from angarion.bootstrap import AdapterDeps
     from angarion.config import EndpointConfig
     from angarion.domain.ports import MessageSinkPort
@@ -92,28 +96,72 @@ async def _login(ctx: LoginContext) -> None:
     await store.save(ctx.account_id, session_string)
 
 
-def _make_listener(
-    _deps: 'AdapterDeps',
-    _accounts: 'Mapping[str, BaseModel]',
-    _sources: 'Sequence[EndpointConfig]',
-) -> NoReturn:
-    """Заглушка B1: matrix-listener реализуется в B2 (fail-fast, §12.11)."""
-    msg = (
-        'Matrix listener реализуется в фазе B2 (T010); в B1 доступен '
-        'только `angarion login`'
+_CLIENTS_KEY: Final = 'matrix.clients'
+"""Ключ мемоизации общего пула Matrix-клиентов в ``deps.shared``."""
+
+
+def _shared_clients(
+    deps: 'AdapterDeps', accounts: 'Mapping[str, BaseModel]'
+) -> dict[str, 'MatrixClientPort']:
+    """
+    Общий пул Matrix-клиентов для listener+sender (мемо в ``deps.shared``).
+
+    Один nio ``AsyncClient`` на аккаунт обслуживает и приём (sync-loop), и
+    отправку — listener и sender делят инстансы (как Telegram-``ClientRegistry``).
+    Сессия читается из общего ``SessionStorePort`` через Fernet-декоратор
+    (расшифровка at-rest); E2EE key-store — per-account подкаталог
+    ``[matrix].store_dir`` (device-сторы не пересекаются). Восстановление
+    отложено в ``restore()`` (идемпотентно, дёргают и listener.start, и
+    sender перед первой отправкой — роль-сплит §12.9).
+    """
+    existing = deps.shared.get(_CLIENTS_KEY)
+    if isinstance(existing, dict):
+        return existing
+    session_store = MatrixEncryptedSessionStore(
+        deps.storage.session, deps.settings.session_key
     )
-    raise NotSupportedError(msg)
+    store_dir = deps.settings.matrix.store_dir
+    clients: dict[str, MatrixClientPort] = {
+        account_id: MatrixClient(
+            account_id=account_id,
+            session_store=session_store,
+            store_dir=str(Path(store_dir) / account_id),
+        )
+        for account_id in accounts
+    }
+    deps.shared[_CLIENTS_KEY] = clients
+    return clients
+
+
+def _make_listener(
+    deps: 'AdapterDeps',
+    accounts: 'Mapping[str, BaseModel]',
+    sources: 'Sequence[EndpointConfig]',
+) -> MatrixListener:
+    """Фабрика Matrix-listener (§12.11): общий пул + проводка [catchup]/[media]."""
+    catchup = deps.settings.catchup
+    return MatrixListener(
+        ingest=deps.ingest,
+        clients=_shared_clients(deps, accounts),
+        sources=sources,
+        cursors=deps.storage.cursors,
+        analytics=deps.storage.analytics,
+        log=get_logger('angarion.matrix.listener'),
+        media_policy=deps.settings.media,
+        catchup_enabled=catchup.enabled,
+        catchup_max_messages=catchup.max_messages_per_source,
+        catchup_max_age_days=catchup.max_age_days,
+    )
 
 
 def _make_sender(
-    _deps: 'AdapterDeps', _accounts: 'Mapping[str, BaseModel]'
+    deps: 'AdapterDeps', accounts: 'Mapping[str, BaseModel]'
 ) -> 'MessageSinkPort':
-    """Заглушка B1: matrix-sender реализуется в B3 (fail-fast, §12.11)."""
-    msg = (
-        'Matrix sender реализуется в фазе B3 (T010); в B1 доступен '
-        'только `angarion login`'
+    """Фабрика Matrix-sender (§12.11, B3): тот же пул клиентов, что у listener."""
+    return MatrixSender(
+        clients=_shared_clients(deps, accounts),
+        log=get_logger('angarion.matrix.sender'),
     )
-    raise NotSupportedError(msg)
 
 
 PLUGIN: Final = AdapterPlugin(

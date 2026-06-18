@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import os
+import urllib.error
+import urllib.request
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -123,6 +125,45 @@ def tg_session_string(tg_env: TgEnv) -> str:
 def nonce() -> str:
     """Уникальный маркер прогона — для адресной самоочистки сообщений."""
     return f'angarion-it-{uuid.uuid4().hex[:12]}'
+
+
+@dataclass(frozen=True)
+class MatrixEnv:
+    """Реквизиты Matrix-контура (локальный homeserver, §13.2 M7 B4)."""
+
+    homeserver: str
+    user_id: str
+    password: str
+
+
+@pytest.fixture
+def matrix_env() -> MatrixEnv:
+    """
+    Реквизиты Matrix из env/.secrets; skip, если homeserver недоступен.
+
+    Стенд — локальный homeserver (``docker compose up`` в
+    ``tests/integration/matrix/`` либо Synapse из PyPI, см. README).
+    Реквизиты: ``MATRIX_HOMESERVER`` / ``MATRIX_USER`` / ``MATRIX_PASSWORD``.
+    """
+    _load_secrets_file()
+    homeserver = os.environ.get('MATRIX_HOMESERVER')
+    user_id = os.environ.get('MATRIX_USER')
+    password = os.environ.get('MATRIX_PASSWORD')
+    if not (homeserver and user_id and password):
+        pytest.skip(
+            'нет реквизитов Matrix: MATRIX_HOMESERVER/MATRIX_USER/MATRIX_PASSWORD '
+            '(подними локальный homeserver, см. tests/integration/matrix/README.md)',
+        )
+    try:
+        with urllib.request.urlopen(
+            f'{homeserver}/_matrix/client/versions', timeout=5
+        ) as resp:
+            reachable = resp.status == 200
+    except (urllib.error.URLError, TimeoutError, OSError):
+        reachable = False
+    if not reachable:
+        pytest.skip(f'Matrix homeserver недоступен: {homeserver}')
+    return MatrixEnv(homeserver=homeserver, user_id=user_id, password=password)
 
 
 @pytest.fixture

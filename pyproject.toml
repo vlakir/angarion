@@ -54,11 +54,12 @@ telegram = [
     "tenacity>=9",
 ]
 # Matrix-адаптер (M7 часть B, T010): matrix-nio (async-клиент Matrix) +
-# Fernet-шифрование сессии at-rest (как Telegram). Базовый nio без E2EE;
-# olm/megolm (nio[e2e] → python-olm) подключается с фазы B2. Регистрируется
-# entry point'ом angarion.adapters:matrix.
+# Fernet-шифрование сессии at-rest (как Telegram). E2EE (olm/megolm) с фазы
+# B2 — nio[e2e] тянет python-olm, которому нужна системная libolm (на Debian/
+# Ubuntu: `apt install libolm-dev`; см. README). Регистрируется entry
+# point'ом angarion.adapters:matrix.
 matrix = [
-    "matrix-nio>=0.25",
+    "matrix-nio[e2e]>=0.25",
     "cryptography>=43",
 ]
 # LLM-процессор (M4, T007): OpenAI-совместимый HTTP-вызов (httpx,
@@ -142,7 +143,7 @@ dev = [
     "fastapi>=0.115",
     "fastapi-users[sqlalchemy]>=15",
     "uvicorn>=0.30",
-    "matrix-nio>=0.25",
+    "matrix-nio[e2e]>=0.25",
 ]
 docs = [
     "mkdocs-material>=9.7.6",

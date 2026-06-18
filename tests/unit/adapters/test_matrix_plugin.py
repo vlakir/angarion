@@ -5,22 +5,33 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import cast
+
 import pytest
 from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
 from angarion.adapters.matrix import plugin as matrix_plugin
+from angarion.adapters.matrix.listener import MatrixListener
 from angarion.adapters.matrix.plugin import (
     MATRIX_CAPABILITIES,
     PLUGIN,
     MatrixAccountConfig,
 )
+from angarion.adapters.matrix.realclient import MatrixClient
+from angarion.adapters.matrix.sender import MatrixSender
 from angarion.adapters.matrix.session import (
     MatrixEncryptedSessionStore,
     MatrixSession,
 )
-from angarion.adapters.memory.storage import MemorySessionStore
-from angarion.domain.errors import NotSupportedError
+from angarion.adapters.memory.storage import (
+    MemoryAnalytics,
+    MemoryCursorStore,
+    MemorySessionStore,
+)
+from angarion.bootstrap import AdapterDeps
+from angarion.config import CatchupConfig, EndpointConfig, MediaConfig
 from angarion.domain.plugin import LoginContext
 
 KEY = Fernet.generate_key().decode()  # рантайм-ключ, не хардкод (см. session-тест)
@@ -34,6 +45,28 @@ def _account(**overrides: object) -> MatrixAccountConfig:
     }
     data.update(overrides)
     return MatrixAccountConfig.model_validate(data)
+
+
+def _deps() -> AdapterDeps:
+    """Минимальный stub AdapterDeps для фабрик listener/sender (runtime duck)."""
+    return cast(
+        AdapterDeps,
+        SimpleNamespace(
+            ingest=object(),
+            storage=SimpleNamespace(
+                session=MemorySessionStore(),
+                cursors=MemoryCursorStore(),
+                analytics=MemoryAnalytics(),
+            ),
+            settings=SimpleNamespace(
+                session_key=KEY,
+                matrix=SimpleNamespace(store_dir='data/matrix-e2e'),
+                media=MediaConfig(),
+                catchup=CatchupConfig(),
+            ),
+            shared={},
+        ),
+    )
 
 
 def test_capabilities_full_profile() -> None:
@@ -92,13 +125,30 @@ class TestPluginObject:
         assert PLUGIN.account_config_model is MatrixAccountConfig
         assert PLUGIN.make_login is not None
 
-    def test_make_listener_is_stub_until_b2(self) -> None:
-        with pytest.raises(NotSupportedError, match='B2'):
-            PLUGIN.make_listener(object(), {}, [])
+    def test_make_listener_builds_client_per_account(self) -> None:
+        deps = _deps()
+        listener = PLUGIN.make_listener(
+            deps,
+            {'main': _account()},
+            [EndpointConfig(account='main', chat_id='!room:matrix.example')],
+        )
+        assert isinstance(listener, MatrixListener)
+        assert listener.started is False
+        assert isinstance(listener._clients['main'], MatrixClient)
 
-    def test_make_sender_is_stub_until_b3(self) -> None:
-        with pytest.raises(NotSupportedError, match='B3'):
-            PLUGIN.make_sender(object(), {})
+    def test_make_sender_returns_matrix_sender(self) -> None:
+        sender = PLUGIN.make_sender(_deps(), {'main': _account()})
+        assert isinstance(sender, MatrixSender)
+
+    def test_listener_and_sender_share_client_pool(self) -> None:
+        """Один пул клиентов на listener+sender (мемо в deps.shared)."""
+        deps = _deps()
+        accounts = {'main': _account()}
+        listener = PLUGIN.make_listener(
+            deps, accounts, [EndpointConfig(account='main', chat_id='!r:s')]
+        )
+        sender = PLUGIN.make_sender(deps, accounts)
+        assert listener._clients['main'] is sender._clients['main']
 
 
 class TestLogin:
