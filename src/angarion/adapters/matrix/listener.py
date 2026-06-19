@@ -26,6 +26,7 @@ limitation §17.9, не падение).
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -85,6 +86,10 @@ class MatrixListener:
         catchup_enabled: bool = True,
         catchup_max_messages: int = 2000,
         catchup_max_age_days: int = 7,
+        recent_poll_endpoints: frozenset[EndpointConfig] = frozenset(),
+        recent_interval: float = 0.0,
+        recent_window_messages: int = 30,
+        recent_window_minutes: int = 10,
     ) -> None:
         if not clients:
             msg = 'нужен хотя бы один клиент Matrix'
@@ -99,10 +104,17 @@ class MatrixListener:
         self._catchup_enabled = catchup_enabled
         self._catchup_max_messages = catchup_max_messages
         self._catchup_max_age_days = catchup_max_age_days
+        self._recent_poll_endpoints = recent_poll_endpoints
+        self._recent_interval = recent_interval
+        self._recent_window_messages = recent_window_messages
+        self._recent_window_minutes = recent_window_minutes
         self._rooms: dict[str, set[str]] = {}
         # source_key (chat-уровень) → (account_id, room_id) для catchup по запросу
         self._catchup_rooms: dict[str, tuple[str, str]] = {}
+        # (account_id, room_id) recent-poll комнат (T032 фаза 2)
+        self._recent_poll_rooms: set[tuple[str, str]] = set()
         self._tasks: list[asyncio.Task[None]] = []
+        self._recent_timer: asyncio.Task[None] | None = None
 
     @property
     def started(self) -> bool:
@@ -126,12 +138,23 @@ class MatrixListener:
             client.on_sync(self._sync_handler(account_id))
             if self._catchup_enabled:
                 for room_id in rooms:
-                    await self._catchup_room(account_id, room_id, client)
+                    await self._catchup_room(
+                        account_id,
+                        room_id,
+                        client,
+                        limit=self._catchup_max_messages,
+                        max_age=timedelta(days=self._catchup_max_age_days),
+                    )
             since = await self._load_since(account_id)
             self._tasks.append(
                 asyncio.create_task(
                     client.sync_forever(since=since), name=f'matrix-sync-{account_id}'
                 )
+            )
+        if self._recent_interval > 0 and self._recent_poll_rooms:
+            self._recent_timer = asyncio.create_task(
+                self._periodic_recent_poll(self._recent_interval),
+                name='matrix-recent-poll-timer',
             )
         # дать sync-задачам стартовать (дойти до первого await цикла)
         await asyncio.sleep(0)
@@ -140,6 +163,11 @@ class MatrixListener:
         """Graceful: остановить клиентов и дождаться завершения sync-задач."""
         if not self._tasks:
             return
+        if self._recent_timer is not None:
+            self._recent_timer.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._recent_timer
+            self._recent_timer = None
         for client in self._clients.values():
             await client.stop()
         await asyncio.gather(*self._tasks, return_exceptions=True)
@@ -152,23 +180,56 @@ class MatrixListener:
             msg = f'источник не резолвлен: {source_key}'
             raise KeyError(msg)
         account_id, room_id = target
-        await self._catchup_room(account_id, room_id, self._clients[account_id])
+        await self._catchup_room(
+            account_id,
+            room_id,
+            self._clients[account_id],
+            limit=self._catchup_max_messages,
+            max_age=timedelta(days=self._catchup_max_age_days),
+        )
+
+    async def _periodic_recent_poll(self, interval: float) -> None:
+        """
+        Лёгкий поллинг недавнего окна по таймеру (T032 фаза 2): частая
+        дешёвая сверка узкого окна recent-poll комнат. Обход
+        последовательный; дедуп гасит пересечения с live/catch-up,
+        правки/удаления приходят явными ``m.replace``/redaction в окне.
+        """
+        while True:
+            await asyncio.sleep(interval)
+            for account_id, room_id in self._recent_poll_rooms:
+                await self._catchup_room(
+                    account_id,
+                    room_id,
+                    self._clients[account_id],
+                    limit=self._recent_window_messages,
+                    max_age=timedelta(minutes=self._recent_window_minutes),
+                )
 
     async def _catchup_room(
-        self, account_id: str, room_id: str, client: MatrixClientPort
+        self,
+        account_id: str,
+        room_id: str,
+        client: MatrixClientPort,
+        *,
+        limit: int,
+        max_age: timedelta,
     ) -> None:
         """
         Дозабор истории комнаты через ``/messages`` (§9.3, B3).
 
-        Matrix-история несёт **явные** события: правка — отдельное
-        ``m.replace``-событие (``kind`` уже размечен в границе nio),
-        удаление — redaction-событие. Поэтому, в отличие от Telegram,
-        edit/delete не вычисляются по реестру/отсутствию — мапятся
-        напрямую; дедуп гасит пересечения с live и повторные прогоны,
-        ``previous_text`` правок достаёт ``IngestService`` из реестра.
+        ``limit`` + ``max_age`` задают окно: глубокий проход — вся история
+        (``catchup_max_*``), лёгкий поллинг недавнего окна (T032) — малое
+        окно с тем же кодом. Matrix-история несёт **явные** события:
+        правка — отдельное ``m.replace``-событие (``kind`` уже размечен в
+        границе nio), удаление — redaction-событие. Поэтому, в отличие от
+        Telegram, edit/delete не вычисляются по реестру/отсутствию —
+        мапятся напрямую; дедуп гасит пересечения с live и повторные
+        прогоны, ``previous_text`` правок достаёт ``IngestService`` из
+        реестра.
         """
-        page = await client.fetch_history(room_id, limit=self._catchup_max_messages)
-        cutoff = datetime.now(UTC) - timedelta(days=self._catchup_max_age_days)
+        page = await client.fetch_history(room_id, limit=limit)
+        cutoff = datetime.now(UTC) - max_age
         for raw in reversed(page.messages):  # старые первыми (естественный порядок)
             if raw.event_at >= cutoff:
                 await self._emit(map_message(raw, account_id, origin='catchup'))
@@ -181,7 +242,10 @@ class MatrixListener:
         rooms: set[str] = set()
         for src in self._sources:
             if src.account == account_id:
-                rooms.add(await client.resolve_room(src.chat_id))
+                room_id = await client.resolve_room(src.chat_id)
+                rooms.add(room_id)
+                if src in self._recent_poll_endpoints:  # T032: recent-poll комнаты
+                    self._recent_poll_rooms.add((account_id, room_id))
         return rooms
 
     async def _emit(self, event: InboundEvent) -> None:

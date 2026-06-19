@@ -30,18 +30,20 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 ### Added
 
 - Лёгкий поллинг недавнего окна — дешёвый backstop правок/удалений (T032,
-  фаза 1: **Telegram**): частая (`[catchup] recent_interval`, дефолт ≈30 с)
+  **Telegram + Matrix**): частая (`[catchup] recent_interval`, дефолт ≈30 с)
   сверка только узкого окна — последних `recent_window_messages` сообщений не
   старше `recent_window_minutes` минут (окно = min(N, M)) — ловит правки и
   удаления свежих сообщений без пере-скана истории, в дополнение к редкому
   глубокому catch-up. Включается per-pipeline `[pipelines.*].recent_poll`
-  (дефолт `false`, opt-in). Переиспользует `run_catchup` с малым окном
-  (registry-diff; truncation-guard §9.3.4 не даёт ложных удалений ниже окна),
-  делит `last_seen`-курсор с глубоким проходом. `run_catchup` обобщён:
-  `max_age: timedelta` + `record_truncation` (узкое окно не шумит
-  `catchup_truncated`). Спека `specs/T032-recent-window-poll/`, ADR
-  2026-06-19. **Matrix — следующей фазой**; до неё `recent_poll` на
-  Matrix-пайплайне — no-op.
+  (дефолт `false`, opt-in). Переиспользует существующий catch-up каждого
+  адаптера с малым окном: Telegram — `run_catchup` (registry-diff;
+  truncation-guard §9.3.4 не даёт ложных удалений ниже окна; обобщён
+  `max_age: timedelta` + `record_truncation`, узкое окно не шумит
+  `catchup_truncated`), делит `last_seen`-курсор с глубоким проходом; Matrix
+  — `_catchup_room` по `/messages` (правки/удаления — явные `m.replace`/
+  redaction в окне), `next_batch` (sync-позиция) не трогает. Спека
+  `specs/T032-recent-window-poll/`, ADR 2026-06-19 (фаза 1 Telegram + фаза 2
+  Matrix).
 - Entry-point-группа `angarion.pages` для пользовательских UI-страниц в
   чистом CLI (T029): установленный пакет регистрирует `Page` в группе
   `angarion.pages`, и `angarion run --with-api` (а также `--role api`)

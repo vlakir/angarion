@@ -61,21 +61,28 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
      разработчика, иначе теряется фокус (классическое WIP-limit
      правило из Kanban). -->
 
-- **T032** — Лёгкий поллинг недавнего окна — backstop правок/удалений
-  (`specs/T032-recent-window-poll/`, ветка `T032-recent-window-poll`).
-  Спека Clarified+Analyzed; ADR 2026-06-19. **Фаза 1 (Telegram) — готова**
-  (текущий PR): окно min(N сообщений, M минут) поверх `run_catchup`
-  (`max_age: timedelta` + `record_truncation`), per-pipeline `recent_poll`,
-  per-source резолв (A-1), общий `last_seen`-курсор, подавление шума
-  truncation, тесты (catchup/listener/resolver/plugin/config). **Фаза 2
-  (Matrix)** — впереди (окно над его catch-up по `/messages`); до неё
-  `recent_poll` на Matrix-пайплайне — no-op.
+_(пусто)_
 
 ## Done
 
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
 
+- **T032** — Лёгкий поллинг недавнего окна — backstop правок/удалений
+  [closed 2026-06-19, текущий PR]. Спека Clarified+Analyzed
+  (`specs/T032-recent-window-poll/`); ADR 2026-06-19. Окно min(N сообщений,
+  M минут), частый таймер поверх существующего catch-up каждого адаптера,
+  per-pipeline opt-in `recent_poll`, per-source резолв (A-1), параметры
+  `[catchup] recent_*`. **Фаза 1 (Telegram)** [PR #36, merged]: поверх
+  `run_catchup` (`max_age: timedelta` + `record_truncation`), общий
+  `last_seen`-курсор, подавление truncation-шума. **Фаза 2 (Matrix)**
+  [текущий PR]: поверх `_catchup_room` по `/messages` (правки/удаления —
+  явные `m.replace`/redaction в окне), `next_batch` не трогает. Тесты обеих
+  платформ (catchup/listener/resolver/plugin/config). Acceptance выполнен:
+  лёгкий поллинг ловит правку/удаление в окне без пере-скана; окно/частота
+  конфигурируемы; покрыто тестами; coverage 96.5%. Ветки
+  `T032-recent-window-poll` (фаза 1) + `T032-recent-window-poll-matrix`
+  (фаза 2).
 - **T029** — Entry-point-группа `angarion.pages` для UI-страниц в чистом CLI
   [closed 2026-06-19, текущий PR]. Встроенный раннер собирал `create_app(deps)`
   без пользовательских `pages` (Python-объект мимо CLI) — расширение Web
