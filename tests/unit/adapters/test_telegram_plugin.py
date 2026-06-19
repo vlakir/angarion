@@ -158,6 +158,39 @@ class TestPluginObject:
         assert listener._catchup_interval == 30
         assert sender._chat_per_second == 5.0
 
+    def test_recent_poll_endpoints_union_from_pipelines(self) -> None:
+        """T032 (A-1): per-pipeline recent_poll → объединение источников listener'у."""
+        settings = AngarionSettings.model_validate(
+            {
+                'accounts': {
+                    'main': {'messenger': 'telegram', 'api_id': 2040, 'api_hash': 'h'}
+                },
+                'pipelines': {
+                    'hot': {
+                        'processor': 'passthrough',
+                        'events': ['message_new'],
+                        'sources': [{'account': 'main', 'chat_id': '-100'}],
+                        'targets': [{'account': 'main', 'chat_id': '-300'}],
+                        'recent_poll': True,
+                    },
+                    'cold': {
+                        'processor': 'passthrough',
+                        'events': ['message_new'],
+                        'sources': [{'account': 'main', 'chat_id': '-200'}],
+                        'targets': [{'account': 'main', 'chat_id': '-300'}],
+                    },
+                },
+            }
+        )
+        ep_on = EndpointConfig(account='main', chat_id='-100')
+        ep_off = EndpointConfig(account='main', chat_id='-200')
+        listener = PLUGIN.make_listener(_deps(settings), {'main': _account()}, [
+            ep_on,
+            ep_off,
+        ])
+        # только источник recent_poll-пайплайна попадает в множество
+        assert listener._recent_poll_endpoints == frozenset({ep_on})
+
     async def test_empty_session_key_with_stored_session_fails_fast(self) -> None:
         """Пустой ANGARION_SESSION_KEY + есть сессия → fail-fast при подключении."""
         deps = _deps()  # settings.session_key == ''

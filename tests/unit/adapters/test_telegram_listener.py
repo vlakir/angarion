@@ -248,6 +248,70 @@ async def test_live_during_catchup_buffered_then_drained() -> None:
     assert kinds == {('catchup', '5'), ('live', '7')}
 
 
+def _recent_listener(
+    client: FakeTelegramClient,
+    ingest: RecordingIngest,
+    *,
+    recent_endpoints: frozenset[EndpointConfig],
+    recent_interval: float,
+) -> TelegramListener:
+    return TelegramListener(
+        ingest=cast('IngestService', ingest),
+        pool=FakePool({'main': client}),
+        sources=[_ep('main', '@grp')],
+        registry=MemoryMessageRegistry(),
+        cursors=MemoryCursorStore(),
+        analytics=MemoryAnalytics(),
+        log=get_logger('test'),
+        recent_poll_endpoints=recent_endpoints,
+        recent_interval=recent_interval,
+        recent_window_messages=10,
+        recent_window_minutes=60,
+    )
+
+
+async def test_recent_poll_timer_polls_window_for_enabled_source() -> None:
+    """T032: таймер лёгкого поллинга фетчит recent-poll источник по окну."""
+    client = FakeTelegramClient(
+        peer_ids={'@grp': -100123},
+        history={-100123: [raw_message(chat_id=-100123, message_id=5)]},
+    )
+    listener = _recent_listener(
+        client,
+        RecordingIngest(),
+        recent_endpoints=frozenset({_ep('main', '@grp')}),
+        recent_interval=0.01,
+    )
+    await listener.start()
+    for _ in range(200):  # ждём первый проход таймера (фетч с window-лимитом)
+        if any(limit == 10 for *_rest, limit in client.fetch_calls):
+            break
+        await asyncio.sleep(0.01)
+    await listener.stop()
+    window_fetches = [call for call in client.fetch_calls if call[3] == 10]
+    assert window_fetches  # лёгкий поллинг отработал по узкому окну (limit=10)
+
+
+async def test_recent_poll_timer_absent_without_enabled_sources() -> None:
+    """T032: без recent-poll источников лёгкий таймер не поднимается."""
+    client = FakeTelegramClient(
+        peer_ids={'@grp': -100123},
+        history={-100123: [raw_message(chat_id=-100123, message_id=5)]},
+    )
+    listener = _recent_listener(
+        client,
+        RecordingIngest(),
+        recent_endpoints=frozenset(),  # ни один источник не включён
+        recent_interval=0.01,
+    )
+    await listener.start()
+    await asyncio.sleep(0.05)  # дать шанс таймеру (его не должно быть)
+    await listener.stop()
+    # все фетчи — только глубокий catch-up на старте (limit=2000), окна нет
+    assert client.fetch_calls
+    assert all(call[3] != 10 for call in client.fetch_calls)
+
+
 async def test_catchup_disabled_skips_history() -> None:
     client = FakeTelegramClient(
         peer_ids={'@grp': -100123},
