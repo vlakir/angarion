@@ -29,6 +29,14 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Added
 
+- Тулинг публикации на PyPI (T012, перенос из шаблона dreamteam):
+  `scripts/publish.sh` (`uv build` → `twine check` → `uv publish`, флаг
+  `--test` для TestPyPI), `twine` в dev-зависимостях, `PYPI_TOKEN` /
+  `PYPI_TEST_TOKEN` в `.secrets.example` (реальные токены — в git-ignored
+  `.secrets`), раздел «Публикация на PyPI» в README. Артефакты `angarion`
+  проходят `twine check` (whl + sdist). Project-scoped токен заводит
+  Разработчик отдельно (первая публикация — account-scoped, далее
+  project-scoped).
 - Ретеншн подтверждённых записей очереди (T016): `SQLiteAckQueue` не вычищал
   acked-строки сам → `queue.db` рос бессрочно на долгоживущем развёртывании.
   Добавлен `EventQueuePort.purge_acked(keep_latest)` (persistqueue — обёртка

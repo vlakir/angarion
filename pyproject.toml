@@ -144,6 +144,7 @@ dev = [
     "fastapi-users[sqlalchemy]>=15",
     "uvicorn>=0.30",
     "matrix-nio[e2e]>=0.25",
+    "twine>=6.2.0",
 ]
 docs = [
     "mkdocs-material>=9.7.6",

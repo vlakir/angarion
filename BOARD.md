@@ -68,6 +68,14 @@ _(пусто)_
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
 
+- **T012** — Перенос publish-тулинга из шаблона dreamteam
+  [closed 2026-06-19, текущий PR]. `scripts/publish.sh` (`uv build` →
+  `twine check` → `uv publish`, `--test` для TestPyPI), `twine` в dev-deps,
+  `PYPI_TOKEN`/`PYPI_TEST_TOKEN` в `.secrets.example`, раздел «Публикация на
+  PyPI» в README. Acceptance выполнен: артефакты `angarion` (whl + sdist)
+  проходят `twine check` локально. Project-scoped PyPI-токен заводит
+  Владимир отдельно (его действие; первая публикация — account-scoped).
+  Ветка `T012-publish-tooling`. ADR не требуется (стандартный тулинг).
 - **T027** — Reaper зависших `taken`-команд командного outbox
   [closed 2026-06-19, текущий PR]. Закрывает компромисс ADR §12.9/T024: краш
   consumer'а между `take` (`pending`→`taken`) и пометкой оставлял команду в
