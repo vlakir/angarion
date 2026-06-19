@@ -1,7 +1,7 @@
 [project]
 name = "angarion"
 version = "0.1.0"
-description = "Универсальная библиотека конвейеров обработки событий сообщений (hexagonal, ports & adapters)"
+description = "Универсальный движок мультиформатных конвейеров данных: любой источник → обработка → любой приёмник (hexagonal, ports & adapters)"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
