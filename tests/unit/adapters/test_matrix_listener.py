@@ -5,6 +5,7 @@ MatrixListener: sync-loop подписки + next_batch-курсор + UTD → i
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -191,6 +192,74 @@ class TestCatchup:
         assert ingest.events == []
         assert client.fetch_calls == []
         await listener.stop()
+
+
+class TestRecentPoll:
+    """T032 фаза 2: лёгкий поллинг недавнего окна Matrix-комнат."""
+
+    def _page(self) -> MatrixHistoryPage:
+        return MatrixHistoryPage(
+            messages=(
+                raw_message(kind=EventKind.MESSAGE_EDITED, event_id='$e2', text='пр'),
+            ),
+            redactions=(raw_deletion(redacts_event_id='$gone'),),
+        )
+
+    def _listener(
+        self,
+        client: FakeMatrixClient,
+        ingest: RecordingIngest,
+        *,
+        recent_endpoints: frozenset[EndpointConfig],
+        recent_interval: float,
+    ) -> MatrixListener:
+        return MatrixListener(
+            ingest=cast('IngestService', ingest),
+            clients={'main': client},
+            sources=[_ep('main', ROOM)],
+            cursors=MemoryCursorStore(),
+            analytics=MemoryAnalytics(),
+            log=get_logger('test.matrix.recent'),
+            catchup_enabled=False,  # только лёгкий поллинг, без глубокого на старте
+            recent_poll_endpoints=recent_endpoints,
+            recent_interval=recent_interval,
+            recent_window_messages=7,
+            recent_window_minutes=52_560_000,  # ~100 лет: без отсечки по возрасту
+        )
+
+    async def test_recent_poll_timer_polls_window_and_emits(self) -> None:
+        client = FakeMatrixClient(history_page=self._page())
+        ingest = RecordingIngest()
+        listener = self._listener(
+            client,
+            ingest,
+            recent_endpoints=frozenset({_ep('main', ROOM)}),
+            recent_interval=0.01,
+        )
+        await listener.start()
+        for _ in range(200):  # ждём первый проход таймера (фетч с window-лимитом)
+            if any(limit == 7 for _room, limit in client.fetch_calls):
+                break
+            await asyncio.sleep(0.01)
+        await listener.stop()
+        assert any(limit == 7 for _room, limit in client.fetch_calls)
+        # правка (m.replace) и удаление (redaction) в окне доехали
+        kinds = {e.kind for e in ingest.events}
+        assert EventKind.MESSAGE_EDITED in kinds
+        assert EventKind.MESSAGE_DELETED in kinds
+
+    async def test_recent_poll_absent_without_enabled_rooms(self) -> None:
+        client = FakeMatrixClient(history_page=self._page())
+        listener = self._listener(
+            client,
+            RecordingIngest(),
+            recent_endpoints=frozenset(),  # ни одна комната не включена
+            recent_interval=0.01,
+        )
+        await listener.start()
+        await asyncio.sleep(0.05)  # дать шанс таймеру (его быть не должно)
+        await listener.stop()
+        assert client.fetch_calls == []  # ни глубокого, ни лёгкого фетча
 
 
 class TestMediaEnrich:

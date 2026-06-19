@@ -140,6 +140,14 @@ def _make_listener(
 ) -> MatrixListener:
     """Фабрика Matrix-listener (§12.11): общий пул + проводка [catchup]/[media]."""
     catchup = deps.settings.catchup
+    # T032 (A-1): recent_poll — per-pipeline, исполнение — per-source; источник
+    # поллится, если входит хотя бы в один пайплайн с recent_poll=true.
+    recent_poll_endpoints = frozenset(
+        ep
+        for cfg in deps.settings.pipelines.values()
+        if cfg.recent_poll
+        for ep in cfg.sources
+    ) & frozenset(sources)
     return MatrixListener(
         ingest=deps.ingest,
         clients=_shared_clients(deps, accounts),
@@ -151,6 +159,10 @@ def _make_listener(
         catchup_enabled=catchup.enabled,
         catchup_max_messages=catchup.max_messages_per_source,
         catchup_max_age_days=catchup.max_age_days,
+        recent_poll_endpoints=recent_poll_endpoints,
+        recent_interval=catchup.recent_interval,
+        recent_window_messages=catchup.recent_window_messages,
+        recent_window_minutes=catchup.recent_window_minutes,
     )
 
 

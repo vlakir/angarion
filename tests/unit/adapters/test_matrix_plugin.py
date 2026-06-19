@@ -47,7 +47,7 @@ def _account(**overrides: object) -> MatrixAccountConfig:
     return MatrixAccountConfig.model_validate(data)
 
 
-def _deps() -> AdapterDeps:
+def _deps(pipelines: dict[str, object] | None = None) -> AdapterDeps:
     """Минимальный stub AdapterDeps для фабрик listener/sender (runtime duck)."""
     return cast(
         AdapterDeps,
@@ -63,6 +63,8 @@ def _deps() -> AdapterDeps:
                 matrix=SimpleNamespace(store_dir='data/matrix-e2e'),
                 media=MediaConfig(),
                 catchup=CatchupConfig(),
+                # T032: _make_listener читает recent_poll-пайплайны
+                pipelines=pipelines if pipelines is not None else {},
             ),
             shared={},
         ),
@@ -135,6 +137,19 @@ class TestPluginObject:
         assert isinstance(listener, MatrixListener)
         assert listener.started is False
         assert isinstance(listener._clients['main'], MatrixClient)
+
+    def test_recent_poll_endpoints_union_from_pipelines(self) -> None:
+        """T032 (A-1): per-pipeline recent_poll → объединение источников listener'у."""
+        ep_on = EndpointConfig(account='main', chat_id='!hot:matrix.example')
+        ep_off = EndpointConfig(account='main', chat_id='!cold:matrix.example')
+        deps = _deps(
+            pipelines={
+                'hot': SimpleNamespace(recent_poll=True, sources=[ep_on]),
+                'cold': SimpleNamespace(recent_poll=False, sources=[ep_off]),
+            }
+        )
+        listener = PLUGIN.make_listener(deps, {'main': _account()}, [ep_on, ep_off])
+        assert listener._recent_poll_endpoints == frozenset({ep_on})
 
     def test_make_sender_returns_matrix_sender(self) -> None:
         sender = PLUGIN.make_sender(_deps(), {'main': _account()})
