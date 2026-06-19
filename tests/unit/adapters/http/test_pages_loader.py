@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from angarion.adapters.http import Page, create_app, server
@@ -23,6 +23,8 @@ from angarion.domain.errors import ConfigError
 from conftest import asgi_client
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from angarion.adapters.http import AngarionDeps
 
 
@@ -112,6 +114,60 @@ async def test_entry_point_page_appears_in_nav_and_mounts(
         page = await client.get('/ui/ext')
         assert page.status_code == 200
         assert 'Ext body' in page.text
+
+
+def _templated_page(tmp_path: Path, title: str, path: str) -> Page:
+    """
+    Страница, рендерящая шаблон с ``{% extends "angarion/base.html" %}``
+    через общий ``request.app.state.templates``; свои шаблоны несёт сама
+    в ``template_dirs`` (T036) — каталога лаунчера у чистого CLI нет.
+    """
+    tdir = tmp_path / 'tpl'
+    tdir.mkdir()
+    (tdir / 'page.html').write_text(
+        '{% extends "angarion/base.html" %}'
+        '{% block content %}<p>ENTRY PAGE CONTENT</p>{% endblock %}',
+        encoding='utf-8',
+    )
+    router = APIRouter()
+
+    @router.get(path, response_class=HTMLResponse)
+    async def _handler(request: Request) -> HTMLResponse:
+        return request.app.state.templates.TemplateResponse(request, 'page.html', {})
+
+    return Page(
+        title=title, path=path, router=router, public=True, template_dirs=(tdir,)
+    )
+
+
+def test_page_template_dirs_defaults_empty() -> None:
+    """Обратная совместимость: ``template_dirs`` опционально (дефолт пуст)."""
+    assert _page('Plain', '/ui/plain').template_dirs == ()
+
+
+@pytest.mark.asyncio
+async def test_entry_point_page_template_dir_enables_base_inheritance(
+    monkeypatch: pytest.MonkeyPatch, deps: AngarionDeps, tmp_path: Path
+) -> None:
+    """
+    Acceptance T036: entry-point-страница со своим ``template_dirs``
+    наследует ``angarion/base.html`` под чистым CLI (``create_app(pages=
+    load_pages())`` — путь ``angarion run --with-api``) без лаунчера.
+    """
+    _patch_entry_points(
+        monkeypatch,
+        [FakeEntryPoint('ext', _templated_page(tmp_path, 'Tpl', '/ui/tpl'))],
+    )
+    app = create_app(deps, pages=load_pages())
+    async with asgi_client(app) as client:
+        page = await client.get('/ui/tpl')
+        assert page.status_code == 200
+        # собственный блок страницы отрисован...
+        assert 'ENTRY PAGE CONTENT' in page.text
+        # ...внутри каркаса base.html (наследование сработало).
+        assert '<!doctype html>' in page.text
+        assert 'pico.min.css' in page.text
+        assert 'href="/ui/tpl"' in page.text
 
 
 def test_make_server_passes_entry_point_pages_to_create_app(

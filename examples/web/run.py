@@ -12,9 +12,11 @@
 
 1. ``build_app`` — конвейер (ingest + worker + delivery + consumer outbox);
 2. ``build_web_deps`` — проекция портов хранилища/очереди в ``AngarionDeps``;
-3. ``create_app(deps, routers=[ext_router], pages=[EXT_PAGE],
-   template_dirs=[...])`` — ASGI-приложение со встроенными ручками/UI **и**
-   расширением примера (``ext.py``);
+3. ``create_app(deps, routers=[ext_router], pages=[EXT_PAGE])`` — ASGI-
+   приложение со встроенными ручками/UI **и** расширением примера
+   (``ext.py``); каталог шаблонов страница несёт сама в
+   ``Page.template_dirs`` (T036), отдельный ``template_dirs`` лаунчеру
+   не нужен;
 4. uvicorn рядом с конвейером; стоп по сигналу (uvicorn ловит SIGINT/
    SIGTERM) ИЛИ по команде ``restart_pipeline`` (``app.restart_event``) —
    гасит весь процесс, супервизор поднимает (§3.2).
@@ -27,7 +29,6 @@ user store и JWT-секрета, все роутеры открыты под с
 
 import asyncio
 import contextlib
-from pathlib import Path
 
 import uvicorn
 from ext import EXT_PAGE, ext_router
@@ -35,8 +36,6 @@ from ext import EXT_PAGE, ext_router
 from angarion.adapters.http import build_settings_notifier, build_web_deps, create_app
 from angarion.bootstrap import build_app
 from angarion.config import load_settings
-
-_TEMPLATES = Path(__file__).parent / 'templates'
 
 
 async def serve() -> None:
@@ -50,7 +49,6 @@ async def serve() -> None:
         deps,
         routers=[ext_router],
         pages=[EXT_PAGE],
-        template_dirs=[_TEMPLATES],
         title='angarion web example',
     )
     api = settings.api

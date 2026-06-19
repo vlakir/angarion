@@ -10,16 +10,23 @@ UI-страница поверх портов angarion (§12.5/§12.6).
 JSON-роутер (``ext_router``) монтируется под ``CurrentUser`` как
 встроенный ``/api/v1``; страница (``EXT_PAGE``) добавляет пункт навигации
 и рендерится серверным Jinja-шаблоном, наследующим ``angarion/base.html``.
-Оба передаются в ``create_app(routers=[...], pages=[...])`` — см. ``run.py``.
+Шаблоны страница несёт сама в ``Page.template_dirs`` (T036) — ``create_app``
+подмешивает каталог в общий ``ChoiceLoader``, поэтому лаунчеру не нужно
+передавать ``template_dirs`` отдельно (а entry-point-страница чистого CLI
+наследует ``base.html`` без лаунчера вовсе). Оба передаются в
+``create_app(routers=[...], pages=[...])`` — см. ``run.py``.
 """
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from angarion.adapters.http import Page
 from angarion.adapters.http.deps import AnalyticsDep
+
+_TEMPLATES = Path(__file__).parent / 'templates'
 
 ext_router = APIRouter(prefix='/api/v1/ext', tags=['ext'])
 
@@ -45,5 +52,10 @@ async def ext_page(request: Request, analytics: AnalyticsDep) -> HTMLResponse:
     return templates.TemplateResponse(request, 'ext/activity.html', context)
 
 
-EXT_PAGE = Page(title='Activity', path='/ui/ext', router=_ui_router)
-"""Дескриптор страницы: пункт навигации появляется в шапке дашборда."""
+EXT_PAGE = Page(
+    title='Activity',
+    path='/ui/ext',
+    router=_ui_router,
+    template_dirs=(_TEMPLATES,),
+)
+"""Дескриптор страницы: пункт навигации + собственный каталог шаблонов (T036)."""

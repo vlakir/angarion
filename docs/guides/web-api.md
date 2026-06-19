@@ -95,7 +95,14 @@ async def ext_page(request: Request, analytics: AnalyticsDep) -> HTMLResponse:
     )
 
 
-ext_page_descriptor = Page(title="Расширение", path="/ui/ext", router=router)
+from pathlib import Path
+
+ext_page_descriptor = Page(
+    title="Расширение",
+    path="/ui/ext",
+    router=router,
+    template_dirs=(Path("templates"),),
+)
 ```
 
 ```jinja
@@ -107,22 +114,20 @@ ext_page_descriptor = Page(title="Расширение", path="/ui/ext", router=
 {% endblock %}
 ```
 
-Соберите приложение, передав страницу и каталог шаблонов:
+Соберите приложение, передав страницу:
 
 ```python
-from pathlib import Path
 from angarion.adapters.http import create_app
 
-app = create_app(
-    deps,
-    pages=[ext_page_descriptor],
-    template_dirs=[Path("templates")],
-)
+app = create_app(deps, pages=[ext_page_descriptor])
 ```
 
-`title` / `path` автоматически появляются в шапке навигации. Каталоги
-пользователя ищутся раньше встроенных (`ChoiceLoader`) — любой встроенный
-шаблон можно переопределить.
+`title` / `path` автоматически появляются в шапке навигации. Каталог
+шаблонов страница несёт сама в `Page.template_dirs` (T036) — `create_app`
+подмешивает его в общий `ChoiceLoader`. Альтернатива — общий для нескольких
+страниц каталог через `create_app(template_dirs=[...])`. Каталоги
+пользователя ищутся раньше встроенных — любой встроенный шаблон можно
+переопределить.
 
 ### Через entry point — без своего лаунчера (T029)
 
@@ -143,14 +148,24 @@ ext = "my_ext.pages:ext_page_descriptor"   # значение — объект P
 point обязан загружаться в `Page` — иначе `ConfigError`; недоступный extra
 (C-1) пропускается с предупреждением, не роняя запуск.
 
-> **Шаблоны.** Шов передаёт только `Page`, без `template_dirs`. Поэтому
-> entry-point-страница должна быть самодостаточной по рендеру: либо
-> возвращать `HTMLResponse` напрямую, либо держать собственный
-> `Jinja2Templates` со своим загрузчиком. Чтобы наследовать
-> `angarion/base.html` через общий `request.app.state.templates`, каталог
-> шаблонов нужно отдать в `create_app(template_dirs=[...])` — а это путь
-> собственного лаунчера (как `examples/web/`). Расширение шва на каталоги
-> шаблонов — возможное продолжение.
+> **Шаблоны (T036).** Каталог шаблонов страница несёт сама в
+> `Page.template_dirs` — раннер передаёт его в `create_app`, и
+> entry-point-страница наследует `angarion/base.html` через общий
+> `request.app.state.templates` без собственного лаунчера:
+>
+> ```python
+> from pathlib import Path
+> ext_page_descriptor = Page(
+>     title="Расширение",
+>     path="/ui/ext",
+>     router=router,
+>     template_dirs=(Path(__file__).parent / "templates",),
+> )
+> ```
+>
+> Каталог из `template_dirs` ищется раньше встроенных (`ChoiceLoader`).
+> Без `template_dirs` страница обязана рендерить самодостаточно
+> (`HTMLResponse` напрямую либо собственный `Jinja2Templates`).
 
 ## Аутентификация
 

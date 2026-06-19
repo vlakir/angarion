@@ -43,6 +43,13 @@ class Page(BaseModel):
     ``public`` (§12.7) — по умолчанию страница закрыта ``CurrentUser``;
     ``public=True`` — осознанно открытая (например, своя страница входа).
 
+    ``template_dirs`` (T036) — каталоги Jinja-шаблонов самой страницы.
+    ``create_app`` подмешивает их в общий ``ChoiceLoader``, поэтому
+    entry-point-страница (``angarion.pages``) наследует
+    ``angarion/base.html`` под чистым CLI (``angarion run --with-api``)
+    без отдельного лаунчера с ``template_dirs``. Дефолт пуст — страница,
+    рендерящая самодостаточно (свой ``HTMLResponse``), каталогов не несёт.
+
     Композиция (не DTO): ``frozen`` с ``arbitrary_types_allowed`` —
     ``APIRouter`` не сериализуется (как у ``AngarionDeps``).
     """
@@ -53,6 +60,7 @@ class Page(BaseModel):
     path: str
     router: APIRouter
     public: bool = False
+    template_dirs: tuple[Path, ...] = ()
 
 
 class NavItem(BaseModel):

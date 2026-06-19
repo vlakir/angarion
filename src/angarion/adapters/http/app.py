@@ -56,7 +56,10 @@ def create_app(
     ``pages`` — UI-страницы ``Page`` (роутер монтируется, заголовок/путь
     появляются в навигации; ``public=True`` открывает страницу).
     ``template_dirs`` — каталоги пользовательских Jinja-шаблонов
-    (``ChoiceLoader``). webhook-роутеры адаптеров берутся из
+    (``ChoiceLoader``). Каталоги, объявленные самими страницами в
+    ``Page.template_dirs`` (T036), подмешиваются после явного аргумента —
+    так entry-point-страница чистого CLI наследует ``base.html`` без
+    лаунчера. webhook-роутеры адаптеров берутся из
     ``deps.webhook_routers`` и монтируются публично (платформа
     аутентифицирует их своим механизмом).
 
@@ -79,8 +82,9 @@ def create_app(
     app = FastAPI(title=title)
     app.state.angarion_deps = deps
     app.state.started_at = datetime.now(UTC)
+    page_template_dirs = [d for page in pages for d in page.template_dirs]
     app.state.templates = build_templates(
-        template_dirs=template_dirs, nav=build_nav(pages)
+        template_dirs=[*template_dirs, *page_template_dirs], nav=build_nav(pages)
     )
     app.state.templates.env.globals['auth_enabled'] = api.auth == 'users'
     app.state.auth = AuthState(
