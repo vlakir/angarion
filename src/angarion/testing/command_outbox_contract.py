@@ -55,6 +55,7 @@ class CommandOutboxContract:
         taken = await command_outbox.take()
         assert [c.uid for c in taken] == [put.uid]
         assert taken[0].status is CommandStatus.TAKEN
+        assert taken[0].taken_at is not None  # lease-маркер проставлен (T027)
         # повторный take не выдаёт уже захваченную команду
         assert await command_outbox.take() == []
 
@@ -135,6 +136,55 @@ class CommandOutboxContract:
     ) -> None:
         await command_outbox.put(CommandKind.NOTIFY)
         assert await command_outbox.get(uuid4()) is None
+
+    async def test_reclaim_returns_stuck_taken_to_pending(
+        self, command_outbox: CommandOutboxPort
+    ) -> None:
+        """T027: зависший ``taken`` (краш до пометки) после lease снова берётся."""
+        stuck = await command_outbox.put(CommandKind.CATCHUP)
+        await command_outbox.take()  # pending → taken (consumer «упал» до пометки)
+
+        # порог раньше захвата — lease не истёк, команда остаётся taken
+        fresh = await command_outbox.reclaim_taken(
+            datetime.now(UTC) - timedelta(hours=1)
+        )
+        assert fresh == 0
+        held = await command_outbox.get(stuck.uid)
+        assert held is not None
+        assert held.status is CommandStatus.TAKEN
+
+        # порог в будущем — захват старше lease → возврат в pending
+        reclaimed = await command_outbox.reclaim_taken(
+            datetime.now(UTC) + timedelta(hours=1)
+        )
+        assert reclaimed == 1
+        back = await command_outbox.get(stuck.uid)
+        assert back is not None
+        assert back.status is CommandStatus.PENDING
+        assert back.taken_at is None  # lease-маркер сброшен
+        # и снова доступна для take
+        retaken = await command_outbox.take()
+        assert [c.uid for c in retaken] == [stuck.uid]
+
+    async def test_reclaim_ignores_pending_and_terminal(
+        self, command_outbox: CommandOutboxPort
+    ) -> None:
+        """T027: reaper трогает только ``taken`` — не pending и не done/failed."""
+        done = await command_outbox.put(CommandKind.NOTIFY)
+        await command_outbox.take()
+        await command_outbox.mark_done(done.uid)
+        pending = await command_outbox.put(CommandKind.NOTIFY)
+
+        reclaimed = await command_outbox.reclaim_taken(
+            datetime.now(UTC) + timedelta(hours=1)
+        )
+        assert reclaimed == 0
+        done_now = await command_outbox.get(done.uid)
+        pending_now = await command_outbox.get(pending.uid)
+        assert done_now is not None
+        assert done_now.status is CommandStatus.DONE
+        assert pending_now is not None
+        assert pending_now.status is CommandStatus.PENDING
 
     async def test_prune_removes_terminal_only(
         self, command_outbox: CommandOutboxPort

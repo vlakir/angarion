@@ -411,7 +411,12 @@ class MemoryCommandOutbox:
                 break
             if command.status is not CommandStatus.PENDING:
                 continue
-            updated = command.model_copy(update={'status': CommandStatus.TAKEN})
+            updated = command.model_copy(
+                update={
+                    'status': CommandStatus.TAKEN,
+                    'taken_at': datetime.now(UTC),
+                }
+            )
             self._commands[uid] = updated
             taken.append(updated)
         return taken
@@ -445,6 +450,21 @@ class MemoryCommandOutbox:
     async def get(self, uid: UUID) -> OutboxCommand | None:
         """Команда по ``uid`` или None."""
         return self._commands.get(uid)
+
+    async def reclaim_taken(self, older_than: AwareDatetime) -> int:
+        """Вернуть зависшие ``taken`` (``taken_at`` старше порога) в ``pending``."""
+        stuck = [
+            uid
+            for uid, command in self._commands.items()
+            if command.status is CommandStatus.TAKEN
+            and command.taken_at is not None
+            and command.taken_at < older_than
+        ]
+        for uid in stuck:
+            self._commands[uid] = self._commands[uid].model_copy(
+                update={'status': CommandStatus.PENDING, 'taken_at': None}
+            )
+        return len(stuck)
 
     async def prune(self, older_than: AwareDatetime) -> int:
         """Удалить терминальные команды, исполненные раньше порога."""

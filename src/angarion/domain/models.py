@@ -369,9 +369,11 @@ class OutboxCommand(DomainModel):
     исполняет и помечает терминально (``done`` / ``failed``).
 
     ``payload`` — параметры команды (JSON; например ``source_key`` для
-    ``catchup``). ``executed_at`` — момент терминального исхода; по нему
-    работает retention. ``result`` / ``error`` — итог исполнения (для
-    аудита и ``/ui``).
+    ``catchup``). ``taken_at`` — момент захвата (lease-маркер: reaper
+    возвращает ``taken`` старше lease обратно в ``pending``, T027).
+    ``executed_at`` — момент терминального исхода; по нему работает
+    retention. ``result`` / ``error`` — итог исполнения (для аудита
+    и ``/ui``).
     """
 
     uid: UUID
@@ -379,6 +381,7 @@ class OutboxCommand(DomainModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     status: CommandStatus = CommandStatus.PENDING
     created_at: AwareDatetime
+    taken_at: AwareDatetime | None = None
     executed_at: AwareDatetime | None = None
     result: str | None = None
     error: str | None = None

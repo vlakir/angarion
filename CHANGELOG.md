@@ -191,6 +191,17 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Fixed
 
+- Reaper зависших `taken`-команд командного outbox (T027, закрывает
+  компромисс ADR §12.9/T024): краш consumer'а **между** атомарным захватом
+  (`take`: `pending` → `taken`) и терминальной пометкой оставлял команду в
+  `taken` навсегда — она не переисполнялась, нарушая at-least-once на крайнем
+  пути. Добавлена колонка `outbox_commands.taken_at` (миграция `0007`,
+  lease-маркер), метод порта `CommandOutboxPort.reclaim_taken(older_than)`
+  (зависший `taken` старше lease → обратно в `pending`), reaper в фоновой
+  prune-задаче. Lease — ключ `[worker] command_lease_seconds` (дефолт `300`
+  с); reaper активен лишь при `[worker] prune_interval > 0` (как ретеншн
+  §17.3). Переисполнение идемпотентно. Memory-эталон обновлён зеркально.
+  ADR 2026-06-19.
 - Подвисание graceful shutdown при заблокированном sender (T031): `app.stop()`
   отменял таски, но `PipelineWorker`/`DeliveryWorker` на отмене дожидались
   in-flight операции (shield-drain против обрыва частичной записи C-9) — если

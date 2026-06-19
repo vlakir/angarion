@@ -299,6 +299,18 @@ class CommandOutboxPort(Protocol):
     async def get(self, uid: UUID) -> OutboxCommand | None:
         """Команда по ``uid`` или ``None``."""
 
+    async def reclaim_taken(self, older_than: AwareDatetime) -> int:
+        """
+        Reaper зависших захватов (§12.9, T027): вернуть ``taken``-команды
+        с ``taken_at`` старше порога обратно в ``pending`` (сбросив
+        ``taken_at``); вернуть число возвращённых.
+
+        Краш consumer'а между ``take`` и пометкой оставлял бы команду в
+        ``taken`` навсегда; lease-порог переисполняет её (исполнение
+        идемпотентно — at-least-once). Не-``taken`` (``pending`` /
+        терминальные) не трогает.
+        """
+
     async def prune(self, older_than: AwareDatetime) -> int:
         """Удалить терминальные команды с ``executed_at`` старше порога."""
 

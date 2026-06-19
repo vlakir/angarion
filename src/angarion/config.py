@@ -176,6 +176,16 @@ class WorkerConfig(BaseModel):
     ``app.stop()`` от подвисания на залипшем в throttle/``FloodWait`` sleep
     воркере; возможный дубль от обрыва покрывает at-least-once (§7.1).
     """
+    command_lease_seconds: float = Field(default=300.0, gt=0)
+    """
+    Lease захвата командного outbox (§12.9, T027): ``taken``-команда без
+    терминальной пометки дольше этого срока считается зависшей (краш
+    consumer'а между ``take`` и пометкой) и возвращается reaper'ом в
+    ``pending`` на переисполнение (идемпотентно, at-least-once). Reaper
+    крутится в фоновой prune-задаче — активен лишь при ``prune_interval >
+    0``. Дефолт 300 с — заведомо больше нормального исполнения команды
+    (notify/catchup/restart), чтобы не реклеймить ещё живой захват.
+    """
 
 
 class CatchupConfig(BaseModel):
