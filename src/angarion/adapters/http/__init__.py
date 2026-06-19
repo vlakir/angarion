@@ -12,12 +12,15 @@ M5, вне ядра §14.9): импортируется только при ус
 from angarion.adapters.http.app import create_app
 from angarion.adapters.http.composition import build_settings_notifier, build_web_deps
 from angarion.adapters.http.deps import AngarionDeps
+from angarion.adapters.http.pages import PAGES_GROUP, load_pages
 from angarion.adapters.http.templating import Page
 
 __all__ = [
+    'PAGES_GROUP',
     'AngarionDeps',
     'Page',
     'build_settings_notifier',
     'build_web_deps',
     'create_app',
+    'load_pages',
 ]

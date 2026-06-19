@@ -29,6 +29,20 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Added
 
+- Entry-point-группа `angarion.pages` для пользовательских UI-страниц в
+  чистом CLI (T029): установленный пакет регистрирует `Page` в группе
+  `angarion.pages`, и `angarion run --with-api` (а также `--role api`)
+  монтирует её в навигацию дашборда **без собственного лаунчера** (раньше —
+  только через свой composition root, как `examples/web/run.py`). Загрузчик
+  `load_pages()` (http-адаптер, не ядро — §14.9) резолвит и проверяет тип
+  (`Page` иначе `ConfigError`), пропускает недоступный extra, сортирует по
+  `path`; раннер `_make_server` передаёт результат в `create_app`.
+  Симметрично `angarion.processors` / `angarion.adapters`. Ограничение:
+  шов передаёт только `Page` без `template_dirs` (entry-point-страница
+  рендерит сама; наследование `base.html` через общий загрузчик — путь
+  лаунчера, расширение шва — T036). Публичный API получил `load_pages` /
+  `PAGES_GROUP`; гайд `docs/guides/web-api.md` и `examples/web/` обновлены.
+  ADR 2026-06-19.
 - Тулинг публикации на PyPI (T012, перенос из шаблона dreamteam):
   `scripts/publish.sh` (`uv build` → `twine check` → `uv publish`, флаг
   `--test` для TestPyPI), `twine` в dev-зависимостях, `PYPI_TOKEN` /
