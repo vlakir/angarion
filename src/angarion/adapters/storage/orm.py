@@ -313,7 +313,8 @@ class OutboxCommandRow(Base):
     pending/taken/done/failed строкой. Захват и пометка — атомарные
     ``UPDATE ... WHERE status=...`` (at-least-once, §12.9). FIFO —
     по ``created_at`` + ``rowid``; индекс по ``status`` ускоряет
-    поллинг pending'ов.
+    поллинг pending'ов. ``taken_at`` — момент захвата (lease-маркер для
+    reaper зависших ``taken``, T027).
     """
 
     __tablename__ = 'outbox_commands'
@@ -324,6 +325,7 @@ class OutboxCommandRow(Base):
     payload: Mapped[str]
     status: Mapped[str]
     created_at: Mapped[datetime]
+    taken_at: Mapped[datetime | None]
     executed_at: Mapped[datetime | None]
     result: Mapped[str | None]
     error: Mapped[str | None]

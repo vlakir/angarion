@@ -603,6 +603,7 @@ def _row_to_command(row: OutboxCommandRow) -> OutboxCommand:
         payload=json.loads(row.payload),
         status=CommandStatus(row.status),
         created_at=row.created_at,
+        taken_at=row.taken_at,
         executed_at=row.executed_at,
         result=row.result,
         error=row.error,
@@ -632,6 +633,7 @@ class SqliteCommandOutbox:
             payload=json.dumps(command.payload),
             status=command.status.value,
             created_at=command.created_at,
+            taken_at=None,
             executed_at=None,
             result=None,
             error=None,
@@ -655,7 +657,7 @@ class SqliteCommandOutbox:
                 OutboxCommandRow.uid.in_(pending),
                 OutboxCommandRow.status == CommandStatus.PENDING.value,
             )
-            .values(status=CommandStatus.TAKEN.value)
+            .values(status=CommandStatus.TAKEN.value, taken_at=datetime.now(UTC))
             .returning(OutboxCommandRow)
         )
         async with self._sessions() as session, session.begin():
@@ -705,6 +707,22 @@ class SqliteCommandOutbox:
         async with self._sessions() as session:
             row = await session.get(OutboxCommandRow, str(uid))
         return _row_to_command(row) if row is not None else None
+
+    @_retry_on_locked
+    async def reclaim_taken(self, older_than: AwareDatetime) -> int:
+        """Вернуть зависшие ``taken`` (``taken_at`` старше порога) в ``pending``."""
+        stmt = (
+            update(OutboxCommandRow)
+            .where(
+                OutboxCommandRow.status == CommandStatus.TAKEN.value,
+                OutboxCommandRow.taken_at.is_not(None),
+                OutboxCommandRow.taken_at < older_than,
+            )
+            .values(status=CommandStatus.PENDING.value, taken_at=None)
+        )
+        async with self._sessions() as session, session.begin():
+            result = await session.execute(stmt)
+        return _rowcount(result)
 
     @_retry_on_locked
     async def prune(self, older_than: AwareDatetime) -> int:

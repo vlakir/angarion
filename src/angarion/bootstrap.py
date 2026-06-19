@@ -580,6 +580,7 @@ class AngarionApp(BaseModel):
             )
             await self._prune_once(now, storage_cfg.dedup_ttl_days, self.storage.outbox)
             await self._purge_queue_acked(self.queue, self.settings.queue.keep_acked)
+            await self._reap_commands(now, self.settings.worker.command_lease_seconds)
             self._prune_media(now, self.settings.media)
 
     @staticmethod
@@ -594,6 +595,19 @@ class AngarionApp(BaseModel):
         if keep_acked <= 0:  # 0 = бессрочно (§17.3) → не чистим
             return
         await queue.purge_acked(keep_latest=keep_acked)
+
+    async def _reap_commands(self, now: datetime, lease_seconds: float) -> None:
+        """
+        Reaper зависших ``taken``-команд outbox (§12.9, T027).
+
+        Возвращает в ``pending`` команды, захваченные дольше lease назад
+        (краш consumer'а между ``take`` и пометкой) — переисполнение
+        идемпотентно (at-least-once). Крутится в prune-задаче, поэтому
+        активен лишь при ``prune_interval > 0`` (как ретеншн §17.3).
+        """
+        await self.storage.command_outbox.reclaim_taken(
+            now - timedelta(seconds=lease_seconds)
+        )
 
     @staticmethod
     def _prune_media(now: datetime, media: MediaConfig) -> None:

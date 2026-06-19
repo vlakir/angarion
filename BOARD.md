@@ -68,6 +68,18 @@ _(пусто)_
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
 
+- **T027** — Reaper зависших `taken`-команд командного outbox
+  [closed 2026-06-19, текущий PR]. Закрывает компромисс ADR §12.9/T024: краш
+  consumer'а между `take` (`pending`→`taken`) и пометкой оставлял команду в
+  `taken` навсегда (не переисполнялась — нарушение at-least-once на крайнем
+  пути). Решение: колонка `outbox_commands.taken_at` (миграция `0007`,
+  lease-маркер) + `CommandOutboxPort.reclaim_taken(older_than)` (зависший
+  `taken` старше lease → `pending`) + reaper в фоновой prune-задаче; lease —
+  `[worker] command_lease_seconds` (дефолт 300 с), активен при
+  `prune_interval > 0`. Memory-эталон зеркально. ADR 2026-06-19. Acceptance
+  выполнен: контрактный тест восстановления (зависший `taken` после lease
+  снова берётся `take`; reaper игнорирует `pending`/терминальные) — зелёный
+  и для Memory, и для Sqlite; coverage 96.4%. Ветка `T027-reap-stuck-taken`.
 - **T028** — Per-write ретрай на `database is locked` в SQLite-сторах
   [closed 2026-06-19, текущий PR]. Backstop к ADR §3.1/T024: два писателя
   одного `app.db` в раздельном режиме под WAL сериализуются на едином
