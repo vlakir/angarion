@@ -68,6 +68,19 @@ _(пусто)_
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
 
+- **T028** — Per-write ретрай на `database is locked` в SQLite-сторах
+  [closed 2026-06-19, текущий PR]. Backstop к ADR §3.1/T024: два писателя
+  одного `app.db` в раздельном режиме под WAL сериализуются на едином
+  write-lock'е; при исчерпании `busy_timeout` SQLite отдаёт `database is
+  locked` и голая запись падает. Решение: декоратор `_retry_on_locked`
+  (tenacity, 5 попыток, backoff, `reraise=True`) на всех write-методах
+  `stores.py`; ретраится ровно `database is locked` (предикат `_is_locked`),
+  не любой `OperationalError`. `make_engine` получил тест-параметр
+  `busy_timeout_ms` (дефолт 5000 — прод не тронут). ADR 2026-06-19.
+  Acceptance выполнен: тест воспроизводит контеншн двух писателей (голый
+  писатель ловит `database is locked`, store-писатель пересиживает lock
+  ретраем и коммитит); предикат покрыт; coverage 96.4%. Ветка
+  `T028-db-locked-retry`.
 - **T031** — Graceful shutdown виснет при заблокированном sender
   [closed 2026-06-18, текущий PR]. `app.stop()` отменял таски, но
   `PipelineWorker`/`DeliveryWorker` на отмене дожидались in-flight операции

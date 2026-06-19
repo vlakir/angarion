@@ -21,6 +21,13 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import OperationalError
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from angarion.adapters.registry_rules import (
     content_unchanged,
@@ -67,6 +74,29 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
+def _is_locked(exc: BaseException) -> bool:
+    """``database is locked`` (SQLITE_BUSY) — ровно тот случай для ретрая."""
+    return (
+        isinstance(exc, OperationalError) and 'database is locked' in str(exc).lower()
+    )
+
+
+# Per-write ретрай ADR §3.1 / T028: в раздельном режиме два процесса пишут в
+# один app.db; под WAL писатели сериализуются на едином write-lock'е, и при
+# исчерпании busy_timeout (всплеск админ-операций, медленный диск) SQLite
+# отдаёт "database is locked". Записи здесь — короткие транзакции с fresh
+# session.begin(), безопасные к полному повтору: упавшая на блокировке
+# транзакция откатывается целиком, ничего не закоммитив. Только writer'ы —
+# читатели под WAL write-lock не берут. reraise=True: исчерпали попытки —
+# пробрасываем исходный OperationalError; не-lock ошибки не ретраятся вовсе.
+_retry_on_locked = retry(
+    retry=retry_if_exception(_is_locked),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=0.05, max=0.5),
+    reraise=True,
+)
+
+
 def _rowcount(result: Result[Any]) -> int:
     """
     ``rowcount`` DML-результата: ``AsyncSession.execute`` типизирован
@@ -87,6 +117,7 @@ class SqliteDedupStore:
         async with self._sessions() as session:
             return await session.get(InboundDedupRow, dedup_key) is not None
 
+    @_retry_on_locked
     async def mark_inbound(self, dedup_key: str) -> bool:
         """True — ключ новый; False — дубль (insert-or-ignore + rowcount)."""
         stmt = (
@@ -98,6 +129,7 @@ class SqliteDedupStore:
             result = await session.execute(stmt)
         return _rowcount(result) == 1
 
+    @_retry_on_locked
     async def prune(self, older_than: AwareDatetime) -> int:
         """Удалить отметки старше порога."""
         stmt = delete(InboundDedupRow).where(InboundDedupRow.marked_at < older_than)
@@ -131,6 +163,7 @@ class SqliteOutbox:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
+    @_retry_on_locked
     async def put(
         self,
         msg: OutboundMessage,
@@ -173,6 +206,7 @@ class SqliteOutbox:
             rows = (await session.scalars(stmt)).all()
         return [_row_to_outbound(row) for row in rows]
 
+    @_retry_on_locked
     async def mark_sent(self, idempotency_key: str, receipt: DeliveryReceipt) -> None:
         """Терминальный переход pending → sent; иначе no-op."""
         stmt = (
@@ -190,6 +224,7 @@ class SqliteOutbox:
         async with self._sessions() as session, session.begin():
             await session.execute(stmt)
 
+    @_retry_on_locked
     async def reschedule(
         self, idempotency_key: str, *, not_before: AwareDatetime, error: str
     ) -> None:
@@ -209,6 +244,7 @@ class SqliteOutbox:
         async with self._sessions() as session, session.begin():
             await session.execute(stmt)
 
+    @_retry_on_locked
     async def mark_failed(self, idempotency_key: str, error: str) -> None:
         """Терминальный переход pending → failed; иначе no-op."""
         stmt = (
@@ -232,6 +268,7 @@ class SqliteOutbox:
             row = await session.get(OutboundRow, idempotency_key)
         return _row_to_outbound(row) if row is not None else None
 
+    @_retry_on_locked
     async def prune(self, older_than: AwareDatetime) -> int:
         """Удалить терминальные записи, финализированные раньше порога."""
         stmt = delete(OutboundRow).where(
@@ -276,6 +313,7 @@ class SqliteMessageRegistry:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
+    @_retry_on_locked
     async def upsert(self, rec: RegistryRecord) -> RegistryDelta:
         """Четыре исхода §6.1/A-3; staleness-guard по времени активности."""
         async with self._sessions() as session, session.begin():
@@ -307,6 +345,7 @@ class SqliteMessageRegistry:
                 outcome=RegistryOutcome.TEXT_CHANGED, previous_text=stored.text
             )
 
+    @_retry_on_locked
     async def mark_deleted(
         self, source_key: str, external_id: str
     ) -> RegistryRecord | None:
@@ -359,6 +398,7 @@ class SqliteMessageRegistry:
             for row in rows
         ]
 
+    @_retry_on_locked
     async def prune(self, older_than: AwareDatetime) -> int:
         """
         Удалить записи старше окна (архив уносит FK CASCADE) и
@@ -397,6 +437,7 @@ class SqliteCursorStore:
             updated_at=row.updated_at,
         )
 
+    @_retry_on_locked
     async def save(self, cursor: SourceCursor) -> None:
         """Перезаписать курсор источника (insert-or-update)."""
         stmt = sqlite_insert(SourceCursorRow).values(
@@ -427,6 +468,7 @@ class SqliteSessionStore:
             row = await session.get(TelegramSessionRow, account_id)
         return row.session_string if row is not None else None
 
+    @_retry_on_locked
     async def save(self, account_id: str, session_string: str) -> None:
         """Сохранить (перезаписать) строку сессии (insert-or-update)."""
         stmt = sqlite_insert(TelegramSessionRow).values(
@@ -466,6 +508,7 @@ class SqliteStateStore:
             row = await session.get(ProcessorStateRow, (ns, key))
         return row.value if row is not None else None
 
+    @_retry_on_locked
     async def set(self, ns: str, key: str, value: str) -> None:
         """Записать значение (insert-or-update)."""
         stmt = sqlite_insert(ProcessorStateRow).values(ns=ns, key=key, value=value)
@@ -476,6 +519,7 @@ class SqliteStateStore:
         async with self._sessions() as session, session.begin():
             await session.execute(stmt)
 
+    @_retry_on_locked
     async def delete(self, ns: str, key: str) -> None:
         """Удалить ключ; отсутствующий — no-op."""
         stmt = delete(ProcessorStateRow).where(
@@ -518,6 +562,7 @@ class SqliteRuntimeConfig:
             rows = (await session.scalars(select(AppSettingRow))).all()
         return self._to_settings({row.key: json.loads(row.value) for row in rows})
 
+    @_retry_on_locked
     async def save(
         self, patch: DynamicSettings, *, updated_by: str | None = None
     ) -> DynamicSettings:
@@ -543,6 +588,7 @@ class SqliteRuntimeConfig:
                 await session.execute(stmt)
         return await self.load()
 
+    @_retry_on_locked
     async def reset(self, key: str) -> DynamicSettings:
         """Удалить override поля (возврат к файлу); неизвестное — no-op."""
         async with self._sessions() as session, session.begin():
@@ -569,6 +615,7 @@ class SqliteCommandOutbox:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
+    @_retry_on_locked
     async def put(
         self, kind: CommandKind, *, payload: dict[str, Any] | None = None
     ) -> OutboxCommand:
@@ -593,6 +640,7 @@ class SqliteCommandOutbox:
             session.add(row)
         return command
 
+    @_retry_on_locked
     async def take(self, limit: int = 10) -> list[OutboxCommand]:
         """Атомарно захватить ``pending`` → ``taken`` (FIFO), вернуть их."""
         pending = (
@@ -616,6 +664,7 @@ class SqliteCommandOutbox:
             (_row_to_command(row) for row in rows), key=lambda c: c.created_at
         )
 
+    @_retry_on_locked
     async def mark_done(self, uid: UUID, *, result: str | None = None) -> None:
         """Терминальный переход ``taken`` → ``done``; иначе no-op."""
         stmt = (
@@ -633,6 +682,7 @@ class SqliteCommandOutbox:
         async with self._sessions() as session, session.begin():
             await session.execute(stmt)
 
+    @_retry_on_locked
     async def mark_failed(self, uid: UUID, error: str) -> None:
         """Терминальный переход ``taken`` → ``failed``; иначе no-op."""
         stmt = (
@@ -656,6 +706,7 @@ class SqliteCommandOutbox:
             row = await session.get(OutboxCommandRow, str(uid))
         return _row_to_command(row) if row is not None else None
 
+    @_retry_on_locked
     async def prune(self, older_than: AwareDatetime) -> int:
         """Удалить терминальные команды, исполненные раньше порога."""
         stmt = delete(OutboxCommandRow).where(
@@ -684,6 +735,7 @@ class SqliteAnalytics:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
+    @_retry_on_locked
     async def record(self, event: AnalyticsEvent) -> None:
         """Записать событие."""
         row = AnalyticsEventRow(
@@ -730,6 +782,7 @@ class SqliteAnalytics:
             rows = (await session.execute(stmt)).tuples().all()
         return dict(rows)
 
+    @_retry_on_locked
     async def prune(self, older_than: AwareDatetime) -> int:
         """Удалить события старше порога."""
         stmt = delete(AnalyticsEventRow).where(AnalyticsEventRow.at < older_than)
@@ -753,6 +806,7 @@ class SqliteDeadLetters:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
+    @_retry_on_locked
     async def put(self, letter: DeadLetter) -> None:
         """Положить запись в DLQ."""
         row = DeadLetterRow(
@@ -777,6 +831,7 @@ class SqliteDeadLetters:
             rows = (await session.scalars(stmt)).all()
         return [_row_to_letter(row) for row in rows]
 
+    @_retry_on_locked
     async def take(self, uid: UUID) -> DeadLetter | None:
         """Изъять запись по uid; None, если записи нет."""
         stmt = select(DeadLetterRow).where(DeadLetterRow.uid == str(uid))
