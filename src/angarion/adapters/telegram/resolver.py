@@ -46,6 +46,8 @@ class ResolvedSource(BaseModel):
     chat_id: int
     thread_id: str | None
     source_key: str
+    recent_poll: bool = False
+    """Включён ли для источника лёгкий поллинг недавнего окна (T032)."""
 
 
 async def resolve_sources(
@@ -54,11 +56,16 @@ async def resolve_sources(
     sources: Sequence[EndpointConfig],
     analytics: AnalyticsPort,
     log: FilteringBoundLogger,
+    recent_poll_endpoints: frozenset[EndpointConfig] = frozenset(),
 ) -> list[ResolvedSource]:
     """
     Прогреть кэш каждого клиента и резолвить источники в знаковые chat
     id. Возвращает список успешно резолвленных источников; недоступные
     в результат не попадают (управляемая деградация, Q4).
+
+    ``recent_poll_endpoints`` (T032) — подмножество ``sources``, для
+    которых включён лёгкий поллинг недавнего окна; флаг переносится на
+    соответствующий ``ResolvedSource``.
     """
     for client in clients.values():
         await client.warm_entity_cache()
@@ -97,6 +104,7 @@ async def resolve_sources(
                 source_key=make_source_key(
                     MESSENGER, ep.account, str(chat_id), ep.thread_id
                 ),
+                recent_poll=ep in recent_poll_endpoints,
             )
         )
     return resolved

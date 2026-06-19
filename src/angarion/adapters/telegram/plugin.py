@@ -96,6 +96,15 @@ def _make_listener(
 ) -> TelegramListener:
     """Фабрика listener'а (§12.11): общий пул + проводка [catchup]/[telegram]."""
     catchup = deps.settings.catchup
+    # T032 (A-1): конфиг recent_poll — на уровне пайплайна, исполнение — на
+    # уровне источника. Источник поллится, если входит хотя бы в один пайплайн
+    # с recent_poll=true; пересечение с sources фильтрует по этой платформе.
+    recent_poll_endpoints = frozenset(
+        ep
+        for cfg in deps.settings.pipelines.values()
+        if cfg.recent_poll
+        for ep in cfg.sources
+    ) & frozenset(sources)
     return TelegramListener(
         ingest=deps.ingest,
         pool=_shared_registry(deps, accounts),
@@ -108,6 +117,10 @@ def _make_listener(
         catchup_max_messages=catchup.max_messages_per_source,
         catchup_max_age_days=catchup.max_age_days,
         catchup_interval=catchup.interval,
+        recent_poll_endpoints=recent_poll_endpoints,
+        recent_interval=catchup.recent_interval,
+        recent_window_messages=catchup.recent_window_messages,
+        recent_window_minutes=catchup.recent_window_minutes,
         buffer_soft_limit=deps.settings.telegram.live_buffer_soft_limit,
         media_policy=deps.settings.media,
     )

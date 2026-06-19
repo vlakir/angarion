@@ -61,7 +61,15 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
      разработчика, иначе теряется фокус (классическое WIP-limit
      правило из Kanban). -->
 
-_(пусто)_
+- **T032** — Лёгкий поллинг недавнего окна — backstop правок/удалений
+  (`specs/T032-recent-window-poll/`, ветка `T032-recent-window-poll`).
+  Спека Clarified+Analyzed; ADR 2026-06-19. **Фаза 1 (Telegram) — готова**
+  (текущий PR): окно min(N сообщений, M минут) поверх `run_catchup`
+  (`max_age: timedelta` + `record_truncation`), per-pipeline `recent_poll`,
+  per-source резолв (A-1), общий `last_seen`-курсор, подавление шума
+  truncation, тесты (catchup/listener/resolver/plugin/config). **Фаза 2
+  (Matrix)** — впереди (окно над его catch-up по `/messages`); до неё
+  `recent_poll` на Matrix-пайплайне — no-op.
 
 ## Done
 

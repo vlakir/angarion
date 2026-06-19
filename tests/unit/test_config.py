@@ -78,6 +78,9 @@ def test_defaults_without_any_config() -> None:
     assert settings.catchup.enabled is True
     assert settings.catchup.max_messages_per_source == 2000
     assert settings.catchup.max_age_days == 7
+    assert settings.catchup.recent_interval == 30.0
+    assert settings.catchup.recent_window_messages == 30
+    assert settings.catchup.recent_window_minutes == 10
 
 
 def test_load_settings_parses_toml(tmp_path: Path) -> None:

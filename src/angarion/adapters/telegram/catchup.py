@@ -24,7 +24,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -39,6 +38,8 @@ from angarion.domain.keys import make_source_key, normalize_and_hash
 from angarion.domain.models import AnalyticsEvent, EventKind, SourceCursor
 
 if TYPE_CHECKING:
+    from datetime import timedelta
+
     from pydantic import AwareDatetime
     from structlog.typing import FilteringBoundLogger
 
@@ -82,10 +83,19 @@ async def run_catchup(
     log: FilteringBoundLogger,
     media_policy: MediaConfig,
     max_messages: int,
-    max_age_days: int,
+    max_age: timedelta,
     now: AwareDatetime,
+    record_truncation: bool = True,
 ) -> None:
-    """Прогнать §9.3 по одному источнику: фетч истории → эмиссия → курсор."""
+    """
+    Прогнать §9.3 по одному источнику: фетч истории → эмиссия → курсор.
+
+    ``max_messages`` + ``max_age`` задают окно фетча (новые→старые). Лёгкий
+    поллинг недавнего окна (T032) зовёт тот же алгоритм с малым окном и
+    ``record_truncation=False``: узкое окно «усечено» by design, поэтому
+    ``catchup_truncated`` для него — шум (truncation-guard при этом всё
+    равно не даёт ложных удалений ниже окна — §9.3.4).
+    """
     source_key = make_source_key(MESSENGER, account_id, str(chat_id), thread_id)
     cursor = await cursors.load(source_key)
     last_seen = _last_seen(cursor)
@@ -98,7 +108,7 @@ async def run_catchup(
         thread_id=thread_id,
         min_id=max(floor - 1, 0),
         max_messages=max_messages,
-        cutoff=now - timedelta(days=max_age_days),
+        cutoff=now - max_age,
     )
 
     await _emit_messages(
@@ -126,7 +136,7 @@ async def run_catchup(
         )
 
     await _save_cursor(cursors, source_key, fetched, last_seen, now)
-    if truncated:
+    if truncated and record_truncation:
         log.warning('catchup_truncated', source_key=source_key, fetched=len(fetched))
         await analytics.record(
             AnalyticsEvent(

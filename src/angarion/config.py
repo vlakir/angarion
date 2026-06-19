@@ -192,9 +192,17 @@ class CatchupConfig(BaseModel):
     """
     Секция ``[catchup]`` (§9.3, §11); в M1 нужна ветке деградации FR-13.
 
-    ``interval`` (M3, фаза 5) — период фонового страхующего catch-up
-    (§9.3, Q9/N1) в секундах; ``None``/``0`` — фоновый catch-up выключен,
-    остаётся только прогон на старте процесса.
+    ``interval`` (M3, фаза 5) — период фонового страхующего **глубокого**
+    catch-up (§9.3, Q9/N1) в секундах; ``None``/``0`` — фоновый catch-up
+    выключен, остаётся только прогон на старте процесса.
+
+    ``recent_*`` (T032) — отдельный **лёгкий** поллинг узкого недавнего
+    окна как дешёвый backstop правок/удалений: частая (``recent_interval``)
+    сверка только последних ``recent_window_messages`` сообщений не старше
+    ``recent_window_minutes`` минут (окно = min(N, M)). Глубокий catch-up
+    остаётся страховкой на длинный хвост. Включается **per-pipeline**
+    (``[pipelines.*].recent_poll``); сами ``recent_*`` — общие параметры
+    окна/частоты. ``recent_interval = 0`` глушит лёгкий поллинг глобально.
     """
 
     model_config = ConfigDict(frozen=True, extra='forbid')
@@ -203,6 +211,12 @@ class CatchupConfig(BaseModel):
     max_messages_per_source: int = Field(default=2000, ge=1)
     max_age_days: int = Field(default=7, ge=1)
     interval: float | None = Field(default=None, ge=0)
+    recent_interval: float = Field(default=30.0, ge=0)
+    """Период лёгкого поллинга недавнего окна, с (T032); ``0`` — выключен."""
+    recent_window_messages: int = Field(default=30, ge=1)
+    """Размер окна лёгкого поллинга по числу последних сообщений (T032)."""
+    recent_window_minutes: int = Field(default=10, ge=1)
+    """Верхняя граница возраста окна лёгкого поллинга, мин (T032)."""
 
 
 class SenderConfig(BaseModel):
@@ -347,6 +361,16 @@ class PipelineConfig(BaseModel):
     outbox: один источник может питать пайплайн-зеркало с медиа и
     текст-только пайплайн одновременно. Скачивание медиа — отдельная
     глобальная ``[media]``-политика (account/source-level, до fan-out).
+    """
+    recent_poll: bool = False
+    """
+    Включить лёгкий поллинг недавнего окна (T032) для **источников этого
+    пайплайна**: частая дешёвая сверка узкого окна как backstop правок/
+    удалений в дополнение к редкому глубокому catch-up. По умолчанию
+    ``False`` (доп-трафик — осознанный opt-in). Параметры окна/частоты —
+    общие в ``[catchup]`` (``recent_*``). Исполнение — на уровне источника:
+    источник поллится, если входит хотя бы в один пайплайн с
+    ``recent_poll = true``.
     """
 
 

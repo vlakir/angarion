@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from angarion.adapters.telegram.buffer import LiveBuffer
@@ -78,6 +78,10 @@ class TelegramListener:
         catchup_max_messages: int = 2000,
         catchup_max_age_days: int = 7,
         catchup_interval: float | None = None,
+        recent_poll_endpoints: frozenset[EndpointConfig] = frozenset(),
+        recent_interval: float = 0.0,
+        recent_window_messages: int = 30,
+        recent_window_minutes: int = 10,
         buffer_soft_limit: int = DEFAULT_BUFFER_SOFT_LIMIT,
         media_policy: MediaConfig = _NO_MEDIA_POLICY,
     ) -> None:
@@ -97,6 +101,10 @@ class TelegramListener:
         self._catchup_max_messages = catchup_max_messages
         self._catchup_max_age_days = catchup_max_age_days
         self._catchup_interval = catchup_interval
+        self._recent_poll_endpoints = recent_poll_endpoints
+        self._recent_interval = recent_interval
+        self._recent_window_messages = recent_window_messages
+        self._recent_window_minutes = recent_window_minutes
         self._buffer = LiveBuffer(
             soft_limit=buffer_soft_limit, log=log, analytics=analytics
         )
@@ -104,6 +112,7 @@ class TelegramListener:
         self._chat_ids: dict[str, set[str]] = {}
         self._consumer: asyncio.Task[None] | None = None
         self._catchup_timer: asyncio.Task[None] | None = None
+        self._recent_timer: asyncio.Task[None] | None = None
 
     @property
     def started(self) -> bool:
@@ -120,6 +129,7 @@ class TelegramListener:
                 sources=self._sources,
                 analytics=self._analytics,
                 log=self._log,
+                recent_poll_endpoints=self._recent_poll_endpoints,
             )
         )
         self._chat_ids = {account_id: set() for account_id in self._clients}
@@ -137,11 +147,18 @@ class TelegramListener:
                 self._periodic_catchup(self._catchup_interval),
                 name='telegram-catchup-timer',
             )
+        if self._recent_interval > 0 and any(rs.recent_poll for rs in self._resolved):
+            self._recent_timer = asyncio.create_task(
+                self._periodic_recent_poll(self._recent_interval),
+                name='telegram-recent-poll-timer',
+            )
 
     async def stop(self) -> None:
-        """Graceful: стоп таймера и консьюмера, дослив буфера, отключение пула."""
+        """Graceful: стоп таймеров и консьюмера, дослив буфера, отключение пула."""
         if self._consumer is None:
             return
+        await self._cancel(self._recent_timer)
+        self._recent_timer = None
         await self._cancel(self._catchup_timer)
         self._catchup_timer = None
         await self._cancel(self._consumer)
@@ -166,6 +183,37 @@ class TelegramListener:
             for rs in self._resolved:
                 await self._catchup_source(rs)
 
+    async def _periodic_recent_poll(self, interval: float) -> None:
+        """
+        Лёгкий поллинг недавнего окна по таймеру (T032): частая дешёвая
+        сверка узкого окна recent-poll источников. Обход последовательный
+        (без залпа в history-API); дедуп гасит пересечения с live/catch-up.
+        """
+        while True:
+            await asyncio.sleep(interval)
+            for rs in self._resolved:
+                if rs.recent_poll:
+                    await self._recent_poll_source(rs)
+
+    async def _recent_poll_source(self, rs: ResolvedSource) -> None:
+        """Прогон §9.3 по узкому недавнему окну источника (T032)."""
+        await run_catchup(
+            client=self._clients[rs.account_id],
+            account_id=rs.account_id,
+            chat_id=rs.chat_id,
+            thread_id=rs.thread_id,
+            registry=self._registry,
+            cursors=self._cursors,
+            ingest=self._ingest,
+            analytics=self._analytics,
+            log=self._log,
+            media_policy=self._media_policy,
+            max_messages=self._recent_window_messages,
+            max_age=timedelta(minutes=self._recent_window_minutes),
+            now=datetime.now(UTC),
+            record_truncation=False,
+        )
+
     async def catchup(self, source_key: str) -> None:
         """Внеочередной catch-up §9.3 по одному резолвленному источнику."""
         for rs in self._resolved:
@@ -188,7 +236,7 @@ class TelegramListener:
             log=self._log,
             media_policy=self._media_policy,
             max_messages=self._catchup_max_messages,
-            max_age_days=self._catchup_max_age_days,
+            max_age=timedelta(days=self._catchup_max_age_days),
             now=datetime.now(UTC),
         )
 

@@ -77,6 +77,21 @@ async def test_source_for_unknown_account_skipped() -> None:
     assert resolved == []
 
 
+async def test_recent_poll_flag_carried_for_enabled_endpoints() -> None:
+    """T032: recent_poll переносится на ResolvedSource только для включённых."""
+    client = FakeTelegramClient(peer_ids={'@a': -100111, '@b': -100222})
+    ep_a, ep_b = _ep('main', '@a'), _ep('main', '@b')
+    resolved = await resolve_sources(
+        clients={'main': client},
+        sources=[ep_a, ep_b],
+        analytics=MemoryAnalytics(),
+        log=get_logger('test'),
+        recent_poll_endpoints=frozenset({ep_a}),
+    )
+    flags = {rs.chat_id: rs.recent_poll for rs in resolved}
+    assert flags == {-100111: True, -100222: False}
+
+
 async def test_multi_account_resolution() -> None:
     a = FakeTelegramClient(peer_ids={'@a': -100111})
     b = FakeTelegramClient(peer_ids={'@b': -100222})

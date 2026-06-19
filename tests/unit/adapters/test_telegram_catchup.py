@@ -81,6 +81,7 @@ async def _run(
     cursors: MemoryCursorStore | None = None,
     max_messages: int = 2000,
     max_age_days: int = 7,
+    record_truncation: bool = True,
     thread_id: str | None = None,
     media_policy: MediaConfig | None = None,
     client: FakeTelegramClient | None = None,
@@ -104,8 +105,9 @@ async def _run(
         log=get_logger('test'),
         media_policy=media_policy or MediaConfig(),
         max_messages=max_messages,
-        max_age_days=max_age_days,
+        max_age=timedelta(days=max_age_days),
         now=NOW,
+        record_truncation=record_truncation,
     )
     return ingest, cursors, analytics, client
 
@@ -259,6 +261,26 @@ async def test_truncation_by_max_messages_suppresses_low_deletions() -> None:
     assert truncated[0].payload['source_key'] == SOURCE_KEY
 
 
+async def test_recent_window_poll_detects_edit_and_suppresses_truncation() -> None:
+    """T032: лёгкий проход по узкому окну ловит правку, но не шумит truncation."""
+    registry = MemoryMessageRegistry()
+    for i in (8, 9, 10):
+        await _seed(registry, i, 'текст')
+    ingest, _cur, analytics, _client = await _run(
+        history=[_hist(8, 'текст'), _hist(9, 'правка'), _hist(10, 'текст')],
+        registry=registry,
+        cursor=_cursor(10),
+        max_messages=3,  # узкое окно → fetch усечён
+        record_truncation=False,  # лёгкий режим (T032)
+    )
+    # правка в окне поймана сверкой по реестру
+    assert [(e.kind, e.external_id) for e in ingest.events] == [
+        (EventKind.MESSAGE_EDITED, '9')
+    ]
+    # узкое окно «усечено» by design — catchup_truncated подавлен
+    assert await analytics.recent(kind='catchup_truncated') == []
+
+
 async def test_truncation_by_age_stops_fetch() -> None:
     old = NOW - timedelta(days=10)
     ingest, _cur, analytics, _client = await _run(
@@ -368,7 +390,7 @@ async def test_redelivery_deduped_end_to_end() -> None:
         'log': get_logger('test'),
         'media_policy': MediaConfig(),
         'max_messages': 2000,
-        'max_age_days': 7,
+        'max_age': timedelta(days=7),
         'now': NOW,
     }
     await run_catchup(**kwargs)  # type: ignore[arg-type]
