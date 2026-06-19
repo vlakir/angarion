@@ -7,6 +7,7 @@ ISO 8601 в UTC (A-4), фабрика бэкенда.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import sqlite3
@@ -27,10 +28,13 @@ from angarion.testing import (
     make_outbound,
     make_record,
 )
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from angarion.adapters.storage.engine import apply_migrations
+from angarion.adapters.storage.engine import apply_migrations, make_engine
 from angarion.adapters.storage.orm import Base, UserRow, UTCDateTime
 from angarion.adapters.storage.plugin import STORAGE_BACKEND, SqliteStorage
+from angarion.adapters.storage.stores import SqliteStateStore, _is_locked
 from angarion.config import StorageConfig
 from angarion.domain.errors import ConfigError
 
@@ -340,3 +344,51 @@ async def test_outbox_event_uid_roundtrip(
     assert record is not None
     assert record.event_uid == event_uid
     assert record.pipeline == 'digest'
+
+
+def test_is_locked_matches_only_busy_error() -> None:
+    """T028: ретраим ровно ``database is locked``, не любой OperationalError."""
+    locked = OperationalError('UPDATE x', None, Exception('database is locked'))
+    other = OperationalError('UPDATE x', None, Exception('no such table: x'))
+    assert _is_locked(locked) is True
+    assert _is_locked(other) is False
+    assert _is_locked(ValueError('database is locked')) is False
+
+
+async def test_writer_retries_through_database_locked(db_path: Path) -> None:
+    """T028 / ADR §3.1: при контеншне двух писателей запись не падает.
+
+    Второй процесс держит write-lock дольше busy_timeout — голый писатель
+    ловит ``database is locked`` (контроль), а store-писатель пересиживает
+    блокировку per-write ретраем и коммитит, как только lock освобождается.
+    """
+    apply_migrations(db_path)
+    # busy_timeout опущен до 50 мс, чтобы блокировка всплыла быстро (см.
+    # make_engine): иначе при дефолтных 5 с тест ждал бы исчерпания таймаута.
+    engine = make_engine(db_path, busy_timeout_ms=50)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    store = SqliteStateStore(sessions)
+
+    holder = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        holder.execute('PRAGMA busy_timeout=0')
+        holder.execute('BEGIN IMMEDIATE')  # держим единый write-lock БД
+
+        # контроль: писатель без ретрая под тем же lock'ом падает сразу.
+        with closing(sqlite3.connect(db_path, isolation_level=None)) as rival:
+            rival.execute('PRAGMA busy_timeout=50')
+            with pytest.raises(sqlite3.OperationalError, match='database is locked'):
+                rival.execute('BEGIN IMMEDIATE')
+
+        async def _release() -> None:
+            await asyncio.sleep(0.2)
+            holder.execute('COMMIT')  # отпускаем lock — ретрай дожмёт запись
+
+        releaser = asyncio.create_task(_release())
+        await store.set('ns', 'k', 'v')  # переживает блокировку через ретрай
+        await releaser
+
+        assert await store.get('ns', 'k') == 'v'  # запись реально закоммичена
+    finally:
+        holder.close()
+        await engine.dispose()

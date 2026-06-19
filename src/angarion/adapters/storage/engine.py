@@ -35,8 +35,16 @@ MIGRATIONS_DIR: Final = Path(__file__).resolve().parents[2] / 'migrations'
 """Каталог Alembic внутри пакета ``angarion`` (C-5)."""
 
 
-def make_engine(path: Path) -> AsyncEngine:
-    """Async-движок поверх файла ``app.db`` с PRAGMA-хуком (FR-3)."""
+def make_engine(path: Path, *, busy_timeout_ms: int = 5000) -> AsyncEngine:
+    """
+    Async-движок поверх файла ``app.db`` с PRAGMA-хуком (FR-3).
+
+    ``busy_timeout_ms`` параметризован ради тестов контеншна (T028):
+    при дефолтных 5 с блокировка не всплывает в разумное время, поэтому
+    тест на двух писателей опускает таймаут до миллисекунд, чтобы
+    реально получить ``database is locked`` и проверить per-write ретрай.
+    Прод-вызовы (``plugin.py``) дефолт не трогают.
+    """
     engine = create_async_engine(f'sqlite+aiosqlite:///{path}')
 
     @event.listens_for(engine.sync_engine, 'connect')
@@ -49,10 +57,11 @@ def make_engine(path: Path) -> AsyncEngine:
         # busy_timeout — ADR §3.1 (T024): в раздельном режиме (--role api +
         # --role pipeline) два процесса пишут в один app.db; WAL разводит
         # читателей с писателем, а busy_timeout даёт писателям подождать
-        # снятия блокировки (до 5 с) вместо немедленного "database is
-        # locked". Записи api-процесса редкие (админ-действия), поэтому
-        # таймаута достаточно; явный per-write ретрай — в BACKLOG (T028).
-        cursor.execute('PRAGMA busy_timeout=5000')
+        # снятия блокировки вместо немедленного "database is locked".
+        # Поверх таймаута — per-write ретрай в storage-слое (T028,
+        # ``_retry_on_locked`` в stores.py) как backstop на исчерпание
+        # таймаута под всплеском админ-операций.
+        cursor.execute(f'PRAGMA busy_timeout={busy_timeout_ms}')
         cursor.close()
 
     return engine
