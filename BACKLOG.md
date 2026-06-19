@@ -44,12 +44,6 @@ BACKLOG.md, BOARD.md и CHANGELOG.md) + 1`. ID не переиспользует
 <!-- T033 (per-pipeline forward_media) — взят в работу 2026-06-18,
      переехал в BOARD.md → Doing (ветка T033-forward-media). -->
 
-- **T012** — [2026-06-11] Перенести из dreamteam механизм публикации:
-  `scripts/publish.sh` + `.secrets`/`.secrets.example` (PYPI_TOKEN,
-  twine check перед upload) — пригодится к следующему релизу на PyPI.
-  Заодно: завести project-scoped PyPI-токен для angarion (публикация
-  0.1.0 сделана account-scoped токеном из dreamteam).
-
 - **T017** — [2026-06-13] Проверить `angarion login` при наличии сотовой
   сети. При первом боевом демо M3 (T005) код входа не пришёл: служебный
   чат `777000` за день пуст, запрос шёл из-под VPN (IP Молдова) —

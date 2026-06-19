@@ -258,6 +258,21 @@ uv run pytest -m integration            # запуск интеграционн�
 Session-файл — полноценные учётные данные аккаунта: живёт в `sessions/`
 (git-ignored), никогда не коммитится и не копируется в открытые места.
 
+### Публикация на PyPI
+
+Релиз собирается и выкладывается через `scripts/publish.sh` (`uv build`
+→ `twine check` → `uv publish`). Токен берётся из git-ignored `.secrets`
+(`PYPI_TOKEN`; образец — `.secrets.example`):
+
+```bash
+cp .secrets.example .secrets            # заполнить PYPI_TOKEN
+scripts/publish.sh                      # сборка + проверка + загрузка на PyPI
+scripts/publish.sh --test               # то же на TestPyPI (PYPI_TEST_TOKEN)
+```
+
+Токен — project-scoped (scope «Project: angarion»); первая публикация
+требует account-scoped, после неё переключаемся на project-scoped.
+
 ## Бэкапы
 
 Гайд §17.6 ТЗ с поправкой на хранение сессий в БД (ADR 2026-06-13 в
