@@ -71,17 +71,3 @@ BACKLOG.md, BOARD.md и CHANGELOG.md) + 1`. ID не переиспользует
   Acceptance: пример воспроизводим; на корпусе реальных сообщений
   извлечение полей и нормализация координат работают на приемлемом
   уровне (метрика уточняется при взятии).
-
-- **T036** — [2026-06-19] **Каталоги шаблонов в шве `angarion.pages`**
-  (follow-up T029) — entry-point-загрузка страниц (`load_pages`) передаёт в
-  `create_app` только `Page`, без `template_dirs`. Поэтому entry-point-
-  страница, наследующая `angarion/base.html` через общий
-  `request.app.state.templates`, не найдёт свой шаблон (его каталога нет в
-  `ChoiceLoader`) — приходится либо рендерить самодостаточно (свой
-  `Jinja2Templates` / `HTMLResponse`), либо монтировать лаунчером с
-  `template_dirs` (как `examples/web/`). Рассмотреть расширение контракта:
-  дескриптор, несущий `Page` + каталог шаблонов, чтобы чистый CLI давал и
-  наследование `base.html`. Взвесить против простоты «один entry point —
-  один `Page`» (мирроринг `angarion.processors`). Acceptance: entry-point-
-  страница наследует `base.html` под `angarion run --with-api` без лаунчера;
-  контракт покрыт тестом.

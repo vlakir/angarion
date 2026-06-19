@@ -68,6 +68,20 @@ _(пусто)_
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
 
+- **T036** — Каталоги шаблонов в шве `angarion.pages` (follow-up T029)
+  [closed 2026-06-19, текущий PR]. Снято ограничение T029: шов передавал в
+  `create_app` только `Page` без `template_dirs`, поэтому entry-point-
+  страница не наследовала `angarion/base.html` через общий
+  `request.app.state.templates`. Решение: опциональное поле
+  `Page.template_dirs: tuple[Path, ...] = ()`; `create_app` собирает каталоги
+  со всех `pages` и подмешивает в общий `ChoiceLoader` (после явного
+  аргумента). Выбран вариант «поле у `Page`» (сохраняет симметрию «один entry
+  point — один `Page`»), не отдельный дескриптор-обёртка. ADR 2026-06-19;
+  гайд web-api + `examples/web/` обновлены (страница примера несёт
+  `template_dirs` сама). Acceptance выполнен: entry-point-страница наследует
+  `base.html` под чистым CLI без лаунчера — контрактный тест
+  (`create_app(pages=load_pages())` рендерит страницу внутри каркаса
+  `base.html`) зелёный; coverage 96.5%. Ветка `T036-page-template-dirs`.
 - **T032** — Лёгкий поллинг недавнего окна — backstop правок/удалений
   [closed 2026-06-19, текущий PR]. Спека Clarified+Analyzed
   (`specs/T032-recent-window-poll/`); ADR 2026-06-19. Окно min(N сообщений,

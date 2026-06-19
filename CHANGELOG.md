@@ -58,6 +58,18 @@ T-ID между релизами — `CHANGELOG.md` единственное per
   лаунчера, расширение шва — T036). Публичный API получил `load_pages` /
   `PAGES_GROUP`; гайд `docs/guides/web-api.md` и `examples/web/` обновлены.
   ADR 2026-06-19.
+- Каталоги шаблонов в шве `angarion.pages` — поле `Page.template_dirs`
+  (T036, follow-up T029): `Page` опционально несёт свои Jinja-каталоги,
+  `create_app` подмешивает их в общий `ChoiceLoader` (после явного
+  аргумента `template_dirs`). Снимает ограничение T029: entry-point-
+  страница чистого CLI (`angarion run --with-api`) наследует
+  `angarion/base.html` через общий `request.app.state.templates` **без
+  собственного лаунчера**. Дефолт `()` — обратная совместимость; страница,
+  рендерящая самодостаточно, каталогов не несёт. Выбран вариант «поле у
+  `Page`» (сохраняет симметрию «один entry point — один `Page`» с
+  `angarion.processors`), а не отдельный дескриптор-обёртка. Гайд
+  `docs/guides/web-api.md` и `examples/web/` обновлены (страница примера
+  теперь несёт `template_dirs` сама). ADR 2026-06-19.
 - Тулинг публикации на PyPI (T012, перенос из шаблона dreamteam):
   `scripts/publish.sh` (`uv build` → `twine check` → `uv publish`, флаг
   `--test` для TestPyPI), `twine` в dev-зависимостях, `PYPI_TOKEN` /
