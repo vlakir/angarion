@@ -33,6 +33,7 @@ from angarion.adapters.http.composition import (
     build_web_deps,
 )
 from angarion.adapters.http.deps import AngarionDeps
+from angarion.adapters.http.pages import load_pages
 from angarion.bootstrap import (
     AngarionApp,
     build_app,
@@ -49,7 +50,9 @@ _log = get_logger('angarion.http.server')
 def _make_server(deps: AngarionDeps) -> uvicorn.Server:
     """Собрать ``uvicorn.Server`` поверх ``create_app(deps)`` по ``[api]``."""
     api = deps.settings.api
-    app = create_app(deps)
+    # Пользовательские страницы из entry points (§12.6, T029): чистый CLI
+    # (run --with-api / --role api) монтирует их без своего лаунчера.
+    app = create_app(deps, pages=load_pages())
     config = uvicorn.Config(
         app, host=api.host, port=api.port, log_level='info', access_log=False
     )

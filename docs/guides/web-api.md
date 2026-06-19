@@ -124,6 +124,34 @@ app = create_app(
 пользователя ищутся раньше встроенных (`ChoiceLoader`) — любой встроенный
 шаблон можно переопределить.
 
+### Через entry point — без своего лаунчера (T029)
+
+Если расширение — только страница (без своей JSON-ручки), её не обязательно
+монтировать собственным `create_app`. Зарегистрируйте `Page` в entry-point-
+группе `angarion.pages` (симметрично `angarion.processors` /
+`angarion.adapters`), и `angarion run --with-api` (а также `--role api`)
+подхватит её сам:
+
+```toml
+# pyproject.toml вашего пакета-расширения
+[project.entry-points."angarion.pages"]
+ext = "my_ext.pages:ext_page_descriptor"   # значение — объект Page
+```
+
+Раннер резолвит зарегистрированные `Page` (`load_pages()`), сортирует по
+`path` для стабильной навигации и передаёт в `create_app`. Каждый entry
+point обязан загружаться в `Page` — иначе `ConfigError`; недоступный extra
+(C-1) пропускается с предупреждением, не роняя запуск.
+
+> **Шаблоны.** Шов передаёт только `Page`, без `template_dirs`. Поэтому
+> entry-point-страница должна быть самодостаточной по рендеру: либо
+> возвращать `HTMLResponse` напрямую, либо держать собственный
+> `Jinja2Templates` со своим загрузчиком. Чтобы наследовать
+> `angarion/base.html` через общий `request.app.state.templates`, каталог
+> шаблонов нужно отдать в `create_app(template_dirs=[...])` — а это путь
+> собственного лаунчера (как `examples/web/`). Расширение шва на каталоги
+> шаблонов — возможное продолжение.
+
 ## Аутентификация
 
 - **`auth = "none"`** — все роутеры открыты; `CurrentUser` / `AdminUser`

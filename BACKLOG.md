@@ -97,15 +97,16 @@ BACKLOG.md, BOARD.md и CHANGELOG.md) + 1`. ID не переиспользует
   ожидание бакета. Acceptance: `app.stop()` завершается ≤ N сек даже при
   воркере в долгом throttle-ожидании; тест воспроизводит.
 
-- **T029** — [2026-06-15] **Загрузка пользовательских страниц/ручек в
-  `angarion run --with-api`** (§12.6, всплыло в T025 фаза 3) — встроенный
-  CLI-раннер собирает приложение как `create_app(deps)` без
-  пользовательских `routers`/`pages` (передать Python-объекты через CLI
-  нельзя), поэтому расширение Web сейчас требует собственного лаунчера
-  (см. `examples/web/run.py`). Нужен seam для чистого CLI: entry-point-
-  группа `angarion.pages` (по образцу `angarion.processors`/
-  `angarion.adapters`) — раннер резолвит зарегистрированные `Page`/роутеры
-  и передаёт в `create_app`. Новая фича-расширение (нужен ADR + спека),
-  вне scope T025. Acceptance: установленный пакет с entry point
-  `angarion.pages` отдаёт страницу в навигацию под `angarion run
-  --with-api` без кастомного лаунчера; контракт загрузки покрыт тестом.
+- **T036** — [2026-06-19] **Каталоги шаблонов в шве `angarion.pages`**
+  (follow-up T029) — entry-point-загрузка страниц (`load_pages`) передаёт в
+  `create_app` только `Page`, без `template_dirs`. Поэтому entry-point-
+  страница, наследующая `angarion/base.html` через общий
+  `request.app.state.templates`, не найдёт свой шаблон (его каталога нет в
+  `ChoiceLoader`) — приходится либо рендерить самодостаточно (свой
+  `Jinja2Templates` / `HTMLResponse`), либо монтировать лаунчером с
+  `template_dirs` (как `examples/web/`). Рассмотреть расширение контракта:
+  дескриптор, несущий `Page` + каталог шаблонов, чтобы чистый CLI давал и
+  наследование `base.html`. Взвесить против простоты «один entry point —
+  один `Page`» (мирроринг `angarion.processors`). Acceptance: entry-point-
+  страница наследует `base.html` под `angarion run --with-api` без лаунчера;
+  контракт покрыт тестом.

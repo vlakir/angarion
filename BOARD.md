@@ -68,6 +68,19 @@ _(пусто)_
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
 
+- **T029** — Entry-point-группа `angarion.pages` для UI-страниц в чистом CLI
+  [closed 2026-06-19, текущий PR]. Встроенный раннер собирал `create_app(deps)`
+  без пользовательских `pages` (Python-объект мимо CLI) — расширение Web
+  требовало своего лаунчера. Решение: группа `angarion.pages` (по образцу
+  `angarion.processors`/`angarion.adapters`), `load_pages()` в http-адаптере
+  (не в ядре — §14.9) резолвит/проверяет тип/сортирует по `path`, раннер
+  `_make_server` передаёт в `create_app`. Ограничение: только `Page` без
+  `template_dirs` (наследование `base.html` через общий загрузчик — путь
+  лаунчера; расширение шва вынесено в BACKLOG **T036**). Публичный API получил
+  `load_pages`/`PAGES_GROUP`; гайд web-api + `examples/web` обновлены. ADR
+  2026-06-19. Acceptance выполнен: контракт загрузки (резолв/сортировка/пропуск
+  extra/проверка типа) + сквозной тест (страница в навигации и монтируется,
+  в т.ч. через раннер) — зелёные; coverage 96.5%. Ветка `T029-pages-entrypoint`.
 - **T012** — Перенос publish-тулинга из шаблона dreamteam
   [closed 2026-06-19, текущий PR]. `scripts/publish.sh` (`uv build` →
   `twine check` → `uv publish`, `--test` для TestPyPI), `twine` в dev-deps,
