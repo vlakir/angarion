@@ -15,17 +15,41 @@ import unicodedata
 from angarion.domain.models import Endpoint, MediaRef, Record, RecordKind
 
 
+def _escape(part: str) -> str:
+    r"""
+    Экранирование разделителя ``:`` (и самого escape-символа ``\``) в одном
+    компоненте ключа.
+
+    Без экранирования colon-concat не инъективен: ``address`` с ``:`` (реально —
+    Matrix room-id ``!room:server``) даёт ту же строку, что и пара
+    ``address`` + ``thread_id`` (T043). После экранирования единственные
+    *неэкранированные* ``:`` в ключе — структурные разделители, поэтому разбор
+    однозначен, а отображение «кортеж компонентов → ключ» инъективно.
+
+    No-op для компонентов без ``:`` и ``\`` (числовые Telegram chat-id, имена
+    транспортов/аккаунтов): такие ключи байт-в-байт совпадают со старым
+    форматом — Telegram-персистентность не ломается. Порядок замен важен:
+    сперва ``\``, затем ``:``, чтобы не задвоить уже введённые escape-символы.
+    """
+    return part.replace('\\', '\\\\').replace(':', '\\:')
+
+
 def make_source_key(
     transport: str,
     account_id: str,
     address: str,
     thread_id: str | None = None,
 ) -> str:
-    """Ключ источника: ``transport:account_id:address[:thread_id]``."""
-    key = f'{transport}:{account_id}:{address}'
+    """
+    Ключ источника: ``transport:account_id:address[:thread_id]``.
+
+    Компоненты экранируются (см. :func:`_escape`), поэтому ``:`` внутри любого
+    из них (Matrix room-id) не схлопывает разные источники в один ключ (T043).
+    """
+    parts = [transport, account_id, address]
     if thread_id is not None:
-        key = f'{key}:{thread_id}'
-    return key
+        parts.append(thread_id)
+    return ':'.join(_escape(part) for part in parts)
 
 
 def normalize_and_hash(text: str) -> str:
@@ -109,16 +133,22 @@ def make_dedup_key(
     текст, — дубль (осознанно). С M7 версию-слот формирует ``_edit_slot`` из
     текстового и медиа-хэшей: текст-без-медиа даёт прежний ключ, медиа влияет
     аддитивно (правка вложения = новая версия; медиа-only больше не падает).
+
+    ``external_id`` экранируется (T043): ``:`` в нём (Matrix event-id старых
+    версий комнат ``$id:server``) не должен схлопывать разные сообщения.
+    ``source_key`` уже инъективен (его экранирует :func:`make_source_key`), а
+    ``slot`` терминален, поэтому экранирования не требует.
     """
+    ext = _escape(external_id)
     if kind is RecordKind.NEW:
-        return f'{source_key}:{external_id}:new'
+        return f'{source_key}:{ext}:new'
     if kind is RecordKind.EDITED:
         slot = _edit_slot(content_hash, media_hash)
         if slot is None:
             msg = 'content_hash или media_hash обязателен для ключа EDITED (§7.2)'
             raise ValueError(msg)
-        return f'{source_key}:{external_id}:edit:{slot}'
-    return f'{source_key}:{external_id}:del'
+        return f'{source_key}:{ext}:edit:{slot}'
+    return f'{source_key}:{ext}:del'
 
 
 def make_idempotency_key(
@@ -134,5 +164,10 @@ def make_idempotency_key(
     могут слать в одну группу и не должны подавлять друг друга.
     Worker частично применяет функцию со своим пайплайном (A-9), у
     процессора остаётся сигнатура ``(record, target, n) -> str``.
+
+    ``pipeline`` и ``target.address`` экранируются (T043): ``:`` в адресе цели
+    (Matrix-комната) не должен сливать разные адреса доставки. ``->`` —
+    зарезервированный структурный маркер границы (имена пайплайнов и адреса
+    поддерживаемых транспортов его не содержат); ``dedup_key`` уже инъективен.
     """
-    return f'{record.dedup_key}->{pipeline}:{target.address}:{n}'
+    return f'{record.dedup_key}->{_escape(pipeline)}:{_escape(target.address)}:{n}'
