@@ -13,6 +13,9 @@
 расшифровывающий декоратор ``EncryptedSessionStore`` (ключ
 ``settings.session_key``); пустой ключ при наличии сессий → fail-fast
 при подключении (``ClientRegistry.connect_all`` на старте listener'а).
+Если у аккаунта задано поле ``session`` (T042, ADR 2026-06-20) — эта
+``StringSession`` идёт в пул как env-сессия и подключается напрямую,
+минуя ``app.db`` и ключ шифрования (dev/CI-путь).
 
 Модуль без ``from __future__ import annotations``: аннотации
 pydantic-модели вычисляются в runtime; типы bootstrap/config в
@@ -61,6 +64,14 @@ class TelegramAccountConfig(BaseModel):
     а не открытым текстом в TOML (§17.7). ``account_id`` (ключ сессии в
     БД) — это имя самой секции ``[accounts.*]``, поэтому отдельным полем
     не дублируется. Ссылка на сессию резолвится по нему в bootstrap.
+
+    ``session`` (T042, ADR 2026-06-20) — опциональная **уже авторизованная**
+    ``StringSession``: если задана (обычно env
+    ``ANGARION_ACCOUNTS__<NAME>__SESSION``), рантайм подключает клиента
+    напрямую этой строкой, минуя ``app.db`` и ``ANGARION_SESSION_KEY``
+    (приоритет над сохранённой сессией). Это **dev/CI-путь** — plaintext
+    учётные данные аккаунта, не prod-дефолт; в TOML открытым текстом не
+    кладётся, только env. Пусто — прежний путь (расшифровка из ``app.db``).
     """
 
     model_config = ConfigDict(frozen=True, extra='forbid')
@@ -68,6 +79,7 @@ class TelegramAccountConfig(BaseModel):
     transport: Literal['telegram']
     api_id: int = Field(gt=0)
     api_hash: str = Field(min_length=1)
+    session: str = ''
 
 
 def _shared_registry(
@@ -78,13 +90,21 @@ def _shared_registry(
     if isinstance(existing, ClientRegistry):
         return existing
     credentials: dict[str, tuple[int, str]] = {}
+    env_sessions: dict[str, str] = {}
     for name, raw in accounts.items():
         cfg = TelegramAccountConfig.model_validate(raw.model_dump())
         credentials[name] = (cfg.api_id, cfg.api_hash)
+        if cfg.session:
+            # T042: env-сессия приоритетнее app.db, ключ шифрования не нужен.
+            env_sessions[name] = cfg.session
     session_store = EncryptedSessionStore(
         deps.storage.session, deps.settings.session_key
     )
-    registry = ClientRegistry(credentials=credentials, session_store=session_store)
+    registry = ClientRegistry(
+        credentials=credentials,
+        session_store=session_store,
+        env_sessions=env_sessions,
+    )
     deps.shared[_REGISTRY_KEY] = registry
     return registry
 

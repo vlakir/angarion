@@ -61,12 +61,32 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
      разработчика, иначе теряется фокус (классическое WIP-limit
      правило из Kanban). -->
 
-_(пусто — следующая задача берётся из BACKLOG.md)_
-
 ## Done
 
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
+
+- **T042** — Сессия из env/конфига: авторизованная `StringSession` напрямую,
+  без `login`/`seed` для dev-прогонов (ветка `T042-session-from-env`)
+  [closed 2026-06-20, текущий PR]. `TelegramAccountConfig` получил
+  опциональное поле `session` — если задано (обычно env
+  `ANGARION_ACCOUNTS__<NAME>__SESSION`), `ClientRegistry` подключает клиента
+  напрямую этой строкой через `env_sessions`, минуя `app.db` и
+  `ANGARION_SESSION_KEY` (приоритетнее сохранённой). Боевой путь хранения в
+  `app.db` не тронут (дефолт). ADR 2026-06-20 (безопасность: env-сессия —
+  dev/CI-путь, plaintext учётные данные, не prod-дефолт). Примеры
+  (`forward`/`media`/`digest`/`web`) подхватывают сессию из git-ignored
+  `.secrets` (`scripts/example_dev.sh`: Telethon-файл → `StringSession` →
+  env); `run.sh` ×4 и READMEs обновлены, CHANGELOG/README — тоже. Acceptance
+  выполнен: живой прогон на реальном аккаунте — env-сессия подключается с
+  **пустым** session-store и без ключа (resolve групп A/B), 5 интеграционных
+  pipeline-тестов зелёные, буквальный `forward/run.sh` стартует без
+  login/seed/ключа; Matrix-пример прогнан вживую на локальном Synapse
+  (login → старт → зеркало SRC→DST подтверждено, 3 integration-теста зелёные);
+  prod-путь `app.db` цел; `mypy --strict` чист, coverage 96.51%, 1116 тестов
+  зелёные. По дороге фикс предсуществующего бага dev-хелпера: `example_dev.sh`
+  мапил TG-креды на `main` любого транспорта (ломал Matrix-пример) — теперь
+  гейтится `ANGARION_DEV_MAIN_TRANSPORT`.
 
 - **T041** — Транспорт-агностичная модель ядра: `Record` + `transport` +
   capabilities адаптера (`specs/T041-record-transport-model/spec.md`)

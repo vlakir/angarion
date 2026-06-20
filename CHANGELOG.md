@@ -29,6 +29,23 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Added
 
+- Telegram-сессия из env/конфига (T042): `[accounts.*]` получил опциональное
+  поле `session` — уже авторизованная `StringSession`, обычно из env
+  `ANGARION_ACCOUNTS__<NAME>__SESSION`. Если задана, рантайм подключает
+  клиента напрямую этой строкой, минуя `app.db` и `ANGARION_SESSION_KEY`
+  (приоритетнее сохранённой сессии). Это **dev/CI-путь** (plaintext учётные
+  данные, не prod-дефолт): dev/CI-прогон любого примера сводится к выдаче
+  env-сессии — без `angarion login`, seed и ключа шифрования. Боевое хранение
+  остаётся зашифрованным в `app.db` (дефолт не тронут). Примеры (`forward`/
+  `media`/`digest`/`web`) подхватывают сессию из git-ignored `.secrets`
+  автоматически (`scripts/example_dev.sh` конвертирует Telethon-файл →
+  `StringSession`). ADR 2026-06-20. Заодно исправлен предсуществующий баг
+  dev-хелпера (вскрыт живым прогоном Matrix-примера): `scripts/example_dev.sh`
+  безусловно мапил Telegram-креды `.secrets` на аккаунт `main`, ломая примеры
+  с не-Telegram `main` (`MatrixAccountConfig` — `extra='forbid'`); теперь
+  маппинг гейтится транспортом (`ANGARION_DEV_MAIN_TRANSPORT`, дефолт
+  `telegram`; `examples/matrix/run.sh` opt-out в `matrix`).
+
 - Лёгкий поллинг недавнего окна — дешёвый backstop правок/удалений (T032,
   **Telegram + Matrix**): частая (`[catchup] recent_interval`, дефолт ≈30 с)
   сверка только узкого окна — последних `recent_window_messages` сообщений не

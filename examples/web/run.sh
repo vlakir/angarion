@@ -50,28 +50,39 @@ mkdir -p "$DATA_DIR"
 : "${ANGARION_ACCOUNTS__MAIN__API_ID:?задай export ANGARION_ACCOUNTS__MAIN__API_ID=...}"
 : "${ANGARION_ACCOUNTS__MAIN__API_HASH:?задай export ANGARION_ACCOUNTS__MAIN__API_HASH=...}"
 
-# 2. ключ шифрования сессии: генерим один раз, дальше переиспользуем
-#    (новый ключ обесценил бы уже сохранённую сессию → re-login)
-if [[ ! -f $KEY_FILE ]]; then
-  uv run python -c \
-    "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" \
-    >"$KEY_FILE"
-  echo "→ Сгенерён ключ шифрования сессии: $KEY_FILE (храни отдельно от app.db!)"
-fi
-chmod 600 "$KEY_FILE"  # безусловно: права не должны «дрейфовать» при повторных запусках
-ANGARION_SESSION_KEY=$(cat "$KEY_FILE")
-export ANGARION_SESSION_KEY
-
-# 3. БД + миграции (идемпотентно)
+# 2. БД + миграции (идемпотентно; нужны в любом случае —
+#    registry/cursors/analytics, независимо от способа подачи сессии)
 uv run angarion migrate --config "$CONFIG"
 
-# 4. dev: засеять сессию тестового аккаунта из sessions/integration.session
-#    (если есть `.secrets` и файл) — обходит интерактивный login. Без них
-#    скрипт ничего не делает, и ниже сработает обычная авторизация.
-uv run python "$ROOT/scripts/seed_session.py" "$CONFIG" main
+# 3. Сессия аккаунта 'main'. Dev-путь (T042, ADR 2026-06-20): если в
+#    окружении есть авторизованная StringSession
+#    (ANGARION_ACCOUNTS__MAIN__SESSION — example_dev.sh кладёт её из
+#    .secrets), рантайм берёт сессию прямо из env: ни ключ шифрования, ни
+#    seed, ни login не нужны (env-сессия приоритетнее app.db). Боевой путь
+#    (нет env-сессии): сессия лежит зашифрованной в app.db — наполняется
+#    seed'ом из dev-файла или интерактивным login под ключом шифрования.
+if [[ -n "${ANGARION_ACCOUNTS__MAIN__SESSION:-}" ]]; then
+  echo "→ Сессия 'main' взята из env (StringSession) — ключ/seed/login не нужны."
+else
+  # 3a. ключ шифрования сессии: генерим один раз, дальше переиспользуем
+  #     (новый ключ обесценил бы уже сохранённую сессию → re-login)
+  if [[ ! -f $KEY_FILE ]]; then
+    uv run python -c \
+      "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" \
+      >"$KEY_FILE"
+    echo "→ Сгенерён ключ шифрования сессии: $KEY_FILE (храни отдельно от app.db!)"
+  fi
+  chmod 600 "$KEY_FILE"  # права не должны «дрейфовать» при повторных запусках
+  ANGARION_SESSION_KEY=$(cat "$KEY_FILE")
+  export ANGARION_SESSION_KEY
 
-# 5. авторизация — только если сессии аккаунта ещё нет (идемпотентно)
-if uv run python - "$CONFIG" <<'PY'
+  # 3b. dev: засеять сессию тестового аккаунта из sessions/integration.session
+  #     (если есть `.secrets` и файл) — обходит интерактивный login. Без них
+  #     скрипт ничего не делает, и ниже сработает обычная авторизация.
+  uv run python "$ROOT/scripts/seed_session.py" "$CONFIG" main
+
+  # 3c. авторизация — только если сессии аккаунта ещё нет (идемпотентно)
+  if uv run python - "$CONFIG" <<'PY'
 import asyncio
 import sys
 
@@ -92,14 +103,15 @@ async def has_session() -> int:
 
 raise SystemExit(asyncio.run(has_session()))
 PY
-then
-  echo "→ Сессия аккаунта 'main' уже есть — авторизация не нужна."
-else
-  echo "→ Сессия не найдена. Авторизация (телефон → код из Telegram → 2FA):"
-  uv run angarion login --config "$CONFIG" --account main
+  then
+    echo "→ Сессия аккаунта 'main' уже есть — авторизация не нужна."
+  else
+    echo "→ Сессия не найдена. Авторизация (телефон → код из Telegram → 2FA):"
+    uv run angarion login --config "$CONFIG" --account main
+  fi
 fi
 
-# 6. запуск combined-процесса через лаунчер (он собирает приложение с
+# 4. запуск combined-процесса через лаунчер (он собирает приложение с
 #    кастомной ручкой/страницей и поднимает uvicorn рядом с конвейером)
 echo "→ Запуск. Web UI: http://127.0.0.1:8000/ui  (Ctrl+C — стоп)"
 uv run python run.py

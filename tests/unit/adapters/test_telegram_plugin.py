@@ -107,6 +107,27 @@ def test_account_config_rejects_empty_api_hash() -> None:
         )
 
 
+def test_account_config_session_defaults_empty() -> None:
+    """T042: поле session опционально, по умолчанию пусто (путь app.db)."""
+    cfg = TelegramAccountConfig.model_validate(
+        {'transport': 'telegram', 'api_id': 2040, 'api_hash': 'abc123'}
+    )
+    assert cfg.session == ''
+
+
+def test_account_config_accepts_env_session() -> None:
+    """T042: авторизованная StringSession принимается полем session."""
+    cfg = TelegramAccountConfig.model_validate(
+        {
+            'transport': 'telegram',
+            'api_id': 2040,
+            'api_hash': 'abc123',
+            'session': 'STRING-SESSION',
+        }
+    )
+    assert cfg.session == 'STRING-SESSION'
+
+
 def test_account_config_forbids_extra_keys() -> None:
     with pytest.raises(ValidationError):
         TelegramAccountConfig.model_validate(
@@ -201,6 +222,24 @@ class TestPluginObject:
         )
         with pytest.raises(ConfigError, match='ANGARION_SESSION_KEY'):
             await listener._pool.connect_all()
+
+    async def test_env_session_wired_into_registry(self) -> None:
+        """T042: поле session аккаунта проводится в пул как env-сессия."""
+        deps = _deps()  # settings.session_key == '' и app.db пуст
+        account = TelegramAccountConfig.model_validate(
+            {
+                'transport': 'telegram',
+                'api_id': 2040,
+                'api_hash': 'hash',
+                'session': 'ENV-STRING',
+            }
+        )
+        listener = PLUGIN.make_listener(
+            deps, {'main': account}, [EndpointConfig(account='main', address='@g')]
+        )
+        pool = listener._pool
+        assert isinstance(pool, ClientRegistry)
+        assert pool._env_sessions == {'main': 'ENV-STRING'}
 
 
 class TestLogin:

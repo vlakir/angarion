@@ -12,6 +12,10 @@ M3, фаза 5).
 ``realclient.connect_client`` (единственный telethon-зависимый путь, W1),
 тесты подставляют fake без сети. Нет сессии для аккаунта → ``ConfigError``
 с подсказкой ``angarion login``.
+
+Источник строки сессии (T042, ADR 2026-06-20): сначала ``env_sessions``
+(``StringSession`` из конфига/env, dev/CI-путь, приоритетнее), затем
+``session_store`` (расшифрованная из ``app.db``, prod-дефолт).
 """
 
 from __future__ import annotations
@@ -72,10 +76,14 @@ class ClientRegistry:
         *,
         credentials: Mapping[str, tuple[int, str]],
         session_store: SessionStorePort,
+        env_sessions: Mapping[str, str] | None = None,
         connect: ConnectFn = connect_client,
     ) -> None:
         self._credentials = dict(credentials)
         self._session_store = session_store
+        # T042: авторизованные StringSession из конфига/env per account —
+        # приоритетнее app.db, подключаются напрямую без ключа шифрования.
+        self._env_sessions = dict(env_sessions or {})
         self._connect = connect
         self._clients: dict[str, ConnectedClient] = {}
 
@@ -94,7 +102,10 @@ class ClientRegistry:
         if self._clients:
             return
         for account_id, (api_id, api_hash) in self._credentials.items():
-            session_string = await self._session_store.load(account_id)
+            # T042: env-сессия приоритетнее сохранённой в app.db.
+            session_string = self._env_sessions.get(account_id)
+            if session_string is None:
+                session_string = await self._session_store.load(account_id)
             if session_string is None:
                 msg = (
                     f'нет сессии для аккаунта {account_id!r}: выполни '
