@@ -20,7 +20,7 @@ from angarion.application.manual import (
 )
 from angarion.domain.models import Endpoint, MediaRef, Record, RecordKind
 
-__version__ = '0.1.0'
+__version__ = '0.4.0'
 
 __all__ = [
     'MANUAL_ACCOUNT',
