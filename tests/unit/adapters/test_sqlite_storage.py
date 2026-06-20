@@ -21,6 +21,7 @@ from uuid import uuid4
 import pytest
 import sqlalchemy as sa
 from angarion.testing import (
+    NOW,
     SOURCE_KEY,
     make_analytics_event,
     make_cursor,
@@ -34,7 +35,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from angarion.adapters.storage.engine import apply_migrations, make_engine
 from angarion.adapters.storage.orm import Base, UserRow, UTCDateTime
 from angarion.adapters.storage.plugin import STORAGE_BACKEND, SqliteStorage
-from angarion.adapters.storage.stores import SqliteStateStore, _is_locked
+from angarion.adapters.storage.stores import (
+    SqliteAnalytics,
+    SqliteStateStore,
+    _is_locked,
+)
 from angarion.config import StorageConfig
 from angarion.domain.errors import ConfigError
 
@@ -97,6 +102,10 @@ async def test_outbox_registry_dlq_analytics_survive_reopen(
     await first.dead_letters.put(letter)
     event = make_analytics_event()
     await first.analytics.record(event)
+    # T045: аналитика батчится — graceful-остановка (AngarionApp.stop) сбрасывает
+    # буфер; здесь имитируем её явным flush перед «рестартом» (reopen). Без flush
+    # буферизованные события теряются (durability-trade-off, наблюдаемость).
+    await first.analytics.flush()
 
     reopened = open_storage()
     record = await reopened.outbox.get(msg.idempotency_key)
@@ -280,13 +289,19 @@ def test_factory_without_path_fails() -> None:
 async def test_wal_and_foreign_keys_pragmas(
     open_storage: Callable[..., SqliteStorage],
 ) -> None:
-    """FR-3: PRAGMA journal_mode=WAL и foreign_keys=ON на каждом connect."""
+    """FR-3: PRAGMA journal_mode=WAL, foreign_keys=ON, synchronous=NORMAL."""
     storage = open_storage()
     async with storage.engine.connect() as conn:
         journal = (await conn.execute(sa.text('PRAGMA journal_mode'))).scalar()
         foreign_keys = (await conn.execute(sa.text('PRAGMA foreign_keys'))).scalar()
+        synchronous = (await conn.execute(sa.text('PRAGMA synchronous'))).scalar()
     assert journal == 'wal'
     assert foreign_keys == 1
+    # T045: synchronous=NORMAL (1) под WAL — fsync на checkpoint, не на каждый
+    # commit; ~2× throughput на диске, durability-trade-off совместим с
+    # at-least-once (потеря последних транзакций при power-loss → повторная
+    # обработка, гасится outbox). FULL (2) был непреднамеренным дефолтом.
+    assert synchronous == 1
 
 
 async def test_datetimes_stored_as_iso_utc_text(
@@ -331,6 +346,39 @@ async def test_analytics_event_full_roundtrip(
     )
     await storage.analytics.record(event)
     assert await storage.analytics.recent() == [event]
+
+
+async def test_analytics_buffers_until_flush(
+    open_storage: Callable[..., SqliteStorage],
+) -> None:
+    """
+    T045: ``record`` буферизует в памяти, в БД пишет батчем на flush —
+    убирает per-event транзакцию с горячего пути. До flush событие в БД
+    не персистировано (второй инстанс над тем же файлом его не видит);
+    после ``flush()`` — видит.
+    """
+    storage = open_storage()
+    # большие пороги → ни size-, ни time-flush не срабатывают сами
+    writer = SqliteAnalytics(storage.sessions, batch_size=10_000, flush_interval=1e9)
+    reader = SqliteAnalytics(storage.sessions)
+    event = make_analytics_event()
+    await writer.record(event)
+    assert await reader.recent() == []  # ещё в буфере, не в БД
+    await writer.flush()
+    assert await reader.recent() == [event]
+
+
+async def test_analytics_auto_flushes_on_batch_size(
+    open_storage: Callable[..., SqliteStorage],
+) -> None:
+    """T045: буфер сбрасывается автоматически при достижении batch_size."""
+    storage = open_storage()
+    writer = SqliteAnalytics(storage.sessions, batch_size=3, flush_interval=1e9)
+    reader = SqliteAnalytics(storage.sessions)
+    for n in range(3):
+        await writer.record(make_analytics_event(at=NOW + timedelta(seconds=n)))
+    # без явного flush: третий record добил буфер до batch_size → сброс
+    assert len(await reader.recent()) == 3
 
 
 async def test_outbox_record_uid_roundtrip(

@@ -169,6 +169,30 @@ async def test_db_stores_envelope_as_json_text_not_pickle(
     assert json.loads(raw) == json.loads(envelope.model_dump_json())
 
 
+async def test_connections_use_synchronous_normal(
+    open_queue: Callable[[], PersistQueue],
+) -> None:
+    """
+    T045: queue.db-соединения под WAL используют synchronous=NORMAL — fsync
+    на checkpoint, не на каждый put/get/ack (на диске ~+20% throughput,
+    T044 фаза C). NORMAL под WAL не повреждает БД при сбое; потерянные
+    хвостовые записи → recover()/повторная обработка (at-least-once).
+    Проверка connection-level (в файле PRAGMA не виден): синхронность ниже
+    дефолтного FULL=2 на всех рабочих соединениях persistqueue.
+    """
+    queue = open_queue()
+    inner = queue._queue
+    connections = [
+        getattr(inner, attr)
+        for attr in ('_getter', '_putter', '_conn')
+        if getattr(inner, attr, None) is not None
+    ]
+    assert connections
+    for conn in connections:
+        (synchronous,) = conn.execute('PRAGMA synchronous').fetchone()
+        assert synchronous == 1  # NORMAL
+
+
 async def test_waiting_get_polls_and_stays_cancellable(tmp_path: Path) -> None:
     """A-7: ожидание — поллинг коротким таймаутом, задача отменяема."""
     queue = PersistQueue(path=tmp_path / 'queue.db', poll_interval=0.01)

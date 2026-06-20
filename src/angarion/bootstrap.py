@@ -143,6 +143,17 @@ async def _maybe_dispose(storage: StorageBundle) -> None:
         await dispose()
 
 
+async def _maybe_flush_analytics(storage: StorageBundle) -> None:
+    """
+    Сбросить буфер аналитики, если бэкенд её батчит (sqlite, T045): на
+    graceful-остановке буферизованные события персистируются, а не теряются
+    (крах без stop роняет ≤ flush_interval событий — durability-trade-off).
+    """
+    flush = getattr(storage.analytics, 'flush', None)
+    if callable(flush):
+        await flush()
+
+
 def _load_group[T: _NamedPluginObject](group: str, expected: type[T]) -> dict[str, T]:
     """
     Загрузить entry points группы в реестр по ``obj.name`` (FR-12).
@@ -578,6 +589,7 @@ class AngarionApp(BaseModel):
             with suppress(asyncio.CancelledError):
                 await task
         self._tasks = []
+        await _maybe_flush_analytics(self.storage)
         await _maybe_dispose(self.storage)
 
     async def submit_event(self, payload: ManualEvent | Record) -> None:

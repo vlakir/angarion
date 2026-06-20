@@ -2,7 +2,8 @@
 Движок и миграции SQLite-бэкенда (FR-3, FR-6, FR-7 спеки T003).
 
 Движок — ``sqlite+aiosqlite``; на каждом connect — ``PRAGMA
-journal_mode=WAL`` и ``foreign_keys=ON`` (§12.3). Миграции живут в
+journal_mode=WAL``, ``foreign_keys=ON`` и ``synchronous=NORMAL`` (§12.3,
+T045). Миграции живут в
 ``src/angarion/migrations/`` (C-5 — едут в wheel) и применяются
 программно: ``alembic upgrade head`` без ``alembic.ini``.
 
@@ -54,6 +55,14 @@ def make_engine(path: Path, *, busy_timeout_ms: int = 5000) -> AsyncEngine:
         cursor = dbapi_connection.cursor()
         cursor.execute('PRAGMA journal_mode=WAL')
         cursor.execute('PRAGMA foreign_keys=ON')
+        # synchronous=NORMAL (T045): под WAL fsync делается на checkpoint, а не
+        # на каждый commit — на диске это ~2× throughput (per-event транзакции
+        # ingest/worker/delivery упирались в fsync, см. T044 фаза C). NORMAL под
+        # WAL не повреждает БД при сбое питания; теряются лишь транзакции с
+        # последнего checkpoint — для at-least-once это повторная обработка
+        # (гасится outbox по idempotency_key), а не потеря события. FULL был
+        # непреднамеренным дефолтом SQLite, а не сознательным выбором.
+        cursor.execute('PRAGMA synchronous=NORMAL')
         # busy_timeout — ADR §3.1 (T024): в раздельном режиме (--role api +
         # --role pipeline) два процесса пишут в один app.db; WAL разводит
         # читателей с писателем, а busy_timeout даёт писателям подождать

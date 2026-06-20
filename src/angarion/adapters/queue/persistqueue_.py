@@ -27,6 +27,7 @@ from angarion.domain.models import QueueDepth, QueueEnvelope, QueueItem
 from angarion.domain.plugin import QueueBackend
 
 if TYPE_CHECKING:
+    import sqlite3
     from collections.abc import Callable
 
     from angarion.config import QueueConfig
@@ -51,6 +52,29 @@ class _JsonStringSerializer:
         return data.decode() if isinstance(data, bytes) else data
 
 
+class _NormalSyncAckQueue(SQLiteAckQueue):
+    """
+    ``SQLiteAckQueue`` с ``PRAGMA synchronous=NORMAL`` на каждом соединении
+    (T045). persistqueue ставит journal_mode=WAL, но оставляет synchronous
+    дефолтным FULL — fsync на каждый put/get/ack. Под WAL NORMAL делает
+    fsync на checkpoint, не на каждый commit (на диске ~+20% throughput,
+    T044 фаза C), не повреждая БД при сбое: потерянные хвостовые записи
+    возвращает ``recover()`` / повторная обработка (at-least-once). Хук
+    создания соединения — единственная точка персистенс-слоя persistqueue,
+    через которую pragma ставится для всех (getter/putter) соединений.
+
+    ``*args`` повторяет сигнатуру стороннего хука
+    (``path, multithreading, timeout``) без её фиксации — менять её нельзя,
+    а позиционный bool ``multithreading`` иначе тянул бы за собой
+    подавление линтера.
+    """
+
+    def _new_db_connection(self, *args: object) -> sqlite3.Connection:
+        conn: sqlite3.Connection = super()._new_db_connection(*args)
+        conn.execute('PRAGMA synchronous=NORMAL;')
+        return conn
+
+
 class PersistQueue:
     """
     ``EventQueuePort`` на ``persistqueue.SQLiteAckQueue``: FIFO,
@@ -68,7 +92,7 @@ class PersistQueue:
     ) -> None:
         db_file = Path(path)
         db_file.parent.mkdir(parents=True, exist_ok=True)
-        self._queue = SQLiteAckQueue(
+        self._queue = _NormalSyncAckQueue(
             path=str(db_file.parent),
             db_file_name=db_file.name,
             auto_resume=False,

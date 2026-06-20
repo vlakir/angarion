@@ -14,9 +14,11 @@ InMemory-эталоном (SC-4): общие правила реестра — �
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, cast
+from time import monotonic
+from typing import TYPE_CHECKING, Final, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, select, text, update
@@ -748,24 +750,81 @@ def _row_to_event(row: AnalyticsEventRow) -> AnalyticsEvent:
 
 
 class SqliteAnalytics:
-    """``AnalyticsPort``: append-only журнал + read-сторона (§5)."""
+    """
+    ``AnalyticsPort``: append-only журнал + read-сторона (§5).
 
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    Запись батчится (T045): ``record`` буферизует событие в памяти, в БД
+    оно уходит пачкой одной транзакцией — на горячем пути ingest→worker→
+    delivery аналитика давала по 2 fsync-транзакции на событие (T044 фаза
+    C), батч убирает их с критического пути. Буфер сбрасывается когда
+    накопилось ``batch_size`` событий ИЛИ прошло ``flush_interval`` секунд
+    с прошлого сброса (ограничивает и память, и staleness/потерю), а также
+    flush-on-read перед любым чтением (``recent``/``counts_by_kind``) и
+    перед ретеншн-очисткой (``prune``) — read-сторона всегда консистентна.
+
+    Durability-trade-off: при крахе теряются буферизованные события с
+    последнего сброса (≤ ``flush_interval``); это наблюдаемость, не
+    корректность конвейера (§5). Фоновый периодический flush и flush на
+    graceful-остановке — возможное будущее усиление (см. DECISIONS T045).
+    """
+
+    _DEFAULT_BATCH_SIZE: Final = 200
+    _DEFAULT_FLUSH_INTERVAL: Final = 0.5
+
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        batch_size: int = _DEFAULT_BATCH_SIZE,
+        flush_interval: float = _DEFAULT_FLUSH_INTERVAL,
+    ) -> None:
         self._sessions = sessions
+        self._batch_size = batch_size
+        self._flush_interval = flush_interval
+        self._buffer: list[AnalyticsEvent] = []
+        self._lock = asyncio.Lock()
+        self._last_flush = monotonic()
+
+    async def record(self, event: AnalyticsEvent) -> None:
+        """Буферизовать событие; сбросить пачку по размеру/интервалу."""
+        async with self._lock:
+            self._buffer.append(event)
+            due_by_size = len(self._buffer) >= self._batch_size
+            due_by_time = monotonic() - self._last_flush >= self._flush_interval
+            if due_by_size or due_by_time:
+                await self._flush_locked()
+
+    async def flush(self) -> None:
+        """Принудительно сбросить буфер в БД (read-сторона, остановка)."""
+        async with self._lock:
+            await self._flush_locked()
+
+    async def _flush_locked(self) -> None:
+        """Записать буфер пачкой и очистить; вызывать под ``self._lock``."""
+        if not self._buffer:
+            return
+        await self._write_events(self._buffer)
+        self._buffer.clear()
+        self._last_flush = monotonic()
 
     @_retry_on_locked
-    async def record(self, event: AnalyticsEvent) -> None:
-        """Записать событие."""
-        row = AnalyticsEventRow(
-            uid=str(event.uid),
-            kind=event.kind,
-            record_uid=str(event.record_uid) if event.record_uid is not None else None,
-            pipeline=event.pipeline,
-            payload=json.dumps(event.payload),
-            at=event.at,
-        )
+    async def _write_events(self, events: list[AnalyticsEvent]) -> None:
+        """Одна транзакция на всю пачку (insert-or-ignore по PK ``uid``)."""
+        rows = [
+            AnalyticsEventRow(
+                uid=str(event.uid),
+                kind=event.kind,
+                record_uid=(
+                    str(event.record_uid) if event.record_uid is not None else None
+                ),
+                pipeline=event.pipeline,
+                payload=json.dumps(event.payload),
+                at=event.at,
+            )
+            for event in events
+        ]
         async with self._sessions() as session, session.begin():
-            session.add(row)
+            session.add_all(rows)
 
     async def recent(
         self,
@@ -775,6 +834,7 @@ class SqliteAnalytics:
         limit: int = 50,
     ) -> list[AnalyticsEvent]:
         """Последние события (по порядку записи), новые первыми."""
+        await self.flush()
         stmt = select(AnalyticsEventRow)
         if kind is not None:
             stmt = stmt.where(AnalyticsEventRow.kind == kind)
@@ -789,6 +849,7 @@ class SqliteAnalytics:
         self, *, since: AwareDatetime, pipeline: str | None = None
     ) -> dict[str, int]:
         """Количество событий по видам начиная с ``since``."""
+        await self.flush()
         stmt = (
             select(AnalyticsEventRow.kind, func.count())
             .where(AnalyticsEventRow.at >= since)
@@ -800,9 +861,13 @@ class SqliteAnalytics:
             rows = (await session.execute(stmt)).tuples().all()
         return dict(rows)
 
-    @_retry_on_locked
     async def prune(self, older_than: AwareDatetime) -> int:
-        """Удалить события старше порога."""
+        """Удалить события старше порога (буфер сбрасывается до очистки)."""
+        await self.flush()
+        return await self._prune(older_than)
+
+    @_retry_on_locked
+    async def _prune(self, older_than: AwareDatetime) -> int:
         stmt = delete(AnalyticsEventRow).where(AnalyticsEventRow.at < older_than)
         async with self._sessions() as session, session.begin():
             result = await session.execute(stmt)
