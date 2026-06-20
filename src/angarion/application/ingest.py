@@ -24,6 +24,7 @@ from uuid import uuid4
 from angarion.domain.keys import make_source_key
 from angarion.domain.models import (
     AnalyticsEvent,
+    DeadLetter,
     QueueEnvelope,
     RecordKind,
     RegistryOutcome,
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from angarion.domain.models import Record
     from angarion.domain.ports import (
         AnalyticsPort,
+        DeadLetterPort,
         DedupStorePort,
         EventQueuePort,
         MessageRegistryPort,
@@ -52,17 +54,24 @@ class IngestService:
         router: Router,
         queue: EventQueuePort,
         analytics: AnalyticsPort,
+        dead_letters: DeadLetterPort,
+        max_hops: int = 10,
     ) -> None:
         self._dedup = dedup
         self._registry = registry
         self._router = router
         self._queue = queue
         self._analytics = analytics
+        self._dead_letters = dead_letters
+        self._max_hops = max_hops
 
     async def ingest(self, record: Record) -> None:
         """Принять нормализованную запись от driving-адаптера (§6.1)."""
         if await self._dedup.seen(record.dedup_key):
             await self._record('duplicate', record)
+            return
+        if record.hops > self._max_hops:
+            await self._dead_letter_hops(record)
             return
         record = await self._maintain_registry(record)
         pipelines = self._router.resolve(record.source, record.kind, record)
@@ -74,6 +83,34 @@ class IngestService:
             await self._queue.put(QueueEnvelope(pipeline=pipeline, record=record))
         await self._dedup.mark_inbound(record.dedup_key)  # строго после fan-out (A-11)
         await self._record('ingested', record, {'pipelines': sorted(pipelines)})
+
+    async def _dead_letter_hops(self, record: Record) -> None:
+        """
+        Рантайм-backstop циклов (T037, Q2): ``hops > max_hops`` → DLQ.
+
+        Универсальный страховочный предел поверх стартовой DAG-валидации: ловит
+        и циклы, замкнутые через **реальную** платформу (P1→internal→P2→группа
+        X, P1 слушает X), которые статическая проверка увидеть не может. Запись
+        дед-леттерится для каждого пайплайна-приёмника канала (виден в его DLQ),
+        затем помечается в dedup — повтор доставки ребра гасится как ``duplicate``
+        (без новых DLQ-записей). Если канал никто не слушает (петли нет) — DLQ не
+        нужен, фиксируем лишь аналитику.
+        """
+        pipelines = sorted(self._router.resolve(record.source, record.kind, record))
+        error = (
+            f'hop_limit_exceeded: hops={record.hops} превысил max_hops={self._max_hops}'
+        )
+        for pipeline in pipelines:
+            await self._dead_letters.put(
+                DeadLetter(
+                    uid=uuid4(),
+                    envelope=QueueEnvelope(pipeline=pipeline, record=record),
+                    error=error,
+                    failed_at=datetime.now(UTC),
+                )
+            )
+        await self._dedup.mark_inbound(record.dedup_key)
+        await self._record('hop_limit_exceeded', record, {'hops': record.hops})
 
     async def _maintain_registry(self, record: Record) -> Record:
         """

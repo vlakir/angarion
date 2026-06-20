@@ -11,6 +11,7 @@ from app_factories import NOW, SOURCE_KEY, make_endpoint, make_record
 from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.storage import (
     MemoryAnalytics,
+    MemoryDeadLetters,
     MemoryDedupStore,
     MemoryMessageRegistry,
 )
@@ -40,11 +41,17 @@ def analytics() -> MemoryAnalytics:
 
 
 @pytest.fixture
+def dead_letters() -> MemoryDeadLetters:
+    return MemoryDeadLetters()
+
+
+@pytest.fixture
 def service(
     queue: MemoryQueue,
     dedup: MemoryDedupStore,
     registry: MemoryMessageRegistry,
     analytics: MemoryAnalytics,
+    dead_letters: MemoryDeadLetters,
 ) -> IngestService:
     router = Router(
         [
@@ -66,6 +73,7 @@ def service(
         router=router,
         queue=queue,
         analytics=analytics,
+        dead_letters=dead_letters,
     )
 
 
@@ -255,6 +263,72 @@ class TestRoutingAndFanOut:
         assert recorded[0].payload == {'pipelines': ['audit', 'digest']}
 
 
+class TestHopLimit:
+    """T037 (Q2): рантайм-backstop циклов — ``hops > max_hops`` → DLQ."""
+
+    async def test_at_limit_routed_normally(
+        self, service: IngestService, queue: MemoryQueue
+    ) -> None:
+        """``hops == max_hops`` ещё проходит (проверка строго ``>``)."""
+        await service.ingest(make_record(hops=10))
+        assert (await queue.depth()).pending == 2
+
+    async def test_over_limit_dead_lettered_per_receiver(
+        self,
+        service: IngestService,
+        queue: MemoryQueue,
+        dead_letters: MemoryDeadLetters,
+    ) -> None:
+        """Превышение → DLQ для каждого приёмника канала, в очередь не идёт."""
+        event = make_record(hops=11)
+        await service.ingest(event)
+        assert (await queue.depth()).pending == 0
+        letters = await dead_letters.list()
+        assert {letter.envelope.pipeline for letter in letters} == {'audit', 'digest'}
+        assert all('hop_limit_exceeded' in letter.error for letter in letters)
+        assert all(letter.envelope.record.uid == event.uid for letter in letters)
+
+    async def test_over_limit_records_analytics(
+        self, service: IngestService, analytics: MemoryAnalytics
+    ) -> None:
+        await service.ingest(make_record(hops=11))
+        recorded = await analytics.recent(kind='hop_limit_exceeded')
+        assert len(recorded) == 1
+        assert recorded[0].payload == {'hops': 11}
+
+    async def test_redelivered_over_limit_edge_not_duplicated(
+        self,
+        service: IngestService,
+        dead_letters: MemoryDeadLetters,
+    ) -> None:
+        """Повтор доставки over-limit ребра гасится dedup — без новых DLQ."""
+        event = make_record(hops=11)
+        await service.ingest(event)
+        await service.ingest(event)
+        assert len(await dead_letters.list()) == 2  # только с первого захода
+
+    async def test_over_limit_unrouted_channel_no_dead_letter(
+        self,
+        dead_letters: MemoryDeadLetters,
+        queue: MemoryQueue,
+        dedup: MemoryDedupStore,
+        registry: MemoryMessageRegistry,
+        analytics: MemoryAnalytics,
+    ) -> None:
+        """Канал никто не слушает (петли нет) → DLQ не нужен, лишь аналитика."""
+        service = IngestService(
+            dedup=dedup,
+            registry=registry,
+            router=Router([]),
+            queue=queue,
+            analytics=analytics,
+            dead_letters=dead_letters,
+        )
+        await service.ingest(make_record(hops=11))
+        assert await dead_letters.list() == []
+        assert await analytics.recent(kind='hop_limit_exceeded')
+
+
 class TestCrashSafety:
     """A-11 спеки T003: отметка дедупа — строго после fan-out."""
 
@@ -285,6 +359,7 @@ class TestCrashSafety:
             router=router,
             queue=queue,
             analytics=analytics,
+            dead_letters=MemoryDeadLetters(),
         )
 
     async def test_mark_not_recorded_when_enqueue_fails(

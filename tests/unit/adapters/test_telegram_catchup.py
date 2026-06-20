@@ -19,6 +19,7 @@ from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.storage import (
     MemoryAnalytics,
     MemoryCursorStore,
+    MemoryDeadLetters,
     MemoryDedupStore,
     MemoryMessageRegistry,
 )
@@ -376,6 +377,7 @@ async def test_redelivery_deduped_end_to_end() -> None:
         ),
         queue=queue,
         analytics=analytics,
+        dead_letters=MemoryDeadLetters(),
     )
     client = FakeTelegramClient(history={CHAT: [_hist(11), _hist(12)]})  # type: ignore[dict-item]
     kwargs = {

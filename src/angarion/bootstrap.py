@@ -51,6 +51,7 @@ from angarion.config import (
 from angarion.domain.errors import ConfigError, DeliveryError
 from angarion.domain.keys import make_source_key
 from angarion.domain.models import (
+    INTERNAL_TRANSPORT,
     AccountRef,
     AnalyticsEvent,
     DeliveryReceipt,
@@ -367,6 +368,10 @@ def _catchup_degradation(
     """
     Источники, по которым catch-up невозможен (``history_fetch=False``,
     §12.10): отключение + предупреждение при старте, не падение.
+
+    Внутренний транспорт (T037, A8) исключён: у него нет внешнего состояния/
+    истории, catch-up неприменим в принципе, и предупреждение о его «недоступной
+    истории» — ложный шум (re-ingested записи порождаются, а не дотягиваются).
     """
     if not settings.catchup.enabled:
         return ()
@@ -374,6 +379,8 @@ def _catchup_degradation(
     for cfg in settings.pipelines.values():
         for ep in cfg.sources:
             account = accounts[ep.account]
+            if account.plugin.name == INTERNAL_TRANSPORT:
+                continue
             if not account.plugin.capabilities.history_fetch:
                 degraded.add(
                     make_source_key(
@@ -448,13 +455,17 @@ def _make_platform_adapters(
             for ep in cfg.sources
             if accounts[ep.account].plugin.name == transport
         ]
-        listener = plugin.make_listener(deps, account_models, platform_sources)
-        if not isinstance(listener, Listener):
-            msg = (
-                f'фабрика make_listener плагина {transport!r} вернула объект '
-                f'вне протокола Listener: {type(listener).__name__}'
-            )
-            raise ConfigError(msg)
+        # sink-only транспорт (internal, A2): listener'а нет, «вход» приёмника
+        # наполняет сам sink через re-ingestion — пропускаем создание listener'а
+        if plugin.make_listener is not None:
+            listener = plugin.make_listener(deps, account_models, platform_sources)
+            if not isinstance(listener, Listener):
+                msg = (
+                    f'фабрика make_listener плагина {transport!r} вернула объект '
+                    f'вне протокола Listener: {type(listener).__name__}'
+                )
+                raise ConfigError(msg)
+            listeners.append(listener)
         sink = plugin.make_sender(deps, account_models)
         if not isinstance(sink, SinkPort):
             msg = (
@@ -462,7 +473,6 @@ def _make_platform_adapters(
                 f'вне порта SinkPort: {type(sink).__name__}'
             )
             raise ConfigError(msg)
-        listeners.append(listener)
         sinks[transport] = sink
     return tuple(listeners), sinks
 
@@ -476,16 +486,25 @@ def _loop_guard_sources(
     Сверка идентичности — по ``(transport, address, thread_id)``; для
     пометки dedup нужен и ``account_id``, поэтому возвращаем сам источник.
     Пусто, если ни одна цель не совпадает с источником — guard не нужен.
+
+    Внутренний транспорт (T037, A1) исключён: его ``target=(internal,X)`` по
+    построению совпадает с ``source=(internal,X)`` приёмника, и guard счёл бы
+    легитимную re-ingested запись эхо-петлёй и задедуплил её — цепочка не поедет.
+    На internal эха платформы нет; защиту от циклов даёт DAG-валидация (старт) и
+    hop-limit (рантайм).
     """
     targets = {
-        (accounts[ep.account].plugin.name, ep.address, ep.thread_id)
+        (transport, ep.address, ep.thread_id)
         for cfg in settings.pipelines.values()
         for ep in cfg.targets
+        if (transport := accounts[ep.account].plugin.name) != INTERNAL_TRANSPORT
     }
     guarded: dict[tuple[str, str, str, str | None], GuardedSource] = {}
     for cfg in settings.pipelines.values():
         for ep in cfg.sources:
             transport = accounts[ep.account].plugin.name
+            if transport == INTERNAL_TRANSPORT:
+                continue
             if (transport, ep.address, ep.thread_id) in targets:
                 key = (transport, ep.account, ep.address, ep.thread_id)
                 guarded[key] = GuardedSource(
@@ -703,6 +722,8 @@ def build_app(
         router=Router(routes),
         queue=queue,
         analytics=storage.analytics,
+        dead_letters=storage.dead_letters,
+        max_hops=settings.chains.max_hops,
     )
     listeners, sinks = _make_platform_adapters(
         settings,

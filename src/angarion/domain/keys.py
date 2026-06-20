@@ -151,6 +151,28 @@ def make_dedup_key(
     return f'{source_key}:{ext}:del'
 
 
+def make_internal_keys(idempotency_key: str, source_key: str) -> tuple[str, str]:
+    """
+    ``(external_id, dedup_key)`` внутренней re-ingested записи (T037, Q3).
+
+    ``external_id`` внутренней записи — сам ``idempotency_key`` исходящего: он
+    уже стабилен и инъективен (T043, см. :func:`make_idempotency_key`). Поэтому
+    повтор доставки внутреннего ребра (ретрай outbox в окне send→mark_sent)
+    даёт тот же ``external_id`` → тот же NEW-``dedup_key`` → штатный
+    ``dedup.seen()`` гасит дубль на шаге 1 ingest: у приёмника ровно одна
+    входная запись (at-least-once без дублей, единственный жёсткий инвариант).
+
+    ``dedup_key`` строится общим :func:`make_dedup_key` (``NEW``), наследуя его
+    escape-инъективность: ``:`` внутри ``idempotency_key`` (а он их содержит —
+    ``source_key`` и ``->``-граница) не схлопывает разные записи. ``source_key``
+    — ключ внутреннего источника ``(internal, account, channel)``, поэтому один
+    исходящий, разосланный fan-out'ом в разные каналы, даёт разные ``dedup_key``.
+    """
+    external_id = idempotency_key
+    dedup_key = make_dedup_key(RecordKind.NEW, source_key, external_id)
+    return external_id, dedup_key
+
+
 def make_idempotency_key(
     pipeline: str,
     record: Record,

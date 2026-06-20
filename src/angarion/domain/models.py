@@ -20,7 +20,7 @@ JSON-контракт на неё не распространяется.
 
 from collections.abc import Callable
 from enum import StrEnum
-from typing import Annotated, Any, Literal, Protocol, runtime_checkable
+from typing import Annotated, Any, Final, Literal, Protocol, runtime_checkable
 from uuid import UUID
 
 from pydantic import (
@@ -30,6 +30,7 @@ from pydantic import (
     Field,
     SkipValidation,
     StringConstraints,
+    model_validator,
 )
 from structlog.typing import FilteringBoundLogger
 
@@ -39,6 +40,16 @@ Transport = Annotated[str, StringConstraints(pattern=r'^[a-z][a-z0-9_]{1,31}$')]
 Не enum: сторонние адаптеры регистрируют свои значения (telegram, matrix,
 kafka, imap, …) через entry points (§12.11). Валидация по реестру
 загруженных плагинов — при старте (fail-fast с перечнем известных).
+"""
+
+INTERNAL_TRANSPORT: Final = 'internal'
+"""Имя синтетического «внутреннего провода» (T037).
+
+Транспорт без выхода наружу: его sink замыкает ``OutboundRecord`` обратно на
+``IngestService`` (re-ingestion), связывая пайплайны в цепочку. Совпадение
+``(transport=internal, address)`` у ``target`` одного пайплайна и ``source``
+другого — ребро цепочки. Каноническое значение для ``[accounts.*].transport``,
+имени плагина и проверок (DAG-валидация, исключение из loop-guard).
 """
 
 
@@ -125,7 +136,7 @@ class Record(DomainModel):
     uid: UUID
     kind: RecordKind
     dedup_key: str
-    origin: Literal['live', 'catchup']
+    origin: Literal['live', 'catchup', 'internal']
     source: Endpoint
     received_by: AccountRef
     external_id: str
@@ -140,6 +151,41 @@ class Record(DomainModel):
     event_at: AwareDatetime
     received_at: AwareDatetime
     raw: dict[str, Any] = Field(default_factory=dict)
+    trace_id: str | None = None
+    """
+    Корень сквозной трассы цепочки пайплайнов (T037, §трассировка).
+
+    ``None`` при создании означает «корень собственной трассы» — валидатор
+    проставляет ``str(uid)``. Звенья цепочки (re-ingested записи) наследуют
+    ``trace_id`` записи-предка через ``InternalSink``, поэтому по записи на
+    выходе цепочки прослеживаются все её звенья (SC, наблюдаемость аналитики).
+    """
+    hops: int = Field(default=0, ge=0)
+    """
+    Счётчик прыжков по внутренним рёбрам (T037, Q2): инкрементируется
+    ``InternalSink`` при re-ingestion. Рантайм-backstop циклов — при
+    превышении ``[chains] max_hops`` запись уходит в DLQ; ловит и циклы,
+    замкнутые через реальную платформу, которые стартовая DAG-проверка не
+    видит.
+    """
+
+    @model_validator(mode='before')
+    @classmethod
+    def _default_trace_id(cls, data: object) -> object:
+        """
+        trace_id корня = ``str(uid)``, если не задан явно (T037).
+
+        mode='before' необходим из-за ``frozen=True``: после валидации поля
+        не изменить. Затрагивает лишь места создания ``Record`` без явного
+        ``trace_id`` (корни трасс); звенья цепочки передают ``trace_id`` предка.
+        """
+        if (
+            isinstance(data, dict)
+            and data.get('trace_id') is None
+            and data.get('uid') is not None
+        ):
+            return {**data, 'trace_id': str(data['uid'])}
+        return data
 
     @property
     def has_media(self) -> bool:
@@ -167,6 +213,20 @@ class OutboundRecord(DomainModel):
     text: str
     media: list[MediaRef] = Field(default_factory=list)
     extra: dict[str, Any] = Field(default_factory=dict)
+    trace_id: str | None = None
+    """
+    Сквозной носитель trace_id для внутреннего провода (T037, A3).
+
+    Sink видит лишь ``OutboundRecord``, а пробросить в re-ingested запись надо
+    ``trace_id`` корня цепочки из входной ``Record``. Worker штампует его при
+    стейджинге; ``None`` — не звено цепочки (прямое создание процессором/тестом).
+    Для не-internal целей поле едет «вхолостую».
+    """
+    hops: int = Field(default=0, ge=0)
+    """
+    Сквозной носитель счётчика прыжков (T037, A3): worker копирует ``hops``
+    входной ``Record``, ``InternalSink`` инкрементирует при re-ingestion.
+    """
 
 
 class Verdict(StrEnum):

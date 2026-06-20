@@ -18,6 +18,7 @@ from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.storage import (
     MemoryAnalytics,
     MemoryCursorStore,
+    MemoryDeadLetters,
     MemoryDedupStore,
     MemoryMessageRegistry,
 )
@@ -39,6 +40,14 @@ def _ep(account: str, address: str) -> EndpointConfig:
     return EndpointConfig(account=account, address=address)
 
 
+# catch-up листенера фильтрует историю по окну max_age относительно настенных
+# часов, а фикстуры датированы фиксированной NOW (telegram_fakes). Окно как
+# таковое здесь не проверяется (его покрывает test_telegram_catchup.py), поэтому
+# пинуем его широко — фиксированные даты остаются в окне независимо от хода
+# календаря (иначе фиксированная дата стала бы time-bomb).
+_WIDE_CATCHUP_DAYS = 36_500
+
+
 def _listener(
     clients: dict[str, FakeTelegramClient],
     sources: Sequence[EndpointConfig],
@@ -54,6 +63,7 @@ def _listener(
         analytics=MemoryAnalytics(),
         log=get_logger('test'),
         media_policy=media_policy or MediaConfig(),
+        catchup_max_age_days=_WIDE_CATCHUP_DAYS,
     )
 
 
@@ -426,6 +436,7 @@ async def test_real_ingest_end_to_end_routes() -> None:
         ),
         queue=queue,
         analytics=MemoryAnalytics(),
+        dead_letters=MemoryDeadLetters(),
     )
     client = FakeTelegramClient(peer_ids={'@grp': -100123})
     listener = TelegramListener(

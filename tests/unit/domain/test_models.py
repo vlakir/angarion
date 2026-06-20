@@ -208,6 +208,40 @@ class TestRecord:
         record = make_record(media=[make_media(kind='video')])
         assert [m.kind for m in record.media] == ['video']
 
+    def test_origin_internal_accepted(self) -> None:
+        """T037: internal-транспорт расширяет origin (рядом с live/catchup)."""
+        assert make_record(origin='internal').origin == 'internal'
+
+    def test_trace_id_defaults_to_uid(self) -> None:
+        """T037: запись без trace_id — корень собственной трассы (str(uid))."""
+        record = make_record()
+        assert record.trace_id == str(record.uid)
+
+    def test_trace_id_explicit_preserved(self) -> None:
+        """T037: проброшенный trace_id предка сохраняется (звено цепочки)."""
+        record = make_record(trace_id='root-trace')
+        assert record.trace_id == 'root-trace'
+
+    def test_hops_defaults_to_zero(self) -> None:
+        """T037: счётчик прыжков по умолчанию 0 (корень цепочки)."""
+        assert make_record().hops == 0
+        assert make_record(hops=3).hops == 3
+
+
+class TestOutboundRecordCarriers:
+    """T037: trace_id/hops — сквозные носители на OutboundRecord (A3)."""
+
+    def test_carriers_default_unstamped(self) -> None:
+        """Прямое создание (не звено) — trace_id None, hops 0; worker штампует."""
+        outbound = make_outbound()
+        assert outbound.trace_id is None
+        assert outbound.hops == 0
+
+    def test_carriers_settable(self) -> None:
+        outbound = make_outbound(trace_id='root-trace', hops=2)
+        assert outbound.trace_id == 'root-trace'
+        assert outbound.hops == 2
+
     def test_has_media_derives_from_media(self) -> None:
         assert make_record().has_media is False
         assert make_record(media=[make_media()]).has_media is True

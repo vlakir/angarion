@@ -16,6 +16,7 @@ import pytest
 from angarion.domain.keys import (
     make_dedup_key,
     make_idempotency_key,
+    make_internal_keys,
     make_media_hash,
     make_source_key,
     normalize_and_hash,
@@ -282,3 +283,49 @@ class TestMakeIdempotencyKey:
         a = make_idempotency_key('a:b', event, target, 0)
         b = make_idempotency_key('a', event, Endpoint(transport='telegram', address='b:-100999'), 0)
         assert a != b
+
+
+class TestMakeInternalKeys:
+    """Деривация ключей внутренней re-ingested записи из idempotency_key (T037)."""
+
+    WIRE_KEY = 'internal:wire:stage1'
+
+    def test_external_id_is_idempotency_key(self) -> None:
+        """external_id внутренней записи — сам idempotency_key исходящего."""
+        idem = 'telegram:acc1:-100:42:new->norm:stage1:0'
+        external_id, _ = make_internal_keys(idem, self.WIRE_KEY)
+        assert external_id == idem
+
+    def test_dedup_key_is_new_dedup_of_external_id(self) -> None:
+        """dedup_key строится общим make_dedup_key(NEW, source_key, external_id)."""
+        idem = 'telegram:acc1:-100:42:new->norm:stage1:0'
+        external_id, dedup_key = make_internal_keys(idem, self.WIRE_KEY)
+        assert dedup_key == make_dedup_key(RecordKind.NEW, self.WIRE_KEY, external_id)
+
+    def test_deterministic(self) -> None:
+        """Повтор доставки ребра (тот же idempotency_key) → те же ключи (Q3)."""
+        idem = 'telegram:acc1:-100:42:new->norm:stage1:0'
+        assert make_internal_keys(idem, self.WIRE_KEY) == make_internal_keys(
+            idem, self.WIRE_KEY
+        )
+
+    def test_injective_in_idempotency_key(self) -> None:
+        """Разные idempotency_key → разные external_id и разные dedup_key."""
+        a = make_internal_keys('k1->norm:stage1:0', self.WIRE_KEY)
+        b = make_internal_keys('k2->norm:stage1:0', self.WIRE_KEY)
+        assert a[0] != b[0]
+        assert a[1] != b[1]
+
+    def test_colon_in_idempotency_key_stays_injective(self) -> None:
+        """idempotency_key несёт ':'; escape make_dedup_key держит инъективность."""
+        a_ext, a_dedup = make_internal_keys('a:b->p:c:0', self.WIRE_KEY)
+        b_ext, b_dedup = make_internal_keys('a->p:b:c:0', self.WIRE_KEY)
+        assert a_ext != b_ext
+        assert a_dedup != b_dedup
+
+    def test_different_channels_do_not_collide(self) -> None:
+        """Один idempotency_key на разных каналах (fan-out) → разные dedup_key."""
+        idem = 'telegram:acc1:-100:42:new->norm:stage1:0'
+        _, dedup_a = make_internal_keys(idem, 'internal:wire:stage1')
+        _, dedup_b = make_internal_keys(idem, 'internal:wire:stage2')
+        assert dedup_a != dedup_b

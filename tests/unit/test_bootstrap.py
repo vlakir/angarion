@@ -21,8 +21,11 @@ from angarion.application.processors import FunctionProcessor
 from angarion.bootstrap import (
     AngarionApp,
     LoadedPlugins,
+    _catchup_degradation,
     _DispatchSink,
+    _loop_guard_sources,
     _maybe_dispose,
+    _validate_accounts,
     build_app,
     load_plugins,
     load_processors,
@@ -615,3 +618,81 @@ class TestDispatchSink:
         dispatch = _DispatchSink({})
         with pytest.raises(DeliveryError, match='memory'):
             await dispatch.send(make_outbound())
+
+
+def _chain_settings() -> AngarionSettings:
+    """Цепочка P1 →(internal stage1)→ P2 поверх реальных плагинов."""
+    return AngarionSettings.model_validate(
+        {
+            'accounts': {
+                'main': AccountConfig(transport='memory'),
+                'wire': AccountConfig(transport='internal'),
+            },
+            'pipelines': {
+                'p1': PipelineConfig(
+                    processor='passthrough',
+                    events=frozenset({RecordKind.NEW}),
+                    sources=(EndpointConfig(account='main', address=SRC_CHAT),),
+                    targets=(EndpointConfig(account='wire', address='stage1'),),
+                ),
+                'p2': PipelineConfig(
+                    processor='passthrough',
+                    events=frozenset({RecordKind.NEW}),
+                    sources=(EndpointConfig(account='wire', address='stage1'),),
+                    targets=(EndpointConfig(account='main', address=DST_CHAT),),
+                ),
+            },
+        }
+    )
+
+
+class TestInternalWireBootstrap:
+    """T037: внутренний транспорт в швах bootstrap (A1, A8)."""
+
+    def test_internal_edge_not_loop_guarded(self) -> None:
+        """A1: internal source==target по построению — но guard его НЕ берёт."""
+        settings = _chain_settings()
+        accounts = _validate_accounts(settings, load_plugins().adapters)
+        assert _loop_guard_sources(settings, accounts) == ()
+
+    def test_real_loop_still_guarded_alongside_internal(self) -> None:
+        """Реальную петлю (memory source==target) guard ловит, internal — нет."""
+        feed = '-100333'
+        settings = AngarionSettings.model_validate(
+            {
+                'accounts': {
+                    'main': AccountConfig(transport='memory'),
+                    'wire': AccountConfig(transport='internal'),
+                },
+                'pipelines': {
+                    'echo': PipelineConfig(
+                        processor='passthrough',
+                        events=frozenset({RecordKind.NEW}),
+                        sources=(EndpointConfig(account='main', address=SRC_CHAT),),
+                        targets=(EndpointConfig(account='main', address=SRC_CHAT),),
+                    ),
+                    'p1': PipelineConfig(
+                        processor='passthrough',
+                        events=frozenset({RecordKind.NEW}),
+                        sources=(EndpointConfig(account='main', address=feed),),
+                        targets=(EndpointConfig(account='wire', address='stage1'),),
+                    ),
+                    'p2': PipelineConfig(
+                        processor='passthrough',
+                        events=frozenset({RecordKind.NEW}),
+                        sources=(EndpointConfig(account='wire', address='stage1'),),
+                        targets=(EndpointConfig(account='main', address=DST_CHAT),),
+                    ),
+                },
+            }
+        )
+        accounts = _validate_accounts(settings, load_plugins().adapters)
+        guarded = _loop_guard_sources(settings, accounts)
+        assert [(g.transport, g.address) for g in guarded] == [('memory', SRC_CHAT)]
+
+    def test_internal_source_excluded_from_catchup_degradation(self) -> None:
+        """A8: internal-источник не числится в catchup-недоступных."""
+        settings = _chain_settings()
+        accounts = _validate_accounts(settings, load_plugins().adapters)
+        degraded = _catchup_degradation(settings, accounts)
+        assert all('internal' not in key for key in degraded)
