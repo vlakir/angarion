@@ -35,10 +35,10 @@ source "$ROOT/scripts/example_dev.sh"
 # dev: подставить тестовые группы в источник/цель пайплайна через env
 # (env приоритетнее app.toml — сам app.toml с плейсхолдерами не трогаем).
 if [[ -n "${TG_TEST_GROUP_A:-}" && -z "${ANGARION_PIPELINES__FORWARD__SOURCES:-}" ]]; then
-  export ANGARION_PIPELINES__FORWARD__SOURCES="[{\"account\":\"main\",\"chat_id\":\"$TG_TEST_GROUP_A\"}]"
+  export ANGARION_PIPELINES__FORWARD__SOURCES="[{\"account\":\"main\",\"address\":\"$TG_TEST_GROUP_A\"}]"
 fi
 if [[ -n "${TG_TEST_GROUP_B:-}" && -z "${ANGARION_PIPELINES__FORWARD__TARGETS:-}" ]]; then
-  export ANGARION_PIPELINES__FORWARD__TARGETS="[{\"account\":\"main\",\"chat_id\":\"$TG_TEST_GROUP_B\"}]"
+  export ANGARION_PIPELINES__FORWARD__TARGETS="[{\"account\":\"main\",\"address\":\"$TG_TEST_GROUP_B\"}]"
 fi
 
 CONFIG=app.toml

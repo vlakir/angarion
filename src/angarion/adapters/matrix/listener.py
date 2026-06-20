@@ -31,7 +31,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from angarion.adapters.matrix.client import MESSENGER
+from angarion.adapters.matrix.client import TRANSPORT
 from angarion.adapters.matrix.mapping import map_message, map_redaction
 from angarion.config import MediaConfig
 from angarion.domain.keys import make_source_key
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     )
     from angarion.application.ingest import IngestService
     from angarion.config import EndpointConfig
-    from angarion.domain.models import InboundEvent
+    from angarion.domain.models import Record
     from angarion.domain.ports import AnalyticsPort, CursorStorePort
 
 _NO_MEDIA_POLICY: MediaConfig = MediaConfig()
@@ -128,7 +128,7 @@ class MatrixListener:
             rooms = await self._resolve_rooms(account_id, client)
             self._rooms[account_id] = rooms
             for room_id in rooms:
-                key = make_source_key(MESSENGER, account_id, room_id)
+                key = make_source_key(TRANSPORT, account_id, room_id)
                 self._catchup_rooms[key] = (account_id, room_id)
             handler = self._message_handler(account_id)
             client.on_new_message(handler)
@@ -242,26 +242,26 @@ class MatrixListener:
         rooms: set[str] = set()
         for src in self._sources:
             if src.account == account_id:
-                room_id = await client.resolve_room(src.chat_id)
+                room_id = await client.resolve_room(src.address)
                 rooms.add(room_id)
                 if src in self._recent_poll_endpoints:  # T032: recent-poll комнаты
                     self._recent_poll_rooms.add((account_id, room_id))
         return rooms
 
-    async def _emit(self, event: InboundEvent) -> None:
+    async def _emit(self, record: Record) -> None:
         """Скачать медиа по политике (A3) → ingest (live и catch-up)."""
-        await self._ingest.ingest(await self._enrich(event))
+        await self._ingest.ingest(await self._enrich(record))
 
-    async def _enrich(self, event: InboundEvent) -> InboundEvent:
+    async def _enrich(self, record: Record) -> Record:
         """Скачать ``mxc``-вложения принимающим аккаунтом по политике (A3)."""
-        if not event.media:
-            return event
-        client = self._clients.get(event.received_by.account_id)
+        if not record.media:
+            return record
+        client = self._clients.get(record.received_by.account_id)
         if client is None:
-            return event
+            return record
         updated: list[object] = []
         changed = False
-        for ref in event.media:
+        for ref in record.media:
             enriched = ref
             if (
                 ref.local_path is None
@@ -275,7 +275,7 @@ class MatrixListener:
                     enriched = ref.model_copy(update={'local_path': path})
                     changed = True
             updated.append(enriched)
-        return event.model_copy(update={'media': updated}) if changed else event
+        return record.model_copy(update={'media': updated}) if changed else record
 
     def _message_handler(self, account_id: str) -> RawMessageHandler:
         async def handle(raw: RawMatrixMessage) -> None:
@@ -319,7 +319,7 @@ class MatrixListener:
         return handle
 
     def _sync_handler(self, account_id: str) -> SyncHandler:
-        source_key = make_source_key(MESSENGER, account_id, SYNC_CURSOR_CHAT)
+        source_key = make_source_key(TRANSPORT, account_id, SYNC_CURSOR_CHAT)
 
         async def handle(next_batch: str) -> None:
             now = datetime.now(UTC)
@@ -331,7 +331,7 @@ class MatrixListener:
         return handle
 
     async def _load_since(self, account_id: str) -> str | None:
-        source_key = make_source_key(MESSENGER, account_id, SYNC_CURSOR_CHAT)
+        source_key = make_source_key(TRANSPORT, account_id, SYNC_CURSOR_CHAT)
         cursor = await self._cursors.load(source_key)
         if cursor is None:
             return None

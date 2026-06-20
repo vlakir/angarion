@@ -55,7 +55,7 @@ class EventSchema(_ApiModel):
 
     uid: UUID
     kind: str
-    event_uid: UUID | None = None
+    record_uid: UUID | None = None
     pipeline: str | None = None
     payload: dict[str, Any]
     at: AwareDatetime

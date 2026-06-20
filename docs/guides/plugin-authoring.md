@@ -20,40 +20,40 @@ InMemory-плагин — «нулевой пациент» этого меха�
 
 ## Свой процессор
 
-Процессор — async-функция `(event, ctx, svc) -> ProcessingResult`
-(§10.1). Он получает [`InboundEvent`](../reference/models.md),
+Процессор — async-функция `(record, ctx, svc) -> ProcessingResult`
+(§10.1). Он получает [`Record`](../reference/models.md),
 контекст пайплайна (цели доставки) и сервисы (идемпотентные ключи,
-персистентное состояние). Обязан переживать `event.text is None`
+персистентное состояние). Обязан переживать `record.text is None`
 (удаление, не восстановленное реестром).
 
 ```python
 # myplugin/processor.py
 from angarion.application.processors import processor
 from angarion.domain.models import (
-    InboundEvent,
-    OutboundMessage,
+    OutboundRecord,
     PipelineContextData,
     ProcessingResult,
     ProcessorServices,
+    Record,
     Verdict,
 )
 
 
 @processor("shout")
 async def shout(
-    event: InboundEvent,
+    record: Record,
     ctx: PipelineContextData,
     svc: ProcessorServices,
 ) -> ProcessingResult:
     """Ретранслирует текст в ВЕРХНЕМ РЕГИСТРЕ; без текста — DROP."""
-    if event.text is None:
+    if record.text is None:
         return ProcessingResult(verdict=Verdict.DROP, note="shout: нет текста")
     outbound = [
-        OutboundMessage(
-            idempotency_key=svc.make_idempotency_key(event, spec.target, n),
+        OutboundRecord(
+            idempotency_key=svc.make_idempotency_key(record, spec.target, n),
             target=spec.target,
             send_via=spec.send_via,
-            text=event.text.upper(),
+            text=record.text.upper(),
         )
         for n, spec in enumerate(ctx.targets)
     ]
@@ -109,7 +109,7 @@ optional-зависимость, отсутствие пакета даёт `ski
 
 Listener формализован протоколом [`Listener`](../reference/plugin.md)
 (`start` / `stop` / `catchup`): получает `IngestService` через deps
-фабрики и эмитит `InboundEvent` ключами из публичных хелперов (§7.2).
+фабрики и эмитит `Record` ключами из публичных хелперов (§7.2).
 
 ## Сертификация контрактными тестами
 
@@ -137,12 +137,12 @@ class TestMyQueue(EventQueueContract):
         return MyQueue(...)
 ```
 
-Доступные контракты: `EventQueueContract`, `MessageSinkContract`,
+Доступные контракты: `EventQueueContract`, `SinkContract`,
 `DedupStoreContract`, `OutboxContract`, `MessageRegistryContract`,
 `CursorStoreContract`, `SessionStoreContract`, `StateStoreContract`,
 `AnalyticsContract`, `DeadLetterContract`, `RuntimeConfigContract`,
 `CommandOutboxContract` — по одному на порт. Фабрики тестовых данных
-(`make_event`, `make_envelope`, …) — там же.
+(`make_record`, `make_envelope`, …) — там же.
 
 Зелёный прогон контрактов = ваш адаптер совместим с ядром и со всеми
 гарантиями (at-least-once, идемпотентность, catch-up) без правок ядра.

@@ -30,7 +30,7 @@ from angarion.config import (
     EndpointConfig,
     PipelineConfig,
 )
-from angarion.domain.models import EventKind
+from angarion.domain.models import RecordKind
 
 SOURCE_KEY = 'memory:acc1:-100'
 
@@ -44,14 +44,14 @@ def make_settings(**overrides: object) -> AngarionSettings:
     ``api``-секцию явно через ``overrides``.
     """
     fields: dict[str, object] = {
-        'accounts': {'acc1': AccountConfig(messenger='memory')},
+        'accounts': {'acc1': AccountConfig(transport='memory')},
         'api': ApiConfig(auth='none'),
         'pipelines': {
             'digest': PipelineConfig(
                 processor='passthrough',
-                events=frozenset({EventKind.MESSAGE_NEW}),
-                sources=(EndpointConfig(account='acc1', chat_id='-100'),),
-                targets=(EndpointConfig(account='acc1', chat_id='-200'),),
+                events=frozenset({RecordKind.NEW}),
+                sources=(EndpointConfig(account='acc1', address='-100'),),
+                targets=(EndpointConfig(account='acc1', address='-200'),),
             )
         },
     }

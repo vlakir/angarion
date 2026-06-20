@@ -75,7 +75,7 @@ examples/digest/run.sh
 - на каждом событии текст добавляется в накопитель `items`, его
   `dedup_key` — в `seen`; ничего не отправляется, вердикт `DROP`;
 - при сбросе (`len(items) >= n` или возраст накопления `>= max_age_s`)
-  батч склеивается и уходит в модель; ответ единым `OutboundMessage`
+  батч склеивается и уходит в модель; ответ единым `OutboundRecord`
   доставляется на **каждую** `ctx.targets`, накопитель очищается;
 - **идемпотентность под at-least-once:** учтённые `dedup_key` лежат в
   `seen` (текущий батч) и в ограниченном хвосте `recent` (последние
@@ -109,9 +109,9 @@ digest = "my_pkg.digest:DIGEST"
 ```toml
 [pipelines.summarize]
 processor = "llm"
-events = ["message_new"]
-sources = [{ account = "main", chat_id = "-100AAAAAAAAAA" }]
-targets = [{ account = "main", chat_id = "-100BBBBBBBBBB" }]
+events = ["new"]
+sources = [{ account = "main", address = "-100AAAAAAAAAA" }]
+targets = [{ account = "main", address = "-100BBBBBBBBBB" }]
 
 [pipelines.summarize.processor_config]
 base_url = "http://localhost:11434/v1"

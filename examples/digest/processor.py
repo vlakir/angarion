@@ -54,11 +54,11 @@ from angarion.application.llm import (
 )
 from angarion.domain.errors import ConfigError, ProcessingError
 from angarion.domain.models import (
-    InboundEvent,
-    OutboundMessage,
+    OutboundRecord,
     PipelineContextData,
     ProcessingResult,
     ProcessorServices,
+    Record,
     Verdict,
 )
 from angarion.domain.ports import ProcessorPort
@@ -243,7 +243,7 @@ class DigestProcessor(BaseModel):
 
     async def process(
         self,
-        event: InboundEvent,
+        event: Record,
         ctx: PipelineContextData,
         svc: ProcessorServices,
     ) -> ProcessingResult:
@@ -276,7 +276,7 @@ class DigestProcessor(BaseModel):
             )
         summary = await self._summarize(state, cfg)
         outbound = [
-            OutboundMessage(
+            OutboundRecord(
                 idempotency_key=svc.make_idempotency_key(event, spec.target, n),
                 target=spec.target,
                 send_via=spec.send_via,

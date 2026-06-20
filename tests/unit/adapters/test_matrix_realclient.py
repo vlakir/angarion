@@ -38,7 +38,7 @@ from angarion.adapters.matrix.realclient import (
 from angarion.adapters.matrix.session import MatrixSession
 from angarion.adapters.memory.storage import MemorySessionStore
 from angarion.domain.errors import ConfigError
-from angarion.domain.models import EventKind
+from angarion.domain.models import RecordKind
 
 
 class _FakeClient:
@@ -154,7 +154,7 @@ def _text(body: str = 'привет', **content: Any) -> Any:
 class TestToRawMessage:
     def test_new_text(self) -> None:
         raw = to_raw_message('!r:s', _text('hi'), 'Алиса')
-        assert raw.kind is EventKind.MESSAGE_NEW
+        assert raw.kind is RecordKind.NEW
         assert raw.room_id == '!r:s'
         assert raw.event_id == '$e1'
         assert raw.text == 'hi'
@@ -171,7 +171,7 @@ class TestToRawMessage:
             },
         )
         raw = to_raw_message('!r:s', event, None)
-        assert raw.kind is EventKind.MESSAGE_EDITED
+        assert raw.kind is RecordKind.EDITED
         assert raw.event_id == '$orig'
         assert raw.text == 'new'
 

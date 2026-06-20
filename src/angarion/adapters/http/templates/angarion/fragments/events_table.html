@@ -1,6 +1,6 @@
 <table>
   <thead>
-    <tr><th>Time</th><th>Kind</th><th>Pipeline</th><th>event_uid</th></tr>
+    <tr><th>Time</th><th>Kind</th><th>Pipeline</th><th>record_uid</th></tr>
   </thead>
   <tbody>
     {% for event in events %}
@@ -8,7 +8,7 @@
       <td>{{ event.at.isoformat() }}</td>
       <td>{{ event.kind }}</td>
       <td>{{ event.pipeline or '—' }}</td>
-      <td>{{ event.event_uid or '—' }}</td>
+      <td>{{ event.record_uid or '—' }}</td>
     </tr>
     {% else %}
     <tr><td colspan="4"><em>no events</em></td></tr>

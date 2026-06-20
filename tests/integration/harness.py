@@ -44,9 +44,9 @@ from angarion.adapters.telegram.listener import TelegramListener
 from angarion.bootstrap import LoadedPlugins, build_app
 from angarion.config import AngarionSettings, EndpointConfig, PipelineConfig
 from angarion.domain.models import (
-    EventKind,
-    OutboundMessage,
+    OutboundRecord,
     ProcessingResult,
+    RecordKind,
     Verdict,
 )
 from angarion.domain.plugin import AdapterPlugin
@@ -59,18 +59,18 @@ if TYPE_CHECKING:
     from angarion.adapters.telegram.client import TelegramClientPort
     from angarion.bootstrap import AdapterDeps, AngarionApp
     from angarion.domain.models import (
-        InboundEvent,
         PipelineContextData,
         ProcessorServices,
+        Record,
     )
 
 ECHO_PROCESSOR = 'integration_echo'
 """Имя echo-процессора контура (регистрируется фикстурой conftest)."""
 
 _KIND_TAG = {
-    EventKind.MESSAGE_NEW: 'NEW',
-    EventKind.MESSAGE_EDITED: 'EDIT',
-    EventKind.MESSAGE_DELETED: 'DEL',
+    RecordKind.NEW: 'NEW',
+    RecordKind.EDITED: 'EDIT',
+    RecordKind.DELETED: 'DEL',
 }
 
 
@@ -133,7 +133,7 @@ class IntegrationPool:
 
 
 async def echo_processor(
-    event: InboundEvent,
+    event: Record,
     ctx: PipelineContextData,
     svc: ProcessorServices,
 ) -> ProcessingResult:
@@ -147,7 +147,7 @@ async def echo_processor(
     tag = _KIND_TAG[event.kind]
     text = f'{tag} {event.text or ""}'
     outbound = [
-        OutboundMessage(
+        OutboundRecord(
             idempotency_key=svc.make_idempotency_key(event, spec.target, n),
             target=spec.target,
             send_via=spec.send_via,
@@ -233,7 +233,7 @@ def build_settings(
     payload: dict[str, Any] = {
         'accounts': {
             account_id: {
-                'messenger': 'telegram',
+                'transport': 'telegram',
                 'api_id': api_id,
                 'api_hash': api_hash,
             }
@@ -278,13 +278,13 @@ def mirror_pipeline(
     events: frozenset[Any] | None = None,
 ) -> PipelineConfig:
     """Пайплайн «зеркало»: один источник → одна-несколько целей."""
-    kinds = events if events is not None else frozenset(EventKind)
+    kinds = events if events is not None else frozenset(RecordKind)
     return PipelineConfig(
         processor=processor,
         events=kinds,
-        sources=(EndpointConfig(account=account_id, chat_id=source_chat),),
+        sources=(EndpointConfig(account=account_id, address=source_chat),),
         targets=tuple(
-            EndpointConfig(account=account_id, chat_id=chat) for chat in target_chats
+            EndpointConfig(account=account_id, address=chat) for chat in target_chats
         ),
     )
 

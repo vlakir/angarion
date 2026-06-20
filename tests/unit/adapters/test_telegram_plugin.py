@@ -51,7 +51,7 @@ def _deps(settings: AngarionSettings | None = None) -> AdapterDeps:
 
 def _account() -> TelegramAccountConfig:
     return TelegramAccountConfig.model_validate(
-        {'messenger': 'telegram', 'api_id': 2040, 'api_hash': 'hash'}
+        {'transport': 'telegram', 'api_id': 2040, 'api_hash': 'hash'}
     )
 
 
@@ -67,7 +67,7 @@ def test_capabilities_match_spec() -> None:
 
 def test_account_config_valid() -> None:
     cfg = TelegramAccountConfig.model_validate(
-        {'messenger': 'telegram', 'api_id': 2040, 'api_hash': 'abc123'}
+        {'transport': 'telegram', 'api_id': 2040, 'api_hash': 'abc123'}
     )
     assert cfg.api_id == 2040
     assert cfg.api_hash == 'abc123'
@@ -76,7 +76,7 @@ def test_account_config_valid() -> None:
 def test_account_config_coerces_api_id_from_env_string() -> None:
     """Env-override даёт строки — int должен скоарситься (§11)."""
     cfg = TelegramAccountConfig.model_validate(
-        {'messenger': 'telegram', 'api_id': '2040', 'api_hash': 'abc123'}
+        {'transport': 'telegram', 'api_id': '2040', 'api_hash': 'abc123'}
     )
     assert cfg.api_id == 2040
 
@@ -84,26 +84,26 @@ def test_account_config_coerces_api_id_from_env_string() -> None:
 def test_account_config_rejects_wrong_messenger() -> None:
     with pytest.raises(ValidationError):
         TelegramAccountConfig.model_validate(
-            {'messenger': 'memory', 'api_id': 2040, 'api_hash': 'abc123'}
+            {'transport': 'memory', 'api_id': 2040, 'api_hash': 'abc123'}
         )
 
 
 def test_account_config_requires_api_credentials() -> None:
     with pytest.raises(ValidationError):
-        TelegramAccountConfig.model_validate({'messenger': 'telegram'})
+        TelegramAccountConfig.model_validate({'transport': 'telegram'})
 
 
 def test_account_config_rejects_nonpositive_api_id() -> None:
     with pytest.raises(ValidationError):
         TelegramAccountConfig.model_validate(
-            {'messenger': 'telegram', 'api_id': 0, 'api_hash': 'abc123'}
+            {'transport': 'telegram', 'api_id': 0, 'api_hash': 'abc123'}
         )
 
 
 def test_account_config_rejects_empty_api_hash() -> None:
     with pytest.raises(ValidationError):
         TelegramAccountConfig.model_validate(
-            {'messenger': 'telegram', 'api_id': 2040, 'api_hash': ''}
+            {'transport': 'telegram', 'api_id': 2040, 'api_hash': ''}
         )
 
 
@@ -111,7 +111,7 @@ def test_account_config_forbids_extra_keys() -> None:
     with pytest.raises(ValidationError):
         TelegramAccountConfig.model_validate(
             {
-                'messenger': 'telegram',
+                'transport': 'telegram',
                 'api_id': 2040,
                 'api_hash': 'abc123',
                 'unexpected': 'x',
@@ -129,7 +129,7 @@ class TestPluginObject:
         deps = _deps()
         accounts = {'main': _account()}
         listener = PLUGIN.make_listener(
-            deps, accounts, [EndpointConfig(account='main', chat_id='@g')]
+            deps, accounts, [EndpointConfig(account='main', address='@g')]
         )
         sender = PLUGIN.make_sender(deps, accounts)
         assert isinstance(listener, TelegramListener)
@@ -163,27 +163,27 @@ class TestPluginObject:
         settings = AngarionSettings.model_validate(
             {
                 'accounts': {
-                    'main': {'messenger': 'telegram', 'api_id': 2040, 'api_hash': 'h'}
+                    'main': {'transport': 'telegram', 'api_id': 2040, 'api_hash': 'h'}
                 },
                 'pipelines': {
                     'hot': {
                         'processor': 'passthrough',
-                        'events': ['message_new'],
-                        'sources': [{'account': 'main', 'chat_id': '-100'}],
-                        'targets': [{'account': 'main', 'chat_id': '-300'}],
+                        'events': ['new'],
+                        'sources': [{'account': 'main', 'address': '-100'}],
+                        'targets': [{'account': 'main', 'address': '-300'}],
                         'recent_poll': True,
                     },
                     'cold': {
                         'processor': 'passthrough',
-                        'events': ['message_new'],
-                        'sources': [{'account': 'main', 'chat_id': '-200'}],
-                        'targets': [{'account': 'main', 'chat_id': '-300'}],
+                        'events': ['new'],
+                        'sources': [{'account': 'main', 'address': '-200'}],
+                        'targets': [{'account': 'main', 'address': '-300'}],
                     },
                 },
             }
         )
-        ep_on = EndpointConfig(account='main', chat_id='-100')
-        ep_off = EndpointConfig(account='main', chat_id='-200')
+        ep_on = EndpointConfig(account='main', address='-100')
+        ep_off = EndpointConfig(account='main', address='-200')
         listener = PLUGIN.make_listener(_deps(settings), {'main': _account()}, [
             ep_on,
             ep_off,
@@ -197,7 +197,7 @@ class TestPluginObject:
         await deps.storage.session.save('main', 'CIPHERTEXT')
         accounts = {'main': _account()}
         listener = PLUGIN.make_listener(
-            deps, accounts, [EndpointConfig(account='main', chat_id='@g')]
+            deps, accounts, [EndpointConfig(account='main', address='@g')]
         )
         with pytest.raises(ConfigError, match='ANGARION_SESSION_KEY'):
             await listener._pool.connect_all()

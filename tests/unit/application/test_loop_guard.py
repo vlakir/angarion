@@ -1,13 +1,13 @@
 """
-LoopGuardSink (T009 / M6, фаза 1): декоратор ``MessageSinkPort``, гасящий
+LoopGuardSink (T009 / M6, фаза 1): декоратор ``SinkPort``, гасящий
 петлю ``source == target``.
 
 После успешной доставки в цель, совпадающую с прослушиваемым источником
-``(messenger, chat_id, thread_id)``, guard помечает в ``DedupStorePort``
+``(transport, address, thread_id)``, guard помечает в ``DedupStorePort``
 ``dedup_key`` будущего входящего сообщения (NEW и DEL) по произведённому
 ``external_id`` — так возврат собственной доставки (live или catch-up)
 отбрасывается ``IngestService`` как ``duplicate``. Совпадения нет —
-декоратор прозрачен (no-op). Механизм messenger-agnostic, переиспользует
+декоратор прозрачен (no-op). Механизм transport-agnostic, переиспользует
 персистентный dedup (без новых портов/таблиц).
 """
 
@@ -24,17 +24,17 @@ from angarion.application.loop_guard import GuardedSource, LoopGuardSink
 from angarion.domain.keys import make_dedup_key, make_source_key
 from angarion.domain.models import (
     AccountRef,
-    Address,
     DeliveryReceipt,
-    EventKind,
-    OutboundMessage,
+    Endpoint,
+    OutboundRecord,
+    RecordKind,
 )
-from angarion.domain.ports import MessageSinkPort
+from angarion.domain.ports import SinkPort
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-MESSENGER = 'telegram'
+TRANSPORT = 'telegram'
 
 
 class _SpyDedup(MemoryDedupStore):
@@ -49,22 +49,22 @@ class _SpyDedup(MemoryDedupStore):
         return await super().mark_inbound(dedup_key)
 
 
-def _outbound(chat_id: str, thread_id: str | None = None) -> OutboundMessage:
-    return OutboundMessage(
-        idempotency_key=f'k:{chat_id}:{thread_id}',
-        target=Address(messenger=MESSENGER, chat_id=chat_id, thread_id=thread_id),
-        send_via=AccountRef(messenger=MESSENGER, account_id='main'),
+def _outbound(address: str, thread_id: str | None = None) -> OutboundRecord:
+    return OutboundRecord(
+        idempotency_key=f'k:{address}:{thread_id}',
+        target=Endpoint(transport=TRANSPORT, address=address, thread_id=thread_id),
+        send_via=AccountRef(transport=TRANSPORT, account_id='main'),
         text='hello',
     )
 
 
 def _source(
-    chat_id: str, account_id: str = 'main', thread_id: str | None = None
+    address: str, account_id: str = 'main', thread_id: str | None = None
 ) -> GuardedSource:
     return GuardedSource(
-        messenger=MESSENGER,
+        transport=TRANSPORT,
         account_id=account_id,
-        chat_id=chat_id,
+        address=address,
         thread_id=thread_id,
     )
 
@@ -88,13 +88,9 @@ async def test_target_matches_source_marks_new_and_del() -> None:
     assert sink.sent  # доставка делегирована inner
     external_id = receipt.external_id
     assert external_id is not None
-    source_key = make_source_key(MESSENGER, 'main', '-100123')
-    assert await dedup.seen(
-        make_dedup_key(EventKind.MESSAGE_NEW, source_key, external_id)
-    )
-    assert await dedup.seen(
-        make_dedup_key(EventKind.MESSAGE_DELETED, source_key, external_id)
-    )
+    source_key = make_source_key(TRANSPORT, 'main', '-100123')
+    assert await dedup.seen(make_dedup_key(RecordKind.NEW, source_key, external_id))
+    assert await dedup.seen(make_dedup_key(RecordKind.DELETED, source_key, external_id))
 
 
 async def test_target_not_a_source_is_noop() -> None:
@@ -111,7 +107,7 @@ async def test_no_external_id_skips_marking() -> None:
     """Платформа не сообщила id доставки — пометить нечего, тихо пропускаем."""
 
     class _NoIdSink(MemorySink):
-        async def send(self, msg: OutboundMessage) -> DeliveryReceipt:
+        async def send(self, msg: OutboundRecord) -> DeliveryReceipt:
             await super().send(msg)
             return DeliveryReceipt(external_id=None, delivered_at=datetime.now(UTC))
 
@@ -138,14 +134,14 @@ async def test_multiple_accounts_same_chat_mark_each() -> None:
 
     assert receipt.external_id is not None
     for account_id in ('a', 'b'):
-        source_key = make_source_key(MESSENGER, account_id, '-100123')
+        source_key = make_source_key(TRANSPORT, account_id, '-100123')
         assert await dedup.seen(
-            make_dedup_key(EventKind.MESSAGE_NEW, source_key, receipt.external_id)
+            make_dedup_key(RecordKind.NEW, source_key, receipt.external_id)
         )
 
 
 @pytest.mark.parametrize('sources', [[], [_source('-100777')]])
 def test_guard_is_message_sink_port(sources: Sequence[GuardedSource]) -> None:
-    """LoopGuardSink удовлетворяет MessageSinkPort (structural)."""
+    """LoopGuardSink удовлетворяет SinkPort (structural)."""
     guard, _sink, _dedup = _guard(sources)
-    assert isinstance(guard, MessageSinkPort)
+    assert isinstance(guard, SinkPort)

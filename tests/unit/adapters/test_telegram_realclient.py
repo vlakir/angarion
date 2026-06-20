@@ -24,7 +24,7 @@ from angarion.adapters.telegram.realclient import (
     to_raw_history_message,
     to_raw_message,
 )
-from angarion.domain.models import EventKind
+from angarion.domain.models import RecordKind
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -56,9 +56,9 @@ def _event(message: SimpleNamespace, chat_id: int = -100123) -> SimpleNamespace:
 
 def test_to_raw_message_basic_new() -> None:
     raw: RawTelegramMessage = to_raw_message(
-        _event(_message()), EventKind.MESSAGE_NEW
+        _event(_message()), RecordKind.NEW
     )
-    assert raw.kind is EventKind.MESSAGE_NEW
+    assert raw.kind is RecordKind.NEW
     assert raw.chat_id == -100123
     assert raw.message_id == 42
     assert raw.text == 'привет'
@@ -74,7 +74,7 @@ def test_to_raw_message_basic_new() -> None:
 def test_edited_uses_edit_date() -> None:
     edited = NOW.replace(hour=13)
     raw = to_raw_message(
-        _event(_message(edit_date=edited)), EventKind.MESSAGE_EDITED
+        _event(_message(edit_date=edited)), RecordKind.EDITED
     )
     assert raw.event_at == edited
 
@@ -89,7 +89,7 @@ def test_media_extracted_from_file() -> None:
         duration=None,
     )
     message = _message(message=None, file=file, photo=object())
-    raw = to_raw_message(_event(message), EventKind.MESSAGE_NEW)
+    raw = to_raw_message(_event(message), RecordKind.NEW)
     assert len(raw.media) == 1
     media = raw.media[0]
     assert media.kind == 'photo'
@@ -104,21 +104,21 @@ def test_media_kind_falls_back_to_document() -> None:
     file = SimpleNamespace(
         mime_type='application/pdf', name='doc.pdf', size=10, duration=None
     )
-    raw = to_raw_message(_event(_message(file=file)), EventKind.MESSAGE_NEW)
+    raw = to_raw_message(_event(_message(file=file)), RecordKind.NEW)
     assert raw.media[0].kind == 'document'
 
 
 def test_voice_duration_coerced_to_int() -> None:
     file = SimpleNamespace(mime_type='audio/ogg', name=None, size=5, duration=12.7)
     message = _message(file=file, voice=object())
-    raw = to_raw_message(_event(message), EventKind.MESSAGE_NEW)
+    raw = to_raw_message(_event(message), RecordKind.NEW)
     assert raw.media[0].kind == 'voice'
     assert raw.media[0].duration == 12
 
 
 def test_no_file_means_no_media() -> None:
     """Превью ссылки/опрос (``message.file is None``) — не вложение."""
-    raw = to_raw_message(_event(_message(media=object())), EventKind.MESSAGE_NEW)
+    raw = to_raw_message(_event(_message(media=object())), RecordKind.NEW)
     assert raw.media == ()
 
 
@@ -126,7 +126,7 @@ def test_topic_reply_extracts_thread_and_reply() -> None:
     reply = SimpleNamespace(
         forum_topic=True, reply_to_top_id=55, reply_to_msg_id=50
     )
-    raw = to_raw_message(_event(_message(reply_to=reply)), EventKind.MESSAGE_NEW)
+    raw = to_raw_message(_event(_message(reply_to=reply)), RecordKind.NEW)
     assert raw.thread_id == 55
     assert raw.reply_to_message_id == 50
 
@@ -135,7 +135,7 @@ def test_topic_root_marker_is_not_reply() -> None:
     reply = SimpleNamespace(
         forum_topic=True, reply_to_top_id=None, reply_to_msg_id=55
     )
-    raw = to_raw_message(_event(_message(reply_to=reply)), EventKind.MESSAGE_NEW)
+    raw = to_raw_message(_event(_message(reply_to=reply)), RecordKind.NEW)
     assert raw.thread_id == 55
     assert raw.reply_to_message_id is None
 
@@ -144,7 +144,7 @@ def test_plain_reply_without_topic() -> None:
     reply = SimpleNamespace(
         forum_topic=False, reply_to_top_id=None, reply_to_msg_id=10
     )
-    raw = to_raw_message(_event(_message(reply_to=reply)), EventKind.MESSAGE_NEW)
+    raw = to_raw_message(_event(_message(reply_to=reply)), RecordKind.NEW)
     assert raw.thread_id is None
     assert raw.reply_to_message_id == 10
 
@@ -164,7 +164,7 @@ def test_to_raw_history_message_maps_fields() -> None:
     message = _message()
     message.chat_id = -100123
     raw = to_raw_history_message(message)
-    assert raw.kind is EventKind.MESSAGE_NEW
+    assert raw.kind is RecordKind.NEW
     assert raw.chat_id == -100123
     assert raw.message_id == 42
     assert raw.text == 'привет'
@@ -431,7 +431,7 @@ async def test_on_new_message_registers_and_wires_callback() -> None:
     callback, event_filter = client.add_event_handler.call_args[0]
     assert isinstance(event_filter, events.NewMessage)
     await callback(_event(_message()))
-    assert captured[0].kind is EventKind.MESSAGE_NEW
+    assert captured[0].kind is RecordKind.NEW
     assert captured[0].message_id == 42
 
 

@@ -22,10 +22,10 @@ from angarion.domain.keys import (
 )
 from angarion.domain.models import (
     AccountRef,
-    Address,
-    EventKind,
-    InboundEvent,
+    Endpoint,
     MediaRef,
+    Record,
+    RecordKind,
 )
 
 SOURCE_KEY = 'telegram:acc1:-1003385167603'
@@ -75,40 +75,40 @@ class TestNormalizeAndHash:
 
 class TestMakeDedupKey:
     def test_new(self) -> None:
-        key = make_dedup_key(EventKind.MESSAGE_NEW, SOURCE_KEY, '42')
+        key = make_dedup_key(RecordKind.NEW, SOURCE_KEY, '42')
         assert key == f'{SOURCE_KEY}:42:new'
 
     def test_deleted(self) -> None:
-        key = make_dedup_key(EventKind.MESSAGE_DELETED, SOURCE_KEY, '42')
+        key = make_dedup_key(RecordKind.DELETED, SOURCE_KEY, '42')
         assert key == f'{SOURCE_KEY}:42:del'
 
     def test_edited_includes_content_hash(self) -> None:
         content_hash = normalize_and_hash('v2')
         key = make_dedup_key(
-            EventKind.MESSAGE_EDITED, SOURCE_KEY, '42', content_hash=content_hash
+            RecordKind.EDITED, SOURCE_KEY, '42', content_hash=content_hash
         )
         assert key == f'{SOURCE_KEY}:42:edit:{content_hash}'
 
     def test_edited_requires_content_hash(self) -> None:
         with pytest.raises(ValueError, match='content_hash'):
-            make_dedup_key(EventKind.MESSAGE_EDITED, SOURCE_KEY, '42')
+            make_dedup_key(RecordKind.EDITED, SOURCE_KEY, '42')
 
     def test_edit_back_to_seen_text_is_duplicate(self) -> None:
         """§7.2: правка, вернувшая прежний текст, даёт тот же ключ (дубль)."""
         key_v1 = make_dedup_key(
-            EventKind.MESSAGE_EDITED,
+            RecordKind.EDITED,
             SOURCE_KEY,
             '42',
             content_hash=normalize_and_hash('A'),
         )
         key_v2 = make_dedup_key(
-            EventKind.MESSAGE_EDITED,
+            RecordKind.EDITED,
             SOURCE_KEY,
             '42',
             content_hash=normalize_and_hash('B'),
         )
         key_v3_back = make_dedup_key(
-            EventKind.MESSAGE_EDITED,
+            RecordKind.EDITED,
             SOURCE_KEY,
             '42',
             content_hash=normalize_and_hash('A'),
@@ -118,10 +118,10 @@ class TestMakeDedupKey:
 
     def test_kinds_do_not_collide(self) -> None:
         """new/del/edit одного сообщения — три разных ключа."""
-        new = make_dedup_key(EventKind.MESSAGE_NEW, SOURCE_KEY, '42')
-        deleted = make_dedup_key(EventKind.MESSAGE_DELETED, SOURCE_KEY, '42')
+        new = make_dedup_key(RecordKind.NEW, SOURCE_KEY, '42')
+        deleted = make_dedup_key(RecordKind.DELETED, SOURCE_KEY, '42')
         edited = make_dedup_key(
-            EventKind.MESSAGE_EDITED,
+            RecordKind.EDITED,
             SOURCE_KEY,
             '42',
             content_hash=normalize_and_hash('x'),
@@ -132,14 +132,14 @@ class TestMakeDedupKey:
         """§7.2 (M7): media_hash=None — ключ EDITED байт-в-байт прежний."""
         content_hash = normalize_and_hash('v2')
         assert make_dedup_key(
-            EventKind.MESSAGE_EDITED, SOURCE_KEY, '42', content_hash=content_hash
+            RecordKind.EDITED, SOURCE_KEY, '42', content_hash=content_hash
         ) == f'{SOURCE_KEY}:42:edit:{content_hash}'
 
     def test_edited_media_only_does_not_raise(self) -> None:
         """M7 must-fix: медиа-only правка (нет content_hash) — ключ по media."""
         media_hash = make_media_hash([MediaRef(kind='photo', size=10)])
         key = make_dedup_key(
-            EventKind.MESSAGE_EDITED, SOURCE_KEY, '42', media_hash=media_hash
+            RecordKind.EDITED, SOURCE_KEY, '42', media_hash=media_hash
         )
         assert key == f'{SOURCE_KEY}:42:edit:media:{media_hash}'
 
@@ -147,14 +147,14 @@ class TestMakeDedupKey:
         """Q5: подмена вложения при том же тексте → другой ключ EDITED."""
         ch = normalize_and_hash('подпись')
         key_a = make_dedup_key(
-            EventKind.MESSAGE_EDITED,
+            RecordKind.EDITED,
             SOURCE_KEY,
             '42',
             content_hash=ch,
             media_hash=make_media_hash([MediaRef(kind='photo', size=10)]),
         )
         key_b = make_dedup_key(
-            EventKind.MESSAGE_EDITED,
+            RecordKind.EDITED,
             SOURCE_KEY,
             '42',
             content_hash=ch,
@@ -165,7 +165,7 @@ class TestMakeDedupKey:
     def test_edited_requires_text_or_media(self) -> None:
         """Ни текста, ни медиа — опознавать нечего, как и прежде → raise."""
         with pytest.raises(ValueError, match='content_hash'):
-            make_dedup_key(EventKind.MESSAGE_EDITED, SOURCE_KEY, '42')
+            make_dedup_key(RecordKind.EDITED, SOURCE_KEY, '42')
 
 
 class TestMakeMediaHash:
@@ -188,15 +188,15 @@ class TestMakeMediaHash:
         assert make_media_hash([base]) == make_media_hash([with_ref])
 
 
-def _event(dedup_key: str) -> InboundEvent:
+def _event(dedup_key: str) -> Record:
     now = datetime(2026, 6, 11, 12, 0, tzinfo=UTC)
-    return InboundEvent(
+    return Record(
         uid=UUID('00000000-0000-0000-0000-000000000001'),
-        kind=EventKind.MESSAGE_NEW,
+        kind=RecordKind.NEW,
         dedup_key=dedup_key,
         origin='live',
-        source=Address(messenger='telegram', chat_id='-100123'),
-        received_by=AccountRef(messenger='telegram', account_id='acc1'),
+        source=Endpoint(transport='telegram', address='-100123'),
+        received_by=AccountRef(transport='telegram', account_id='acc1'),
         external_id='42',
         event_at=now,
         received_at=now,
@@ -207,14 +207,14 @@ class TestMakeIdempotencyKey:
     def test_golden(self) -> None:
         dedup_key = f'{SOURCE_KEY}:42:new'
         event = _event(dedup_key)
-        target = Address(messenger='telegram', chat_id='-100999')
+        target = Endpoint(transport='telegram', address='-100999')
         key = make_idempotency_key('digest', event, target, 0)
         assert key == f'{dedup_key}->digest:-100999:0'
 
     def test_pipelines_do_not_suppress_each_other(self) -> None:
         """§7.3: multicast в одну группу — разные пайплайны, разные ключи."""
         event = _event(f'{SOURCE_KEY}:42:new')
-        target = Address(messenger='telegram', chat_id='-100999')
+        target = Endpoint(transport='telegram', address='-100999')
         key_a = make_idempotency_key('pipe_a', event, target, 0)
         key_b = make_idempotency_key('pipe_b', event, target, 0)
         assert key_a != key_b
@@ -222,7 +222,7 @@ class TestMakeIdempotencyKey:
     def test_partial_application_matches_processor_services_shape(self) -> None:
         """A-9: worker частично применяет фабрику со своим pipeline."""
         event = _event(f'{SOURCE_KEY}:42:new')
-        target = Address(messenger='telegram', chat_id='-100999')
+        target = Endpoint(transport='telegram', address='-100999')
         factory = functools.partial(make_idempotency_key, 'digest')
         assert factory(event, target, 1) == make_idempotency_key(
             'digest', event, target, 1

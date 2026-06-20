@@ -26,7 +26,7 @@ from angarion.testing import (
     make_cursor,
     make_dead_letter,
     make_outbound,
-    make_record,
+    make_registry_record,
 )
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -92,7 +92,7 @@ async def test_outbox_registry_dlq_analytics_survive_reopen(
     first = open_storage()
     msg = make_outbound()
     await first.outbox.put(msg)
-    await first.registry.upsert(make_record())
+    await first.registry.upsert(make_registry_record())
     letter = make_dead_letter()
     await first.dead_letters.put(letter)
     event = make_analytics_event()
@@ -101,8 +101,8 @@ async def test_outbox_registry_dlq_analytics_survive_reopen(
     reopened = open_storage()
     record = await reopened.outbox.get(msg.idempotency_key)
     assert record is not None
-    assert record.msg == msg
-    assert await reopened.registry.get(SOURCE_KEY, '42') == make_record()
+    assert record.record == msg
+    assert await reopened.registry.get(SOURCE_KEY, '42') == make_registry_record()
     assert await reopened.dead_letters.list() == [letter]
     assert await reopened.analytics.recent() == [event]
 
@@ -317,7 +317,7 @@ async def test_registry_record_full_roundtrip(
     open_storage: Callable[..., SqliteStorage],
 ) -> None:
     storage = open_storage()
-    rec = make_record(sender_id='u1', sender_name='Ann')
+    rec = make_registry_record(sender_id='u1', sender_name='Ann')
     await storage.registry.upsert(rec)
     assert await storage.registry.get(SOURCE_KEY, '42') == rec
 
@@ -327,22 +327,22 @@ async def test_analytics_event_full_roundtrip(
 ) -> None:
     storage = open_storage()
     event = make_analytics_event(
-        payload={'n': 1}, event_uid=uuid4(), pipeline='digest'
+        payload={'n': 1}, record_uid=uuid4(), pipeline='digest'
     )
     await storage.analytics.record(event)
     assert await storage.analytics.recent() == [event]
 
 
-async def test_outbox_event_uid_roundtrip(
+async def test_outbox_record_uid_roundtrip(
     open_storage: Callable[..., SqliteStorage],
 ) -> None:
     storage = open_storage()
     msg = make_outbound()
-    event_uid = uuid4()
-    await storage.outbox.put(msg, pipeline='digest', event_uid=event_uid)
+    record_uid = uuid4()
+    await storage.outbox.put(msg, pipeline='digest', record_uid=record_uid)
     record = await storage.outbox.get(msg.idempotency_key)
     assert record is not None
-    assert record.event_uid == event_uid
+    assert record.record_uid == record_uid
     assert record.pipeline == 'digest'
 
 

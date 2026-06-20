@@ -61,12 +61,31 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
      разработчика, иначе теряется фокус (классическое WIP-limit
      правило из Kanban). -->
 
-_(пусто)_
+_(пусто — следующая задача берётся из BACKLOG.md)_
 
 ## Done
 
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
+
+- **T041** — Транспорт-агностичная модель ядра: `Record` + `transport` +
+  capabilities адаптера (`specs/T041-record-transport-model/spec.md`)
+  [closed 2026-06-20, текущий PR]. Фундамент волны v2: публичная модель и
+  контракт обобщены с «события мессенджера» до транспорт-агностичной записи,
+  мессенджер-семантика (new/edited/deleted, реестр, catch-up) → опциональные
+  capabilities. Big-bang без алиасов (pre-alpha). Переименования:
+  `InboundEvent`→`Record`, `OutboundMessage`→`OutboundRecord` (прежний
+  outbox-журнал → `OutboxRecord`), `Address`→`Endpoint`
+  (`messenger`→`transport`, `chat_id`→`address`), `EventKind`→`RecordKind`
+  (`message_new/edited/deleted`→`new/edited/deleted`),
+  `MessageSinkPort`→`SinkPort`; `angarion.testing` и ключи конфига TOML —
+  тоже ломающе (см. CHANGELOG). Сохранены `MessageRegistryPort`/`Contract`
+  (реестр = capability «мессенджер»), `EventQueuePort`, `AnalyticsEvent`.
+  Persistence мигрирует Alembic `0008_t041_record_columns`. Реализация 5
+  фазами-коммитами на одной ветке (домен → application+testing → адаптеры →
+  конфиг/web → тесты/примеры/доки), финал → один squash-PR. Telegram/Matrix
+  без регресса; 1110 тестов зелёные, coverage 96.5%, `mypy --strict` чист;
+  ADR 2026-06-20. На T041 стоят T039 (брокеры) и T040 (email).
 
 - **T036** — Каталоги шаблонов в шве `angarion.pages` (follow-up T029)
   [closed 2026-06-19, текущий PR]. Снято ограничение T029: шов передавал в

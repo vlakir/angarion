@@ -8,7 +8,7 @@
 деградирует до «только метаданные» — событие не теряется, sender при
 отсутствии ``local_path`` уйдёт в refetch-fast-path (A2).
 
-Логика «качать ли» — в ``MediaConfig.should_download`` (messenger-agnostic,
+Логика «качать ли» — в ``MediaConfig.should_download`` (transport-agnostic,
 §3.A); здесь — Telegram-специфичная оркестрация над ``TelegramClientPort``.
 """
 
@@ -23,32 +23,32 @@ if TYPE_CHECKING:
 
     from angarion.adapters.telegram.client import TelegramClientPort
     from angarion.config import MediaConfig
-    from angarion.domain.models import InboundEvent, MediaRef
+    from angarion.domain.models import MediaRef, Record
 
 
 async def enrich_with_downloads(
-    event: InboundEvent,
+    record: Record,
     *,
     client: TelegramClientPort,
     policy: MediaConfig,
     log: FilteringBoundLogger,
-) -> InboundEvent:
+) -> Record:
     """
-    Скачать подходящие вложения события и вернуть копию с ``local_path``.
+    Скачать подходящие вложения записи и вернуть копию с ``local_path``.
 
-    Без медиа или при выключенной политике возвращает событие как есть
+    Без медиа или при выключенной политике возвращает запись как есть
     (без копии). Каждое вложение скачивается независимо; сбой одного не
-    влияет на остальные и не теряет событие.
+    влияет на остальные и не теряет запись.
     """
-    if not policy.download or not event.media:
-        return event
+    if not policy.download or not record.media:
+        return record
     enriched: list[MediaRef] = []
     changed = False
-    for media in event.media:
+    for media in record.media:
         downloaded = await _download_one(media, client=client, policy=policy, log=log)
         enriched.append(downloaded)
         changed = changed or downloaded is not media
-    return event.model_copy(update={'media': enriched}) if changed else event
+    return record.model_copy(update={'media': enriched}) if changed else record
 
 
 async def _download_one(

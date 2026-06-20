@@ -39,7 +39,7 @@ KEY = Fernet.generate_key().decode()  # рантайм-ключ, не хардк
 
 def _account(**overrides: object) -> MatrixAccountConfig:
     data: dict[str, object] = {
-        'messenger': 'matrix',
+        'transport': 'matrix',
         'homeserver': 'https://matrix.example',
         'user_id': '@bot:matrix.example',
     }
@@ -88,22 +88,22 @@ def test_account_config_valid_defaults_device_name() -> None:
     assert cfg.device_name == 'angarion'
 
 
-def test_account_config_rejects_wrong_messenger() -> None:
+def test_account_config_rejects_wrong_transport() -> None:
     with pytest.raises(ValidationError):
         MatrixAccountConfig.model_validate(
-            {'messenger': 'telegram', 'homeserver': 'h', 'user_id': 'u'}
+            {'transport': 'telegram', 'homeserver': 'h', 'user_id': 'u'}
         )
 
 
 def test_account_config_requires_homeserver_and_user() -> None:
     with pytest.raises(ValidationError):
-        MatrixAccountConfig.model_validate({'messenger': 'matrix'})
+        MatrixAccountConfig.model_validate({'transport': 'matrix'})
 
 
 def test_account_config_rejects_empty_user_id() -> None:
     with pytest.raises(ValidationError):
         MatrixAccountConfig.model_validate(
-            {'messenger': 'matrix', 'homeserver': 'h', 'user_id': ''}
+            {'transport': 'matrix', 'homeserver': 'h', 'user_id': ''}
         )
 
 
@@ -112,7 +112,7 @@ def test_account_config_forbids_extra_keys() -> None:
     with pytest.raises(ValidationError):
         MatrixAccountConfig.model_validate(
             {
-                'messenger': 'matrix',
+                'transport': 'matrix',
                 'homeserver': 'h',
                 'user_id': 'u',
                 'password': 'secret',
@@ -132,7 +132,7 @@ class TestPluginObject:
         listener = PLUGIN.make_listener(
             deps,
             {'main': _account()},
-            [EndpointConfig(account='main', chat_id='!room:matrix.example')],
+            [EndpointConfig(account='main', address='!room:matrix.example')],
         )
         assert isinstance(listener, MatrixListener)
         assert listener.started is False
@@ -140,8 +140,8 @@ class TestPluginObject:
 
     def test_recent_poll_endpoints_union_from_pipelines(self) -> None:
         """T032 (A-1): per-pipeline recent_poll → объединение источников listener'у."""
-        ep_on = EndpointConfig(account='main', chat_id='!hot:matrix.example')
-        ep_off = EndpointConfig(account='main', chat_id='!cold:matrix.example')
+        ep_on = EndpointConfig(account='main', address='!hot:matrix.example')
+        ep_off = EndpointConfig(account='main', address='!cold:matrix.example')
         deps = _deps(
             pipelines={
                 'hot': SimpleNamespace(recent_poll=True, sources=[ep_on]),
@@ -160,7 +160,7 @@ class TestPluginObject:
         deps = _deps()
         accounts = {'main': _account()}
         listener = PLUGIN.make_listener(
-            deps, accounts, [EndpointConfig(account='main', chat_id='!r:s')]
+            deps, accounts, [EndpointConfig(account='main', address='!r:s')]
         )
         sender = PLUGIN.make_sender(deps, accounts)
         assert listener._clients['main'] is sender._clients['main']

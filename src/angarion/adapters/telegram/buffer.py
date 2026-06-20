@@ -23,12 +23,12 @@ from angarion.domain.models import AnalyticsEvent
 if TYPE_CHECKING:
     from structlog.typing import FilteringBoundLogger
 
-    from angarion.domain.models import InboundEvent
+    from angarion.domain.models import Record
     from angarion.domain.ports import AnalyticsPort
 
 
 class LiveBuffer:
-    """Неблокирующий буфер ``InboundEvent`` с warning по мягкому лимиту."""
+    """Неблокирующий буфер ``Record`` с warning по мягкому лимиту."""
 
     def __init__(
         self,
@@ -37,15 +37,15 @@ class LiveBuffer:
         log: FilteringBoundLogger,
         analytics: AnalyticsPort,
     ) -> None:
-        self._queue: asyncio.Queue[InboundEvent] = asyncio.Queue()
+        self._queue: asyncio.Queue[Record] = asyncio.Queue()
         self._soft_limit = soft_limit
         self._log = log
         self._analytics = analytics
         self._warned = False
 
-    async def put(self, event: InboundEvent) -> None:
-        """Добавить событие (не блокирует); warning при пересечении лимита."""
-        self._queue.put_nowait(event)
+    async def put(self, record: Record) -> None:
+        """Добавить запись (не блокирует); warning при пересечении лимита."""
+        self._queue.put_nowait(record)
         depth = self._queue.qsize()
         if depth >= self._soft_limit and not self._warned:
             self._warned = True
@@ -61,12 +61,12 @@ class LiveBuffer:
                 )
             )
 
-    async def get(self) -> InboundEvent:
+    async def get(self) -> Record:
         """Дождаться и выдать голову буфера (FIFO)."""
-        event = await self._queue.get()
+        record = await self._queue.get()
         if self._warned and self._queue.qsize() < self._soft_limit:
             self._warned = False
-        return event
+        return record
 
     def qsize(self) -> int:
         """Текущая глубина буфера."""

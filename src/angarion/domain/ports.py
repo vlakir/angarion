@@ -26,16 +26,16 @@ if TYPE_CHECKING:
         DeadLetter,
         DeliveryReceipt,
         DynamicSettings,
-        InboundEvent,
-        OutboundMessage,
         OutboundRecord,
         OutboxCommand,
+        OutboxRecord,
         PipelineContextData,
         ProcessingResult,
         ProcessorServices,
         QueueDepth,
         QueueEnvelope,
         QueueItem,
+        Record,
         RegistryDelta,
         RegistryRecord,
         RegistryVersion,
@@ -75,11 +75,11 @@ class EventQueuePort(Protocol):
 
 
 @runtime_checkable
-class MessageSinkPort(Protocol):
-    """Доставка исходящих сообщений платформе (§5)."""
+class SinkPort(Protocol):
+    """Доставка исходящих записей транспорту (§5, T041)."""
 
-    async def send(self, msg: OutboundMessage) -> DeliveryReceipt:
-        """Отправить сообщение; время в receipt — UTC (§17.4)."""
+    async def send(self, record: OutboundRecord) -> DeliveryReceipt:
+        """Отправить запись; время в receipt — UTC (§17.4)."""
 
 
 @runtime_checkable
@@ -108,22 +108,22 @@ class OutboxPort(Protocol):
     """
     Outbox исходящих (C-9): обработка фиксирует outbound здесь до
     ``ack`` envelope; доставкой занимается отдельный цикл
-    (``DeliveryWorker``). Ключ — ``msg.idempotency_key``.
+    (``DeliveryWorker``). Ключ — ``record.idempotency_key``.
     """
 
     async def put(
         self,
-        msg: OutboundMessage,
+        record: OutboundRecord,
         *,
         pipeline: str | None = None,
-        event_uid: UUID | None = None,
+        record_uid: UUID | None = None,
     ) -> bool:
         """
         Положить исходящее (insert-if-absent): True — записано,
         False — ключ уже известен (повторная обработка envelope).
         """
 
-    async def due(self, limit: int = 50) -> list[OutboundRecord]:
+    async def due(self, limit: int = 50) -> list[OutboxRecord]:
         """Pending-записи с ``next_attempt_at <= now``, FIFO, до limit."""
 
     async def mark_sent(self, idempotency_key: str, receipt: DeliveryReceipt) -> None:
@@ -140,7 +140,7 @@ class OutboxPort(Protocol):
         разбор ручной — аналог DLQ для исходящих.
         """
 
-    async def get(self, idempotency_key: str) -> OutboundRecord | None:
+    async def get(self, idempotency_key: str) -> OutboxRecord | None:
         """Запись по ключу или None."""
 
     async def prune(self, older_than: AwareDatetime) -> int:
@@ -378,8 +378,8 @@ class ProcessorPort(Protocol):
 
     async def process(
         self,
-        event: InboundEvent,
+        record: Record,
         ctx: PipelineContextData,
         svc: ProcessorServices,
     ) -> ProcessingResult:
-        """Обработать событие; исключение → retry-политика §8."""
+        """Обработать запись; исключение → retry-политика §8."""

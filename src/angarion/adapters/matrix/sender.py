@@ -1,7 +1,7 @@
 """
-MatrixSender (FR «Sender», M7 B3): доставка ``OutboundMessage`` в Matrix.
+MatrixSender (FR «Sender», M7 B3): доставка ``OutboundRecord`` в Matrix.
 
-Реализует ``MessageSinkPort`` поверх ``MatrixClientPort`` (общий с
+Реализует ``SinkPort`` поверх ``MatrixClientPort`` (общий с
 listener пул клиентов): резолвит целевую комнату, отправляет текст или
 вложение (тред/reply), переживает rate-limit (``M_LIMIT_EXCEEDED``) и
 повторяет transient-сбои — зеркало `TelegramSender` (§8), но без
@@ -32,11 +32,11 @@ if TYPE_CHECKING:
     from structlog.typing import FilteringBoundLogger
 
     from angarion.adapters.matrix.client import MatrixClientPort
-    from angarion.domain.models import OutboundMessage
+    from angarion.domain.models import OutboundRecord
 
 
 class MatrixSender:
-    """Доставка исходящих в Matrix-комнаты (``MessageSinkPort``, M7 B3)."""
+    """Доставка исходящих в Matrix-комнаты (``SinkPort``, M7 B3)."""
 
     def __init__(
         self,
@@ -57,26 +57,26 @@ class MatrixSender:
         self._backoff_cap = backoff_cap
         self._sleep = sleep
 
-    async def send(self, msg: OutboundMessage) -> DeliveryReceipt:
+    async def send(self, record: OutboundRecord) -> DeliveryReceipt:
         """Резолв комнаты → устойчивая отправка → ``DeliveryReceipt`` (UTC)."""
-        client = self._clients.get(msg.send_via.account_id)
+        client = self._clients.get(record.send_via.account_id)
         if client is None:
-            account = msg.send_via.account_id
+            account = record.send_via.account_id
             known = ', '.join(sorted(self._clients)) or '<нет>'
-            msg_ = f'нет Matrix-клиента для аккаунта {account!r} (есть: {known})'
-            raise ConfigError(msg_)
+            detail = f'нет Matrix-клиента для аккаунта {account!r} (есть: {known})'
+            raise ConfigError(detail)
         await client.restore()  # идемпотентно (роль-сплит: процесс без listener'а)
-        room_id = await client.resolve_room(msg.target.chat_id)
-        event_id = await self._send_resilient(client, room_id, msg)
+        room_id = await client.resolve_room(record.target.address)
+        event_id = await self._send_resilient(client, room_id, record)
         return DeliveryReceipt(external_id=event_id, delivered_at=datetime.now(UTC))
 
     async def _send_op(
-        self, client: MatrixClientPort, room_id: str, msg: OutboundMessage
+        self, client: MatrixClientPort, room_id: str, record: OutboundRecord
     ) -> str:
-        thread_root = msg.target.thread_id
-        if msg.media:
-            media = msg.media[0]
-            body = msg.text or media.file_name or 'attachment'
+        thread_root = record.target.thread_id
+        if record.media:
+            media = record.media[0]
+            body = record.text or media.file_name or 'attachment'
             return await client.send_media(
                 room_id,
                 body=body,
@@ -87,17 +87,17 @@ class MatrixSender:
                 file_name=media.file_name,
                 thread_root=thread_root,
             )
-        return await client.send_text(room_id, msg.text, thread_root=thread_root)
+        return await client.send_text(room_id, record.text, thread_root=thread_root)
 
     async def _send_resilient(
-        self, client: MatrixClientPort, room_id: str, msg: OutboundMessage
+        self, client: MatrixClientPort, room_id: str, record: OutboundRecord
     ) -> str:
         """Rate-limit-ожидание + transient-ретраи (тот же подход, что Telegram)."""
         rate_retries = 0
         attempts = 0
         while True:
             try:
-                return await self._send_op(client, room_id, msg)
+                return await self._send_op(client, room_id, record)
             except MatrixRateLimitError as exc:
                 rate_retries += 1
                 if rate_retries > self._rate_limit_max_retries:

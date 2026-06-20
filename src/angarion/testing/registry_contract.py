@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from angarion.domain.models import RegistryDelta, RegistryOutcome, RegistryVersion
-from angarion.testing.factories import NOW, SOURCE_KEY, make_record
+from angarion.testing.factories import NOW, SOURCE_KEY, make_registry_record
 
 if TYPE_CHECKING:
     from angarion.domain.ports import MessageRegistryPort
@@ -28,7 +28,7 @@ class MessageRegistryContract:
         raise NotImplementedError
 
     async def test_upsert_new(self, registry: MessageRegistryPort) -> None:
-        rec = make_record()
+        rec = make_registry_record()
         delta = await registry.upsert(rec)
         assert delta == RegistryDelta(outcome=RegistryOutcome.IS_NEW)
         assert await registry.get(SOURCE_KEY, '42') == rec
@@ -41,16 +41,18 @@ class MessageRegistryContract:
     async def test_upsert_same_hash_unchanged(
         self, registry: MessageRegistryPort
     ) -> None:
-        await registry.upsert(make_record())
-        delta = await registry.upsert(make_record(edit_ts=NOW + timedelta(seconds=5)))
+        await registry.upsert(make_registry_record())
+        delta = await registry.upsert(
+            make_registry_record(edit_ts=NOW + timedelta(seconds=5))
+        )
         assert delta == RegistryDelta(outcome=RegistryOutcome.UNCHANGED)
         assert await registry.versions(SOURCE_KEY, '42') == []
 
     async def test_upsert_changed_text_archives_version(
         self, registry: MessageRegistryPort
     ) -> None:
-        await registry.upsert(make_record())
-        edited = make_record(
+        await registry.upsert(make_registry_record())
+        edited = make_registry_record(
             text='hello!',
             content_hash='hash-b',
             edit_ts=NOW + timedelta(minutes=1),
@@ -71,8 +73,10 @@ class MessageRegistryContract:
         M7 A3: подмена вложения при том же тексте — правка; архив несёт
         прежний media_hash (иначе catch-up проморгал бы медиа-правку).
         """
-        await registry.upsert(make_record(media_hash='m1'))
-        swapped = make_record(media_hash='m2', edit_ts=NOW + timedelta(minutes=1))
+        await registry.upsert(make_registry_record(media_hash='m1'))
+        swapped = make_registry_record(
+            media_hash='m2', edit_ts=NOW + timedelta(minutes=1)
+        )
         delta = await registry.upsert(swapped)
         assert delta.outcome is RegistryOutcome.TEXT_CHANGED
         assert await registry.get(SOURCE_KEY, '42') == swapped
@@ -82,16 +86,18 @@ class MessageRegistryContract:
     async def test_same_text_and_media_unchanged(
         self, registry: MessageRegistryPort
     ) -> None:
-        await registry.upsert(make_record(media_hash='m1'))
+        await registry.upsert(make_registry_record(media_hash='m1'))
         delta = await registry.upsert(
-            make_record(media_hash='m1', edit_ts=NOW + timedelta(seconds=5))
+            make_registry_record(media_hash='m1', edit_ts=NOW + timedelta(seconds=5))
         )
         assert delta == RegistryDelta(outcome=RegistryOutcome.UNCHANGED)
 
     async def test_upsert_stale_is_ignored(self, registry: MessageRegistryPort) -> None:
-        current = make_record(text='hello!', content_hash='hash-b', edit_ts=NOW)
+        current = make_registry_record(
+            text='hello!', content_hash='hash-b', edit_ts=NOW
+        )
         await registry.upsert(current)
-        late_original = make_record(event_at=NOW - timedelta(minutes=5))
+        late_original = make_registry_record(event_at=NOW - timedelta(minutes=5))
         delta = await registry.upsert(late_original)
         assert delta == RegistryDelta(outcome=RegistryOutcome.STALE)
         assert await registry.get(SOURCE_KEY, '42') == current
@@ -101,13 +107,15 @@ class MessageRegistryContract:
         self, registry: MessageRegistryPort
     ) -> None:
         """§9.4: A→B→A — на уровне реестра это полноценная правка."""
-        await registry.upsert(make_record())
+        await registry.upsert(make_registry_record())
         await registry.upsert(
-            make_record(
+            make_registry_record(
                 text='v2', content_hash='hash-b', edit_ts=NOW + timedelta(minutes=1)
             )
         )
-        delta = await registry.upsert(make_record(edit_ts=NOW + timedelta(minutes=2)))
+        delta = await registry.upsert(
+            make_registry_record(edit_ts=NOW + timedelta(minutes=2))
+        )
         assert delta == RegistryDelta(
             outcome=RegistryOutcome.TEXT_CHANGED, previous_text='v2'
         )
@@ -115,14 +123,14 @@ class MessageRegistryContract:
         assert [v.text for v in versions] == ['hello', 'v2']
 
     async def test_versions_oldest_first(self, registry: MessageRegistryPort) -> None:
-        await registry.upsert(make_record())
+        await registry.upsert(make_registry_record())
         await registry.upsert(
-            make_record(
+            make_registry_record(
                 text='v2', content_hash='hash-b', edit_ts=NOW + timedelta(minutes=1)
             )
         )
         await registry.upsert(
-            make_record(
+            make_registry_record(
                 text='v3', content_hash='hash-c', edit_ts=NOW + timedelta(minutes=2)
             )
         )
@@ -133,7 +141,7 @@ class MessageRegistryContract:
     async def test_mark_deleted_returns_last_state(
         self, registry: MessageRegistryPort
     ) -> None:
-        await registry.upsert(make_record())
+        await registry.upsert(make_registry_record())
         deleted = await registry.mark_deleted(SOURCE_KEY, '42')
         assert deleted is not None
         assert deleted.text == 'hello'
@@ -150,7 +158,7 @@ class MessageRegistryContract:
     async def test_mark_deleted_is_idempotent(
         self, registry: MessageRegistryPort
     ) -> None:
-        await registry.upsert(make_record())
+        await registry.upsert(make_registry_record())
         first = await registry.mark_deleted(SOURCE_KEY, '42')
         second = await registry.mark_deleted(SOURCE_KEY, '42')
         assert second == first
@@ -160,36 +168,36 @@ class MessageRegistryContract:
     ) -> None:
         """Числовые id сравниваются как числа: '9' < '10' (не лексикографика)."""
         for external_id in ('9', '10', '11'):
-            await registry.upsert(make_record(external_id=external_id))
+            await registry.upsert(make_registry_record(external_id=external_id))
         assert await registry.known_ids(SOURCE_KEY, min_id='10') == {'10', '11'}
 
     async def test_known_ids_non_numeric_compared_lexicographically(
         self, registry: MessageRegistryPort
     ) -> None:
         for external_id in ('a', 'b', 'c'):
-            await registry.upsert(make_record(external_id=external_id))
+            await registry.upsert(make_registry_record(external_id=external_id))
         assert await registry.known_ids(SOURCE_KEY, min_id='b') == {'b', 'c'}
 
     async def test_known_ids_excludes_deleted(
         self, registry: MessageRegistryPort
     ) -> None:
-        await registry.upsert(make_record(external_id='1'))
-        await registry.upsert(make_record(external_id='2'))
+        await registry.upsert(make_registry_record(external_id='1'))
+        await registry.upsert(make_registry_record(external_id='2'))
         await registry.mark_deleted(SOURCE_KEY, '1')
         assert await registry.known_ids(SOURCE_KEY, min_id='0') == {'2'}
 
     async def test_known_ids_scoped_to_source(
         self, registry: MessageRegistryPort
     ) -> None:
-        await registry.upsert(make_record())
-        await registry.upsert(make_record(source_key='memory:acc1:-100999'))
+        await registry.upsert(make_registry_record())
+        await registry.upsert(make_registry_record(source_key='memory:acc1:-100999'))
         assert await registry.known_ids(SOURCE_KEY, min_id='0') == {'42'}
 
     async def test_prune_removes_records_older_than(
         self, registry: MessageRegistryPort
     ) -> None:
-        old = make_record(external_id='1', event_at=NOW - timedelta(days=30))
-        fresh = make_record(external_id='2')
+        old = make_registry_record(external_id='1', event_at=NOW - timedelta(days=30))
+        fresh = make_registry_record(external_id='2')
         await registry.upsert(old)
         await registry.upsert(fresh)
         assert await registry.prune(older_than=NOW - timedelta(days=7)) == 1
@@ -199,9 +207,9 @@ class MessageRegistryContract:
     async def test_prune_drops_versions_of_pruned_records(
         self, registry: MessageRegistryPort
     ) -> None:
-        await registry.upsert(make_record(event_at=NOW - timedelta(days=30)))
+        await registry.upsert(make_registry_record(event_at=NOW - timedelta(days=30)))
         await registry.upsert(
-            make_record(
+            make_registry_record(
                 text='v2',
                 content_hash='hash-b',
                 event_at=NOW - timedelta(days=30),
@@ -215,9 +223,9 @@ class MessageRegistryContract:
         self, registry: MessageRegistryPort
     ) -> None:
         """Запись в окне, но весь её архив — за окном: архив пустеет."""
-        await registry.upsert(make_record(event_at=NOW - timedelta(days=30)))
+        await registry.upsert(make_registry_record(event_at=NOW - timedelta(days=30)))
         await registry.upsert(
-            make_record(
+            make_registry_record(
                 text='v2',
                 content_hash='hash-b',
                 event_at=NOW - timedelta(days=30),
@@ -232,9 +240,9 @@ class MessageRegistryContract:
         self, registry: MessageRegistryPort
     ) -> None:
         """Запись в окне, но её ранние версии — за окном: версии чистятся."""
-        await registry.upsert(make_record(event_at=NOW - timedelta(days=30)))
+        await registry.upsert(make_registry_record(event_at=NOW - timedelta(days=30)))
         await registry.upsert(
-            make_record(
+            make_registry_record(
                 text='v2',
                 content_hash='hash-b',
                 event_at=NOW - timedelta(days=30),
@@ -242,7 +250,7 @@ class MessageRegistryContract:
             )
         )
         await registry.upsert(
-            make_record(
+            make_registry_record(
                 text='v3',
                 content_hash='hash-c',
                 event_at=NOW - timedelta(days=30),

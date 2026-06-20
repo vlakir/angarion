@@ -13,12 +13,12 @@ fake-реализации без сети и без nio (W1: вся логика
 - **Правки.** Matrix-правка — это **новое** событие с
   ``m.relates_to: {rel_type: "m.replace", event_id: <оригинал>}`` и
   ``m.new_content``. Обёртка раскрывает это в ``RawMatrixMessage`` с
-  ``kind=MESSAGE_EDITED`` и ``event_id`` = id **оригинала** (а не самой
+  ``kind=EDITED`` и ``event_id`` = id **оригинала** (а не самой
   правки): так ``external_id`` совпадает с записью реестра исходного
   сообщения, ``previous_text`` достаётся из реестра в ``IngestService``
   (как у Telegram).
 - **Удаления.** Redaction несёт ``redacts: <event_id>`` — одно
-  ``MESSAGE_DELETED`` на событие (не список, в отличие от Telegram).
+  ``DELETED`` на событие (не список, в отличие от Telegram).
 - **UTD (unable-to-decrypt).** Зашифрованное событие без ключа сессии
   приходит как ``MegolmEvent``; обёртка отдаёт его отдельным колбэком —
   listener помечает и пропускает (platform limitation §17.9, не падение).
@@ -35,10 +35,10 @@ from typing import Final, Protocol, runtime_checkable
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
-from angarion.domain.models import EventKind
+from angarion.domain.models import RecordKind
 
-MESSENGER: Final = 'matrix'
-"""Идентификатор платформы Matrix-адаптера."""
+TRANSPORT: Final = 'matrix'
+"""Идентификатор транспорта Matrix-адаптера."""
 
 
 class MatrixRateLimitError(Exception):
@@ -94,7 +94,7 @@ class RawMatrixMessage(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra='forbid')
 
-    kind: EventKind
+    kind: RecordKind
     room_id: str
     event_id: str
     thread_id: str | None = None
@@ -111,7 +111,7 @@ class RawMatrixDeletion(BaseModel):
     Сырое событие удаления Matrix (redaction): один ``redacts`` event_id.
 
     В отличие от Telegram (пачка id в одном update), Matrix-redaction
-    адресует ровно одно событие — маппинг даёт один ``MESSAGE_DELETED``.
+    адресует ровно одно событие — маппинг даёт один ``DELETED``.
     """
 
     model_config = ConfigDict(frozen=True, extra='forbid')

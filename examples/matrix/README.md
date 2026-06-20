@@ -15,7 +15,7 @@ listener расшифровывает входящее.
    matrix.org). Впиши в [`app.toml`](app.toml):
    - `homeserver` — URL (например `https://matrix.org`);
    - `user_id` — полный MXID (`@bot:matrix.org`);
-   - в `[pipelines.mirror]` — `chat_id` источника и цели (`!room:server`
+   - в `[pipelines.mirror]` — `address` источника и цели (`!room:server`
      или `#alias:server`). Аккаунт должен состоять в обеих комнатах.
 2. **Extra с E2EE:** `uv sync --extra matrix` — тянет `matrix-nio[e2e]`
    (→ `python-olm` → системная **libolm**, см. README репозитория, раздел
@@ -51,5 +51,5 @@ git-ignored `angarion-data/`. Секреты в репозиторий не по
   баг адаптера: такие события пропускаются с пометкой `matrix_undecryptable`
   в аналитике (см. «Ограничения платформ» в README репозитория).
 - **Кросс-платформа** (Telegram↔Matrix) — добавь второй аккаунт
-  `[accounts.*]` другого `messenger` и укажи его в `sources`/`targets`
+  `[accounts.*]` другого `transport` и укажи его в `sources`/`targets`
   пайплайна; ядро не меняется.

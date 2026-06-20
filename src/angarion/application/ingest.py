@@ -24,15 +24,15 @@ from uuid import uuid4
 from angarion.domain.keys import make_source_key
 from angarion.domain.models import (
     AnalyticsEvent,
-    EventKind,
     QueueEnvelope,
+    RecordKind,
     RegistryOutcome,
     RegistryRecord,
 )
 
 if TYPE_CHECKING:
     from angarion.application.router import Router
-    from angarion.domain.models import InboundEvent
+    from angarion.domain.models import Record
     from angarion.domain.ports import (
         AnalyticsPort,
         DedupStorePort,
@@ -59,89 +59,87 @@ class IngestService:
         self._queue = queue
         self._analytics = analytics
 
-    async def ingest(self, event: InboundEvent) -> None:
-        """Принять нормализованное событие от driving-адаптера (§6.1)."""
-        if await self._dedup.seen(event.dedup_key):
-            await self._record('duplicate', event)
+    async def ingest(self, record: Record) -> None:
+        """Принять нормализованную запись от driving-адаптера (§6.1)."""
+        if await self._dedup.seen(record.dedup_key):
+            await self._record('duplicate', record)
             return
-        event = await self._maintain_registry(event)
-        pipelines = self._router.resolve(event.source, event.kind, event)
+        record = await self._maintain_registry(record)
+        pipelines = self._router.resolve(record.source, record.kind, record)
         if not pipelines:
-            await self._dedup.mark_inbound(event.dedup_key)
-            await self._record('unrouted', event)
+            await self._dedup.mark_inbound(record.dedup_key)
+            await self._record('unrouted', record)
             return
         for pipeline in sorted(pipelines):
-            await self._queue.put(QueueEnvelope(pipeline=pipeline, event=event))
-        await self._dedup.mark_inbound(event.dedup_key)  # строго после fan-out (A-11)
-        await self._record('ingested', event, {'pipelines': sorted(pipelines)})
+            await self._queue.put(QueueEnvelope(pipeline=pipeline, record=record))
+        await self._dedup.mark_inbound(record.dedup_key)  # строго после fan-out (A-11)
+        await self._record('ingested', record, {'pipelines': sorted(pipelines)})
 
-    async def _maintain_registry(self, event: InboundEvent) -> InboundEvent:
+    async def _maintain_registry(self, record: Record) -> Record:
         """
-        Шаг 2 §6.1: upsert/mark_deleted + обогащение события из реестра.
+        Шаг 2 §6.1: upsert/mark_deleted + обогащение записи из реестра.
 
         EDITED получает ``previous_text`` вытесненной версии; DELETED —
         текст и метаданные удалённого сообщения (только отсутствующие
-        в событии поля). ``stale``-исход реестр не меняет, событие идёт
+        в записи поля). ``stale``-исход реестр не меняет, запись идёт
         дальше без обогащения (guard защищает реестр, не маршрут).
         """
         source_key = make_source_key(
-            event.source.messenger,
-            event.received_by.account_id,
-            event.source.chat_id,
-            event.source.thread_id,
+            record.source.transport,
+            record.received_by.account_id,
+            record.source.address,
+            record.source.thread_id,
         )
-        if event.kind is EventKind.MESSAGE_DELETED:
-            record = await self._registry.mark_deleted(source_key, event.external_id)
-            if record is None:
-                return event
-            return self._enrich_deleted(event, record)
+        if record.kind is RecordKind.DELETED:
+            known = await self._registry.mark_deleted(source_key, record.external_id)
+            if known is None:
+                return record
+            return self._enrich_deleted(record, known)
         delta = await self._registry.upsert(
             RegistryRecord(
                 source_key=source_key,
-                external_id=event.external_id,
-                text=event.text,
-                content_hash=event.content_hash,
-                media_hash=event.media_hash,
-                sender_id=event.sender_id,
-                sender_name=event.sender_name,
-                event_at=event.event_at,
-                edit_ts=(
-                    event.event_at if event.kind is EventKind.MESSAGE_EDITED else None
-                ),
+                external_id=record.external_id,
+                text=record.text,
+                content_hash=record.content_hash,
+                media_hash=record.media_hash,
+                sender_id=record.sender_id,
+                sender_name=record.sender_name,
+                event_at=record.event_at,
+                edit_ts=(record.event_at if record.kind is RecordKind.EDITED else None),
             )
         )
         if (
-            event.kind is EventKind.MESSAGE_EDITED
+            record.kind is RecordKind.EDITED
             and delta.outcome is RegistryOutcome.TEXT_CHANGED
         ):
-            return event.model_copy(update={'previous_text': delta.previous_text})
-        return event
+            return record.model_copy(update={'previous_text': delta.previous_text})
+        return record
 
     @staticmethod
-    def _enrich_deleted(event: InboundEvent, record: RegistryRecord) -> InboundEvent:
-        """Восстановить из реестра поля, которых нет в событии удаления."""
+    def _enrich_deleted(record: Record, known: RegistryRecord) -> Record:
+        """Восстановить из реестра поля, которых нет в записи удаления."""
         updates: dict[str, str | None] = {}
-        if event.text is None:
-            updates['text'] = record.text
-        if event.content_hash is None:
-            updates['content_hash'] = record.content_hash
-        if event.sender_id is None:
-            updates['sender_id'] = record.sender_id
-        if event.sender_name is None:
-            updates['sender_name'] = record.sender_name
-        return event.model_copy(update=updates) if updates else event
+        if record.text is None:
+            updates['text'] = known.text
+        if record.content_hash is None:
+            updates['content_hash'] = known.content_hash
+        if record.sender_id is None:
+            updates['sender_id'] = known.sender_id
+        if record.sender_name is None:
+            updates['sender_name'] = known.sender_name
+        return record.model_copy(update=updates) if updates else record
 
     async def _record(
         self,
         kind: str,
-        event: InboundEvent,
+        record: Record,
         payload: dict[str, Any] | None = None,
     ) -> None:
         await self._analytics.record(
             AnalyticsEvent(
                 uid=uuid4(),
                 kind=kind,
-                event_uid=event.uid,
+                record_uid=record.uid,
                 payload=payload or {},
                 at=datetime.now(UTC),
             )

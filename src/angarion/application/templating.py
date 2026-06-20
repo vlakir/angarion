@@ -1,5 +1,5 @@
 """
-Общий Jinja2-движок рендеринга по полям ``InboundEvent`` для встроенных
+Общий Jinja2-движок рендеринга по полям ``Record`` для встроенных
 процессоров ``template`` и ``llm`` (FR §3 спеки T007).
 
 Окружение настроено под plain text (W4 спеки):
@@ -15,16 +15,16 @@
   рендерится пусто — чтобы, например, ``previous_text`` у NEW не валил
   рендер (W4).
 
-Контекст рендеринга — поля события в JSON-форме
+Контекст рендеринга — поля записи в JSON-форме
 (``model_dump(mode='json')``): ``text``, ``previous_text``, ``kind``,
 ``origin``, ``sender_name``, ``sender_id``, ``external_id``,
 ``event_at`` и вложенные ``source``/``received_by`` (доступны как
-``source.chat_id`` и т.п.).
+``source.address`` и т.п.).
 """
 
 from jinja2 import Environment, Template, select_autoescape
 
-from angarion.domain.models import InboundEvent
+from angarion.domain.models import Record
 
 
 def _finalize(value: object) -> object:
@@ -38,7 +38,7 @@ _ENV = Environment(
 )
 
 
-def compile_event_template(source: str) -> Template:
+def compile_record_template(source: str) -> Template:
     """
     Скомпилировать Jinja2-шаблон (``jinja2.TemplateSyntaxError`` при битом
     синтаксисе) — процессоры компилируют один раз при разборе конфига и
@@ -47,11 +47,11 @@ def compile_event_template(source: str) -> Template:
     return _ENV.from_string(source)
 
 
-def render_compiled(template: Template, event: InboundEvent) -> str:
-    """Отрендерить скомпилированный шаблон по полям события (FR §3)."""
-    return template.render(event.model_dump(mode='json'))
+def render_compiled(template: Template, record: Record) -> str:
+    """Отрендерить скомпилированный шаблон по полям записи (FR §3)."""
+    return template.render(record.model_dump(mode='json'))
 
 
-def render_event_template(source: str, event: InboundEvent) -> str:
+def render_record_template(source: str, record: Record) -> str:
     """Скомпилировать и отрендерить шаблон-строку (one-shot; компиляция на вызов)."""
-    return render_compiled(compile_event_template(source), event)
+    return render_compiled(compile_record_template(source), record)

@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from angarion.adapters.matrix.client import MatrixClientPort
     from angarion.bootstrap import AdapterDeps
     from angarion.config import EndpointConfig
-    from angarion.domain.ports import MessageSinkPort
+    from angarion.domain.ports import SinkPort
 
 _PW_ENV: Final = 'ANGARION_MATRIX_PASSWORD'
 """Env-источник пароля для неинтерактивного логина (§17.7; иначе getpass)."""
@@ -69,7 +69,7 @@ class MatrixAccountConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra='forbid')
 
-    messenger: Literal['matrix']
+    transport: Literal['matrix']
     homeserver: str = Field(min_length=1)
     user_id: str = Field(min_length=1)
     device_name: str = 'angarion'
@@ -168,7 +168,7 @@ def _make_listener(
 
 def _make_sender(
     deps: 'AdapterDeps', accounts: 'Mapping[str, BaseModel]'
-) -> 'MessageSinkPort':
+) -> 'SinkPort':
     """Фабрика Matrix-sender (§12.11, B3): тот же пул клиентов, что у listener."""
     return MatrixSender(
         clients=_shared_clients(deps, accounts),

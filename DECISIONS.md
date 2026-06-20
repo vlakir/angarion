@@ -39,6 +39,63 @@ ADR-Lite: компактный лог архитектурных решений 
 
 <!-- Реальные решения добавляются сюда, новые сверху. -->
 
+### 2026-06-20 — Транспорт-агностичная модель ядра: `Record`/`transport`, раздельные вход/выход (T041)
+
+- **Контекст:** фундамент волны v2 (см. pivot 2026-06-19): ядро и публичный
+  контракт были завязаны на мессенджер-понятия (`messenger`, `chat_id`,
+  обязательная событийная семантика new/edited/deleted). Чтобы подключать
+  не-чат-транспорты (брокеры T039, email T040) добавлением адаптера, а не
+  правкой ядра, модель обобщена до транспорт-агностичной записи. Big-bang
+  без алиасов (pre-alpha, решено на Clarify).
+- **Решение (структура записи):** вход и выход — **раздельные** типы
+  `Record` (входящая запись) и `OutboundRecord` (исходящая к отправке), а не
+  единый `Record` с опциональными полями. «Единый Record» из resolved-блока
+  спеки трактуем как «не плодим подтипы по транспортам», а не «вход+выход в
+  одном классе»: у входа и выхода разные инварианты (§7.2 vs §7.3), и
+  раздельные типы дают чистый `mypy --strict` без ветвлений по
+  направлению.
+- **Решение (схема переименования публичного контракта):**
+  `Messenger`→`Transport`; `Address`→`Endpoint` (`messenger`→`transport`,
+  `chat_id`→`address` — `address` читается естественнее для любого
+  транспорта: chat/topic/queue/mailbox); `EventKind`→`RecordKind` со
+  значениями `message_new/edited/deleted`→`new/edited/deleted`;
+  `InboundEvent`→`Record`; `OutboundMessage`→`OutboundRecord`; прежний
+  outbox-журнал `OutboundRecord`→`OutboxRecord` (освобождает имя под выход);
+  `MessageSinkPort`→`SinkPort`, `MessageSinkContract`→`SinkContract`;
+  `QueueEnvelope.event`→`.record`, `OutboxRecord.msg`→`.record`,
+  `AnalyticsEvent.event_uid`→`.record_uid`, `OutboxPort.put(event_uid=)`→
+  `record_uid=`; `compile/render_event_template`→`*_record_template`;
+  testing-фабрики `make_address`→`make_endpoint`, `make_event`→`make_record`,
+  прежняя `make_record`(RegistryRecord)→`make_registry_record`.
+- **Решение (что НЕ переименовано):** `MessageRegistryPort`/
+  `MessageRegistryContract` — реестр сообщений с историей версий и
+  catch-up — это **capability класса «мессенджер»**, активируемая по
+  объявленной capability, а не базовый инвариант; имя сохраняет смысл.
+  `EventQueuePort`/`EventQueueContract`, `AnalyticsEvent`, ключ `events`
+  в `RouteSpec` — оставлены (очередь/аналитика/подписка не несут
+  мессенджер-специфики в имени).
+- **Решение (конфиг и БД):** публичные ключи TOML меняются чисто, без
+  обратной совместимости: `[accounts.*].messenger`→`transport`, в
+  source/target `chat_id`→`address` (тип `str` — числовые id берём в
+  кавычки). Персистентные колонки мигрирует Alembic-ревизия
+  `0008_t041_record_columns` (`*.event_uid`→`record_uid`,
+  `OutboxRecord.msg`→`record`); значения `RecordKind` храним как новые
+  строки.
+- **Альтернативы:**
+  - Единый `Record` вход+выход с опциональными полями — отвергли: грязный
+    `mypy --strict`, смешение инвариантов §7.2/§7.3.
+  - Переходный период с алиасами старых имён — отвергли: pre-alpha,
+    big-bang проще и без долгой красной ветки сосуществования.
+  - Оставить `chat_id`/`Address` — отвергли: имя завязано на чат, не читается
+    для брокера/mailbox.
+- **Последствия:** ядро и порты транспорт-агностичны; не-чат-адаптер
+  объявляет только нужные capabilities (например один `new`), и ядро не
+  навязывает ему реестр/catch-up; при подписке пайплайна на вид записи,
+  не объявленный transport-ом, — fail-fast на старте (§12.10). Ломающее
+  изменение публичного API (включая `angarion.testing` и ключи конфига) —
+  зафиксировано в CHANGELOG. Telegram/Matrix работают без регресса (все
+  тесты зелёные). Опирается на pivot v2 (2026-06-19); T039/T040 берут после.
+
 ### 2026-06-19 — Pivot к универсальному движку мультиформатных конвейеров (видение v2)
 
 - **Контекст:** ценность проекта (надёжный конвейер с at-least-once,

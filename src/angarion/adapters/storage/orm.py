@@ -83,15 +83,15 @@ class InboundDedupRow(Base):
 class OutboundRow(Base):
     """
     Журнал outbox исходящих (C-9 T002): персистентная форма
-    ``OutboundRecord``. PK ``idempotency_key`` — выходная
-    идемпотентность (§7.3); ``msg`` / ``receipt`` — JSON DTO.
+    ``OutboxRecord``. PK ``idempotency_key`` — выходная
+    идемпотентность (§7.3); ``record`` / ``receipt`` — JSON DTO.
     """
 
     __tablename__ = 'outbound'
     __table_args__ = (Index('ix_outbound_due', 'status', 'next_attempt_at'),)
 
     idempotency_key: Mapped[str] = mapped_column(primary_key=True)
-    msg: Mapped[str]
+    record: Mapped[str]
     status: Mapped[str]
     attempts: Mapped[int]
     next_attempt_at: Mapped[datetime]
@@ -100,7 +100,7 @@ class OutboundRow(Base):
     receipt: Mapped[str | None]
     last_error: Mapped[str | None]
     pipeline: Mapped[str | None]
-    event_uid: Mapped[str | None]
+    record_uid: Mapped[str | None]
 
 
 class MessageRow(Base):
@@ -193,7 +193,7 @@ class AnalyticsEventRow(Base):
     seq: Mapped[int] = mapped_column(primary_key=True)
     uid: Mapped[str] = mapped_column(unique=True)
     kind: Mapped[str]
-    event_uid: Mapped[str | None]
+    record_uid: Mapped[str | None]
     pipeline: Mapped[str | None]
     payload: Mapped[str]
     at: Mapped[datetime] = mapped_column(index=True)

@@ -58,11 +58,11 @@ MEMORY_CAPABILITIES: Final = AdapterCapabilities(
 
 
 class MemoryAccountConfig(BaseModel):
-    """Секция ``[accounts.*]`` платформы memory: только ``messenger``."""
+    """Секция ``[accounts.*]`` платформы memory: только ``transport``."""
 
     model_config = ConfigDict(frozen=True, extra='forbid')
 
-    messenger: Literal['memory']
+    transport: Literal['memory']
 
 
 def _make_listener(

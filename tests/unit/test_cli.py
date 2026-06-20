@@ -157,7 +157,7 @@ class TestLogin:
         key = Fernet.generate_key().decode()
         settings = _sqlite_settings(
             tmp_path,
-            accounts={'main': {'messenger': 'telegram', 'api_id': 2040, 'api_hash': 'h'}},
+            accounts={'main': {'transport': 'telegram', 'api_id': 2040, 'api_hash': 'h'}},
             session_key=key,
         )
 
@@ -181,9 +181,9 @@ class TestLogin:
         with pytest.raises(ConfigError, match='ghost'):
             await cli.cmd_login(settings, 'ghost')
 
-    async def test_unknown_messenger_fails(self, tmp_path: Path) -> None:
+    async def test_unknown_transport_fails(self, tmp_path: Path) -> None:
         settings = _sqlite_settings(
-            tmp_path, accounts={'main': {'messenger': 'nosuch'}}
+            tmp_path, accounts={'main': {'transport': 'nosuch'}}
         )
         with pytest.raises(ConfigError, match='nosuch'):
             await cli.cmd_login(settings, 'main')
@@ -191,7 +191,7 @@ class TestLogin:
     async def test_platform_without_login_fails(self, tmp_path: Path) -> None:
         """Платформа без make_login (InMemory) → внятный ConfigError."""
         settings = _sqlite_settings(
-            tmp_path, accounts={'main': {'messenger': 'memory'}}
+            tmp_path, accounts={'main': {'transport': 'memory'}}
         )
         with pytest.raises(ConfigError, match='не поддерживает'):
             await cli.cmd_login(settings, 'main')

@@ -99,7 +99,7 @@ def _endpoint_key(settings: AngarionSettings, ep: EndpointConfig) -> str | None:
     account = settings.accounts.get(ep.account)
     if account is None:  # ссылочная целостность — забота bootstrap
         return None
-    return make_source_key(account.messenger, ep.account, ep.chat_id, ep.thread_id)
+    return make_source_key(account.transport, ep.account, ep.address, ep.thread_id)
 
 
 def _status(*, paused: bool, failed: bool) -> NodeStatus:

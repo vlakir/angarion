@@ -5,7 +5,7 @@
 принимающий аккаунт скачивает вложение при ingest и проставляет
 ``MediaRef.local_path`` — а процессор **читает локальный файл** (здесь —
 его фактический размер на диске) и аннотирует им подпись пересылаемого
-сообщения. Само вложение переносится транзитом (``OutboundMessage.media``):
+сообщения. Само вложение переносится транзитом (``OutboundRecord.media``):
 sender при наличии ``local_path`` грузит файл напрямую (работает и кросс-
 аккаунт), иначе переотправляет по платформенной ссылке (fast-path).
 
@@ -26,12 +26,12 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict
 
 from angarion.domain.models import (
-    InboundEvent,
     MediaRef,
-    OutboundMessage,
+    OutboundRecord,
     PipelineContextData,
     ProcessingResult,
     ProcessorServices,
+    Record,
     Verdict,
 )
 from angarion.domain.ports import ProcessorPort
@@ -95,7 +95,7 @@ class MediaNoteProcessor(BaseModel):
 
     async def process(
         self,
-        event: InboundEvent,
+        event: Record,
         ctx: PipelineContextData,
         svc: ProcessorServices,
     ) -> ProcessingResult:
@@ -110,7 +110,7 @@ class MediaNoteProcessor(BaseModel):
         else:
             caption = await self._caption(event, cfg, svc)
         outbound = [
-            OutboundMessage(
+            OutboundRecord(
                 idempotency_key=svc.make_idempotency_key(event, spec.target, n),
                 target=spec.target,
                 send_via=spec.send_via,
@@ -123,7 +123,7 @@ class MediaNoteProcessor(BaseModel):
 
     @staticmethod
     async def _caption(
-        event: InboundEvent, cfg: MediaNoteConfig, svc: ProcessorServices
+        event: Record, cfg: MediaNoteConfig, svc: ProcessorServices
     ) -> str:
         """Подпись для события с вложениями: header + текст + аннотация медиа."""
         notes: list[str] = []

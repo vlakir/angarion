@@ -11,19 +11,19 @@ from angarion.adapters.telegram.client import (
     RawTelegramDeletion,
     RawTelegramMessage,
 )
-from angarion.domain.models import EventKind
+from angarion.domain.models import RecordKind
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from angarion.domain.models import InboundEvent
+    from angarion.domain.models import Record
 
 NOW = datetime(2026, 6, 13, 12, 0, tzinfo=UTC)
 
 
 def raw_message(**overrides: object) -> RawTelegramMessage:
     fields: dict[str, object] = {
-        'kind': EventKind.MESSAGE_NEW,
+        'kind': RecordKind.NEW,
         'chat_id': -100123,
         'message_id': 42,
         'text': 'привет',
@@ -228,7 +228,7 @@ class RecordingIngest:
     """Дублёр ``IngestService``: копит принятые события."""
 
     def __init__(self) -> None:
-        self.events: list[InboundEvent] = []
+        self.events: list[Record] = []
 
-    async def ingest(self, event: InboundEvent) -> None:
+    async def ingest(self, event: Record) -> None:
         self.events.append(event)

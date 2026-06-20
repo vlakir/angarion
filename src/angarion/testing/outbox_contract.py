@@ -35,7 +35,7 @@ class OutboxContract:
         assert await outbox.put(msg) is True
         record = await outbox.get(msg.idempotency_key)
         assert record is not None
-        assert record.msg == msg
+        assert record.record == msg
         assert record.status is OutboxStatus.PENDING
         assert record.attempts == 0
         assert record.created_at.tzinfo is not None
@@ -57,12 +57,12 @@ class OutboxContract:
 
     async def test_put_stores_observability_context(self, outbox: OutboxPort) -> None:
         msg = make_outbound()
-        event_uid = uuid4()
-        await outbox.put(msg, pipeline='digest', event_uid=event_uid)
+        record_uid = uuid4()
+        await outbox.put(msg, pipeline='digest', record_uid=record_uid)
         record = await outbox.get(msg.idempotency_key)
         assert record is not None
         assert record.pipeline == 'digest'
-        assert record.event_uid == event_uid
+        assert record.record_uid == record_uid
 
     async def test_get_unknown_none(self, outbox: OutboxPort) -> None:
         assert await outbox.get('no-such-key') is None
@@ -73,9 +73,9 @@ class OutboxContract:
         await outbox.put(first)
         await outbox.put(second)
         due = await outbox.due()
-        assert [r.msg.idempotency_key for r in due] == ['k1', 'k2']
+        assert [r.record.idempotency_key for r in due] == ['k1', 'k2']
         limited = await outbox.due(limit=1)
-        assert [r.msg.idempotency_key for r in limited] == ['k1']
+        assert [r.record.idempotency_key for r in limited] == ['k1']
 
     async def test_due_excludes_future_rescheduled(self, outbox: OutboxPort) -> None:
         msg = make_outbound()
@@ -94,7 +94,7 @@ class OutboxContract:
         assert record.status is OutboxStatus.PENDING
         assert record.attempts == 1
         assert record.last_error == 'boom'
-        assert [r.msg.idempotency_key for r in await outbox.due()] == [
+        assert [r.record.idempotency_key for r in await outbox.due()] == [
             msg.idempotency_key
         ]
 

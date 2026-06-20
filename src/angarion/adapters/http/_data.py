@@ -27,7 +27,7 @@ def source_keys(settings: AngarionSettings) -> list[str]:
             if account is None:  # ссылочная целостность — забота bootstrap
                 continue
             key = make_source_key(
-                account.messenger, ep.account, ep.chat_id, ep.thread_id
+                account.transport, ep.account, ep.address, ep.thread_id
             )
             if key not in seen:
                 seen.add(key)

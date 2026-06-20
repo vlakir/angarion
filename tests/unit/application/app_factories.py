@@ -24,37 +24,37 @@ from angarion.domain.keys import (
 )
 from angarion.domain.models import (
     AccountRef,
-    Address,
-    EventKind,
-    InboundEvent,
-    OutboundMessage,
+    Endpoint,
+    OutboundRecord,
     PipelineContextData,
     ProcessorServices,
     QueueEnvelope,
+    Record,
+    RecordKind,
     TargetSpec,
 )
 
 NOW = datetime(2026, 6, 11, 12, 0, tzinfo=UTC)
 
-MESSENGER = 'memory'
-ACCOUNT = AccountRef(messenger=MESSENGER, account_id='acc1')
+TRANSPORT = 'memory'
+ACCOUNT = AccountRef(transport=TRANSPORT, account_id='acc1')
 SOURCE_CHAT = '-100123'
-SOURCE_KEY = make_source_key(MESSENGER, ACCOUNT.account_id, SOURCE_CHAT)
+SOURCE_KEY = make_source_key(TRANSPORT, ACCOUNT.account_id, SOURCE_CHAT)
 
 
-def make_address(**overrides: object) -> Address:
-    fields: dict[str, object] = {'messenger': MESSENGER, 'chat_id': SOURCE_CHAT}
+def make_endpoint(**overrides: object) -> Endpoint:
+    fields: dict[str, object] = {'transport': TRANSPORT, 'address': SOURCE_CHAT}
     fields.update(overrides)
-    return Address.model_validate(fields)
+    return Endpoint.model_validate(fields)
 
 
-def make_event(
-    kind: EventKind = EventKind.MESSAGE_NEW,
+def make_record(
+    kind: RecordKind = RecordKind.NEW,
     external_id: str = '42',
     text: str | None = 'hello',
     event_at: datetime = NOW,
     **overrides: object,
-) -> InboundEvent:
+) -> Record:
     """Событие с согласованными dedup_key/content_hash от kind/id/text."""
     content_hash = normalize_and_hash(text) if text is not None else None
     fields: dict[str, object] = {
@@ -62,7 +62,7 @@ def make_event(
         'kind': kind,
         'dedup_key': make_dedup_key(kind, SOURCE_KEY, external_id, content_hash),
         'origin': 'live',
-        'source': make_address(),
+        'source': make_endpoint(),
         'received_by': ACCOUNT,
         'external_id': external_id,
         'text': text,
@@ -71,17 +71,17 @@ def make_event(
         'received_at': event_at,
     }
     fields.update(overrides)
-    return InboundEvent.model_validate(fields)
+    return Record.model_validate(fields)
 
 
 def make_envelope(**overrides: object) -> QueueEnvelope:
-    fields: dict[str, object] = {'pipeline': 'digest', 'event': make_event()}
+    fields: dict[str, object] = {'pipeline': 'digest', 'record': make_record()}
     fields.update(overrides)
     return QueueEnvelope.model_validate(fields)
 
 
-def make_target(chat_id: str = '-100999') -> TargetSpec:
-    return TargetSpec(target=make_address(chat_id=chat_id), send_via=ACCOUNT)
+def make_target(address: str = '-100999') -> TargetSpec:
+    return TargetSpec(target=make_endpoint(address=address), send_via=ACCOUNT)
 
 
 def make_context(
@@ -96,15 +96,15 @@ def make_context(
     )
 
 
-def make_outbound(**overrides: object) -> OutboundMessage:
+def make_outbound(**overrides: object) -> OutboundRecord:
     fields: dict[str, object] = {
         'idempotency_key': f'{SOURCE_KEY}:42:new->digest:-100999:0',
-        'target': make_address(chat_id='-100999'),
+        'target': make_endpoint(address='-100999'),
         'send_via': ACCOUNT,
         'text': 'hi',
     }
     fields.update(overrides)
-    return OutboundMessage.model_validate(fields)
+    return OutboundRecord.model_validate(fields)
 
 
 def make_services(pipeline: str = 'digest') -> ProcessorServices:

@@ -18,7 +18,7 @@ from matrix_fakes import (
     raw_undecryptable,
 )
 
-from angarion.adapters.matrix.client import MESSENGER, MatrixHistoryPage, RawMatrixMedia
+from angarion.adapters.matrix.client import TRANSPORT, MatrixHistoryPage, RawMatrixMedia
 from angarion.adapters.matrix.listener import (
     SYNC_CURSOR_CHAT,
     MatrixListener,
@@ -26,7 +26,7 @@ from angarion.adapters.matrix.listener import (
 from angarion.adapters.memory.storage import MemoryAnalytics, MemoryCursorStore
 from angarion.config import EndpointConfig, MediaConfig
 from angarion.domain.keys import make_source_key
-from angarion.domain.models import EventKind, SourceCursor
+from angarion.domain.models import RecordKind, SourceCursor
 from angarion.log import get_logger
 
 if TYPE_CHECKING:
@@ -36,8 +36,8 @@ if TYPE_CHECKING:
 OTHER_ROOM = '!other:matrix.example'
 
 
-def _ep(account: str, chat_id: str, thread_id: str | None = None) -> EndpointConfig:
-    return EndpointConfig(account=account, chat_id=chat_id, thread_id=thread_id)
+def _ep(account: str, address: str, thread_id: str | None = None) -> EndpointConfig:
+    return EndpointConfig(account=account, address=address, thread_id=thread_id)
 
 
 def _make(
@@ -79,7 +79,7 @@ class TestLifecycle:
 
     async def test_start_resumes_from_cursor(self) -> None:
         cursors = MemoryCursorStore()
-        sync_key = make_source_key(MESSENGER, 'main', SYNC_CURSOR_CHAT)
+        sync_key = make_source_key(TRANSPORT, 'main', SYNC_CURSOR_CHAT)
         await cursors.save(
             SourceCursor(
                 source_key=sync_key,
@@ -136,7 +136,7 @@ class TestLifecycle:
         )
         await listener.start()
         with pytest.raises(KeyError, match='не резолвлен'):
-            await listener.catchup(make_source_key(MESSENGER, 'main', '!nope:s'))
+            await listener.catchup(make_source_key(TRANSPORT, 'main', '!nope:s'))
         await listener.stop()
 
 
@@ -145,7 +145,7 @@ class TestCatchup:
         return MatrixHistoryPage(
             messages=(
                 raw_message(event_id='$e1'),
-                raw_message(kind=EventKind.MESSAGE_EDITED, event_id='$e2', text='пр'),
+                raw_message(kind=RecordKind.EDITED, event_id='$e2', text='пр'),
             ),
             redactions=(raw_deletion(redacts_event_id='$gone'),),
         )
@@ -155,12 +155,12 @@ class TestCatchup:
         ingest = RecordingIngest()
         listener = _make(client=client, ingest=ingest, cursors=MemoryCursorStore())
         await listener.start()
-        await listener.catchup(make_source_key(MESSENGER, 'main', ROOM))
+        await listener.catchup(make_source_key(TRANSPORT, 'main', ROOM))
         kinds = {e.kind for e in ingest.events}
         assert kinds == {
-            EventKind.MESSAGE_NEW,
-            EventKind.MESSAGE_EDITED,
-            EventKind.MESSAGE_DELETED,
+            RecordKind.NEW,
+            RecordKind.EDITED,
+            RecordKind.DELETED,
         }
         assert all(e.origin == 'catchup' for e in ingest.events)
         await listener.stop()
@@ -200,7 +200,7 @@ class TestRecentPoll:
     def _page(self) -> MatrixHistoryPage:
         return MatrixHistoryPage(
             messages=(
-                raw_message(kind=EventKind.MESSAGE_EDITED, event_id='$e2', text='пр'),
+                raw_message(kind=RecordKind.EDITED, event_id='$e2', text='пр'),
             ),
             redactions=(raw_deletion(redacts_event_id='$gone'),),
         )
@@ -245,8 +245,8 @@ class TestRecentPoll:
         assert any(limit == 7 for _room, limit in client.fetch_calls)
         # правка (m.replace) и удаление (redaction) в окне доехали
         kinds = {e.kind for e in ingest.events}
-        assert EventKind.MESSAGE_EDITED in kinds
-        assert EventKind.MESSAGE_DELETED in kinds
+        assert RecordKind.EDITED in kinds
+        assert RecordKind.DELETED in kinds
 
     async def test_recent_poll_absent_without_enabled_rooms(self) -> None:
         client = FakeMatrixClient(history_page=self._page())
@@ -300,7 +300,7 @@ class TestMessageRouting:
         await listener.start()
         await client.fire_new(raw_message())
         assert len(ingest.events) == 1
-        assert ingest.events[0].kind is EventKind.MESSAGE_NEW
+        assert ingest.events[0].kind is RecordKind.NEW
         assert ingest.events[0].external_id == '$evt-1'
         await listener.stop()
 
@@ -317,10 +317,10 @@ class TestMessageRouting:
         listener = _make(client=client, ingest=ingest, cursors=MemoryCursorStore())
         await listener.start()
         await client.fire_edit(
-            raw_message(kind=EventKind.MESSAGE_EDITED, text='правка')
+            raw_message(kind=RecordKind.EDITED, text='правка')
         )
         assert len(ingest.events) == 1
-        assert ingest.events[0].kind is EventKind.MESSAGE_EDITED
+        assert ingest.events[0].kind is RecordKind.EDITED
         await listener.stop()
 
     async def test_redaction_in_source_room_ingested(self) -> None:
@@ -329,7 +329,7 @@ class TestMessageRouting:
         await listener.start()
         await client.fire_delete(raw_deletion())
         assert len(ingest.events) == 1
-        assert ingest.events[0].kind is EventKind.MESSAGE_DELETED
+        assert ingest.events[0].kind is RecordKind.DELETED
         await listener.stop()
 
     async def test_redaction_in_other_room_ignored(self) -> None:
@@ -392,7 +392,7 @@ class TestCursor:
         listener = _make(client=client, ingest=RecordingIngest(), cursors=cursors)
         await listener.start()
         await client.fire_sync('s-next-42')
-        sync_key = make_source_key(MESSENGER, 'main', SYNC_CURSOR_CHAT)
+        sync_key = make_source_key(TRANSPORT, 'main', SYNC_CURSOR_CHAT)
         cursor = await cursors.load(sync_key)
         assert cursor is not None
         assert cursor.payload['next_batch'] == 's-next-42'

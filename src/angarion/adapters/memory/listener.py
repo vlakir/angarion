@@ -1,8 +1,8 @@
 """
 MemoryListener (§12.4, plan 2.6): driving-адаптер платформы «memory».
 
-Тестовая обвязка с поведением настоящего адаптера: события подаются
-программно через ``emit(raw)``, маппятся в ``InboundEvent`` публичными
+Тестовая обвязка с поведением настоящего адаптера: записи подаются
+программно через ``emit(raw)``, маппятся в ``Record`` публичными
 хелперами ключей (§7.2) и уходят в ``IngestService``. Истории у
 платформы нет — ``catchup()`` честно поднимает ``NotSupportedError``
 (``history_fetch=False``), постоянно прогоняя ветку деградации FR-13.
@@ -16,15 +16,15 @@ from uuid import uuid4
 
 from angarion.domain.errors import NotSupportedError
 from angarion.domain.keys import make_dedup_key, make_source_key, normalize_and_hash
-from angarion.domain.models import AccountRef, Address, EventKind, InboundEvent
+from angarion.domain.models import AccountRef, Endpoint, Record, RecordKind
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from angarion.application.ingest import IngestService
 
-MESSENGER = 'memory'
-"""Идентификатор платформы InMemory-плагина."""
+TRANSPORT = 'memory'
+"""Идентификатор транспорта InMemory-плагина."""
 
 
 class MemoryListener:
@@ -56,18 +56,18 @@ class MemoryListener:
         msg = f'платформа memory не хранит историю, catch-up невозможен: {source_key}'
         raise NotSupportedError(msg)
 
-    async def emit(self, raw: Mapping[str, Any]) -> InboundEvent:
+    async def emit(self, raw: Mapping[str, Any]) -> Record:
         """
-        Принять «сырое» событие платформы и подать его в конвейер.
+        Принять «сырую» запись транспорта и подать её в конвейер.
 
-        Обязательные ключи: ``chat_id``, ``external_id``. Опциональные:
-        ``kind`` (default ``message_new``), ``account`` (default —
+        Обязательные ключи: ``address``, ``external_id``. Опциональные:
+        ``kind`` (default ``new``), ``account`` (default —
         первый аккаунт listener'а), ``thread_id``, ``text``,
         ``sender_id``, ``sender_name``, ``reply_to_external_id``,
         ``event_at`` (default — сейчас, UTC). Исходный mapping целиком
-        сохраняется в ``InboundEvent.raw``.
+        сохраняется в ``Record.raw``.
         """
-        kind = EventKind(str(raw.get('kind', EventKind.MESSAGE_NEW)))
+        kind = RecordKind(str(raw.get('kind', RecordKind.NEW)))
         account_id = str(raw.get('account', self._account_ids[0]))
         if account_id not in self._account_ids:
             msg = (
@@ -75,20 +75,20 @@ class MemoryListener:
                 f'аккаунты listener: {", ".join(self._account_ids)}'
             )
             raise ValueError(msg)
-        chat_id = str(raw['chat_id'])
+        address = str(raw['address'])
         thread_id = raw.get('thread_id')
         external_id = str(raw['external_id'])
         text = raw.get('text')
         content_hash = normalize_and_hash(text) if text is not None else None
-        source_key = make_source_key(MESSENGER, account_id, chat_id, thread_id)
+        source_key = make_source_key(TRANSPORT, account_id, address, thread_id)
         now = datetime.now(UTC)
-        event = InboundEvent(
+        record = Record(
             uid=uuid4(),
             kind=kind,
             dedup_key=make_dedup_key(kind, source_key, external_id, content_hash),
             origin='live',
-            source=Address(messenger=MESSENGER, chat_id=chat_id, thread_id=thread_id),
-            received_by=AccountRef(messenger=MESSENGER, account_id=account_id),
+            source=Endpoint(transport=TRANSPORT, address=address, thread_id=thread_id),
+            received_by=AccountRef(transport=TRANSPORT, account_id=account_id),
             external_id=external_id,
             sender_id=raw.get('sender_id'),
             sender_name=raw.get('sender_name'),
@@ -99,5 +99,5 @@ class MemoryListener:
             received_at=now,
             raw=dict(raw),
         )
-        await self._ingest.ingest(event)
-        return event
+        await self._ingest.ingest(record)
+        return record

@@ -1,5 +1,5 @@
 """
-Маппинг сырых событий matrix-nio → ``InboundEvent`` (M7 B2, T010).
+Маппинг сырых событий matrix-nio → ``Record`` (M7 B2, T010).
 
 Чистые функции над нормализованными DTO (``client.RawMatrix*``): без сети
 и без nio, покрыты юнит-тестами на фикстурах. Все ключи и хэши — только
@@ -7,9 +7,9 @@
 форматирования. Зеркало telegram ``mapping`` с поправкой на Matrix:
 
 - Правка приходит как новое событие, но обёртка уже подставила в
-  ``event_id`` id оригинала и ``kind=MESSAGE_EDITED`` — ``external_id``
+  ``event_id`` id оригинала и ``kind=EDITED`` — ``external_id``
   совпадает с записью реестра, ``previous_text`` достаётся в ingest.
-- Redaction адресует одно событие → один ``MESSAGE_DELETED`` (не список).
+- Redaction адресует одно событие → один ``DELETED`` (не список).
   Маппится на **chat-уровне** (``thread_id=None``): redaction не несёт
   топика, как и Telegram-удаление (§9.4).
 """
@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
-from angarion.adapters.matrix.client import MESSENGER
+from angarion.adapters.matrix.client import TRANSPORT
 from angarion.domain.keys import (
     make_dedup_key,
     make_media_hash,
@@ -29,10 +29,10 @@ from angarion.domain.keys import (
 )
 from angarion.domain.models import (
     AccountRef,
-    Address,
-    EventKind,
-    InboundEvent,
+    Endpoint,
     MediaRef,
+    Record,
+    RecordKind,
 )
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     )
 
 Origin = Literal['live', 'catchup']
-"""Источник события для ``InboundEvent.origin`` (live-sync или catch-up §9.3)."""
+"""Источник записи для ``Record.origin`` (live-sync или catch-up §9.3)."""
 
 
 def _to_media_ref(raw: RawMatrixMedia) -> MediaRef:
@@ -69,7 +69,7 @@ def raw_media_hash(raw: RawMatrixMessage) -> str | None:
     """
     media_hash сырого сообщения (для catch-up-сверки правок медиа, B3).
 
-    Эквивалентен ``InboundEvent.media_hash`` после ``map_message`` того же
+    Эквивалентен ``Record.media_hash`` после ``map_message`` того же
     события: ``make_media_hash`` игнорирует ``ref``.
     """
     return make_media_hash([_to_media_ref(m) for m in raw.media])
@@ -77,9 +77,9 @@ def raw_media_hash(raw: RawMatrixMessage) -> str | None:
 
 def map_message(
     raw: RawMatrixMessage, account_id: str, *, origin: Origin = 'live'
-) -> InboundEvent:
+) -> Record:
     """
-    NEW/EDITED-сообщение Matrix → ``InboundEvent``.
+    NEW/EDITED-сообщение Matrix → ``Record``.
 
     ``origin`` — ``'live'`` для sync-подписки, ``'catchup'`` для дозабора
     (§9.3, B3); ключи/хэш одинаковы, поэтому дедуп гасит пересечения.
@@ -88,16 +88,16 @@ def map_message(
     content_hash = normalize_and_hash(raw.text) if raw.text is not None else None
     media = [_to_media_ref(m) for m in raw.media]
     media_hash = make_media_hash(media)
-    source_key = make_source_key(MESSENGER, account_id, raw.room_id, thread_id)
-    return InboundEvent(
+    source_key = make_source_key(TRANSPORT, account_id, raw.room_id, thread_id)
+    return Record(
         uid=uuid4(),
         kind=raw.kind,
         dedup_key=make_dedup_key(
             raw.kind, source_key, raw.event_id, content_hash, media_hash
         ),
         origin=origin,
-        source=Address(messenger=MESSENGER, chat_id=raw.room_id, thread_id=thread_id),
-        received_by=AccountRef(messenger=MESSENGER, account_id=account_id),
+        source=Endpoint(transport=TRANSPORT, address=raw.room_id, thread_id=thread_id),
+        received_by=AccountRef(transport=TRANSPORT, account_id=account_id),
         external_id=raw.event_id,
         sender_id=raw.sender_id,
         sender_name=raw.sender_name,
@@ -114,18 +114,16 @@ def map_message(
 
 def map_redaction(
     raw: RawMatrixDeletion, account_id: str, *, origin: Origin = 'live'
-) -> InboundEvent:
-    """Redaction → один ``MESSAGE_DELETED`` (chat-уровень, ``thread_id=None``)."""
-    source_key = make_source_key(MESSENGER, account_id, raw.room_id)
-    return InboundEvent(
+) -> Record:
+    """Redaction → один ``DELETED`` (chat-уровень, ``thread_id=None``)."""
+    source_key = make_source_key(TRANSPORT, account_id, raw.room_id)
+    return Record(
         uid=uuid4(),
-        kind=EventKind.MESSAGE_DELETED,
-        dedup_key=make_dedup_key(
-            EventKind.MESSAGE_DELETED, source_key, raw.redacts_event_id
-        ),
+        kind=RecordKind.DELETED,
+        dedup_key=make_dedup_key(RecordKind.DELETED, source_key, raw.redacts_event_id),
         origin=origin,
-        source=Address(messenger=MESSENGER, chat_id=raw.room_id),
-        received_by=AccountRef(messenger=MESSENGER, account_id=account_id),
+        source=Endpoint(transport=TRANSPORT, address=raw.room_id),
+        received_by=AccountRef(transport=TRANSPORT, account_id=account_id),
         external_id=raw.redacts_event_id,
         event_at=raw.redacted_at,
         received_at=datetime.now(UTC),

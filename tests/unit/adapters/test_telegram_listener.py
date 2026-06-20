@@ -26,7 +26,7 @@ from angarion.adapters.telegram.listener import TelegramListener
 from angarion.application.ingest import IngestService
 from angarion.application.router import Router, RouteSpec
 from angarion.config import EndpointConfig, MediaConfig
-from angarion.domain.models import Address, EventKind
+from angarion.domain.models import Endpoint, RecordKind
 from angarion.log import get_logger
 
 if TYPE_CHECKING:
@@ -35,8 +35,8 @@ if TYPE_CHECKING:
     from angarion.adapters.telegram.client import TelegramClientPort
 
 
-def _ep(account: str, chat_id: str) -> EndpointConfig:
-    return EndpointConfig(account=account, chat_id=chat_id)
+def _ep(account: str, address: str) -> EndpointConfig:
+    return EndpointConfig(account=account, address=address)
 
 
 def _listener(
@@ -81,7 +81,7 @@ async def test_new_message_reaches_ingest() -> None:
     await client.fire_new(raw_message())
     await listener.stop()
     assert [e.external_id for e in ingest.events] == ['42']
-    assert ingest.events[0].kind is EventKind.MESSAGE_NEW
+    assert ingest.events[0].kind is RecordKind.NEW
 
 
 async def test_live_media_downloaded_when_policy_on() -> None:
@@ -145,9 +145,9 @@ async def test_edited_message_reaches_ingest() -> None:
     ingest = RecordingIngest()
     listener = _listener({'main': client}, [_ep('main', '@grp')], ingest)
     await listener.start()
-    await client.fire_edit(raw_message(kind=EventKind.MESSAGE_EDITED, text='ред'))
+    await client.fire_edit(raw_message(kind=RecordKind.EDITED, text='ред'))
     await listener.stop()
-    assert [e.kind for e in ingest.events] == [EventKind.MESSAGE_EDITED]
+    assert [e.kind for e in ingest.events] == [RecordKind.EDITED]
 
 
 async def test_service_message_dropped() -> None:
@@ -168,7 +168,7 @@ async def test_deletion_reaches_ingest() -> None:
     await client.fire_delete(raw_deletion(message_ids=(7, 8)))
     await listener.stop()
     assert [e.external_id for e in ingest.events] == ['7', '8']
-    assert {e.kind for e in ingest.events} == {EventKind.MESSAGE_DELETED}
+    assert {e.kind for e in ingest.events} == {RecordKind.DELETED}
 
 
 async def test_deletion_unconfigured_chat_filtered() -> None:
@@ -192,7 +192,7 @@ async def test_unresolved_source_events_filtered() -> None:
     await client.fire_new(raw_message(chat_id=-100123))  # @ok — пройдёт
     await client.fire_new(raw_message(chat_id=-100777))  # @bad не резолвился
     await listener.stop()
-    assert [e.source.chat_id for e in ingest.events] == ['-100123']
+    assert [e.source.address for e in ingest.events] == ['-100123']
 
 
 async def test_multi_account_routing() -> None:
@@ -419,8 +419,8 @@ async def test_real_ingest_end_to_end_routes() -> None:
             [
                 RouteSpec(
                     pipeline='p',
-                    events=frozenset({EventKind.MESSAGE_NEW}),
-                    sources=(Address(messenger='telegram', chat_id='-100123'),),
+                    events=frozenset({RecordKind.NEW}),
+                    sources=(Endpoint(transport='telegram', address='-100123'),),
                 )
             ]
         ),

@@ -20,21 +20,21 @@ from angarion.testing.factories import (
     LONG_AGO,
     NOW,
     SOURCE_KEY,
-    make_address,
     make_analytics_event,
     make_cursor,
     make_dead_letter,
+    make_endpoint,
     make_envelope,
-    make_event,
     make_outbound,
     make_record,
+    make_registry_record,
 )
 from angarion.testing.outbox_contract import OutboxContract
 from angarion.testing.queue_contract import EventQueueContract
 from angarion.testing.registry_contract import MessageRegistryContract
 from angarion.testing.runtime_config_contract import RuntimeConfigContract
 from angarion.testing.session_contract import SessionStoreContract
-from angarion.testing.sink_contract import MessageSinkContract
+from angarion.testing.sink_contract import SinkContract
 from angarion.testing.state_contract import StateStoreContract
 
 __all__ = [
@@ -49,17 +49,17 @@ __all__ = [
     'DedupStoreContract',
     'EventQueueContract',
     'MessageRegistryContract',
-    'MessageSinkContract',
     'OutboxContract',
     'RuntimeConfigContract',
     'SessionStoreContract',
+    'SinkContract',
     'StateStoreContract',
-    'make_address',
     'make_analytics_event',
     'make_cursor',
     'make_dead_letter',
+    'make_endpoint',
     'make_envelope',
-    'make_event',
     'make_outbound',
     'make_record',
+    'make_registry_record',
 ]

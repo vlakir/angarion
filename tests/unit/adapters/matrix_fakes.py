@@ -16,10 +16,10 @@ from angarion.adapters.matrix.client import (
     SyncHandler,
     UndecryptableHandler,
 )
-from angarion.domain.models import EventKind
+from angarion.domain.models import RecordKind
 
 if TYPE_CHECKING:
-    from angarion.domain.models import InboundEvent
+    from angarion.domain.models import Record
 
 NOW = datetime(2026, 6, 18, 12, 0, tzinfo=UTC)
 ROOM = '!room:matrix.example'
@@ -27,7 +27,7 @@ ROOM = '!room:matrix.example'
 
 def raw_message(**overrides: object) -> RawMatrixMessage:
     fields: dict[str, object] = {
-        'kind': EventKind.MESSAGE_NEW,
+        'kind': RecordKind.NEW,
         'room_id': ROOM,
         'event_id': '$evt-1',
         'text': 'привет',
@@ -215,7 +215,7 @@ class RecordingIngest:
     """Дублёр ``IngestService``: копит принятые события."""
 
     def __init__(self) -> None:
-        self.events: list[InboundEvent] = []
+        self.events: list[Record] = []
 
-    async def ingest(self, event: InboundEvent) -> None:
+    async def ingest(self, event: Record) -> None:
         self.events.append(event)

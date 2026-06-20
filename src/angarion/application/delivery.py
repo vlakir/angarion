@@ -26,8 +26,8 @@ from angarion.domain.models import AnalyticsEvent
 if TYPE_CHECKING:
     from structlog.typing import FilteringBoundLogger
 
-    from angarion.domain.models import OutboundRecord
-    from angarion.domain.ports import AnalyticsPort, MessageSinkPort, OutboxPort
+    from angarion.domain.models import OutboxRecord
+    from angarion.domain.ports import AnalyticsPort, OutboxPort, SinkPort
 
 
 class DeliveryWorker:
@@ -37,7 +37,7 @@ class DeliveryWorker:
         self,
         *,
         outbox: OutboxPort,
-        sink: MessageSinkPort,
+        sink: SinkPort,
         analytics: AnalyticsPort,
         max_retries: int = 5,
         backoff_base: float = 1.0,
@@ -86,19 +86,19 @@ class DeliveryWorker:
             count += 1
         return count
 
-    async def _deliver(self, rec: OutboundRecord) -> None:
-        key = rec.msg.idempotency_key
+    async def _deliver(self, rec: OutboxRecord) -> None:
+        key = rec.record.idempotency_key
         try:
-            receipt = await self._sink.send(rec.msg)
+            receipt = await self._sink.send(rec.record)
         except Exception as exc:
             await self._handle_failure(rec, exc)
             return
         await self._outbox.mark_sent(key, receipt)
         await self._record('delivered', rec, {'idempotency_key': key})
 
-    async def _handle_failure(self, rec: OutboundRecord, exc: Exception) -> None:
+    async def _handle_failure(self, rec: OutboxRecord, exc: Exception) -> None:
         """Retry-ветка §8 для доставки: reschedule либо терминальный failed."""
-        key = rec.msg.idempotency_key
+        key = rec.record.idempotency_key
         error = f'{type(exc).__name__}: {exc}'
         attempts = rec.attempts + 1
         if attempts > self._max_retries:
@@ -130,13 +130,13 @@ class DeliveryWorker:
         )
 
     async def _record(
-        self, kind: str, rec: OutboundRecord, payload: dict[str, Any] | None = None
+        self, kind: str, rec: OutboxRecord, payload: dict[str, Any] | None = None
     ) -> None:
         await self._analytics.record(
             AnalyticsEvent(
                 uid=uuid4(),
                 kind=kind,
-                event_uid=rec.event_uid,
+                record_uid=rec.record_uid,
                 pipeline=rec.pipeline,
                 payload=payload or {},
                 at=datetime.now(UTC),

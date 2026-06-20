@@ -25,19 +25,19 @@ from pydantic_settings import (
 )
 
 from angarion.domain.errors import ConfigError
-from angarion.domain.models import EventKind, MediaRef, Messenger
+from angarion.domain.models import MediaRef, RecordKind, Transport
 
 
 class AccountConfig(BaseModel):
     """
-    Секция ``[accounts.*]`` — структурно лишь ``messenger`` (FR-2);
+    Секция ``[accounts.*]`` — структурно лишь ``transport`` (FR-2, T041);
     остальные ключи — сырые: схема аккаунта принадлежит плагину
-    платформы и валидируется его ``account_config_model`` в bootstrap.
+    транспорта и валидируется его ``account_config_model`` в bootstrap.
     """
 
     model_config = ConfigDict(frozen=True, extra='allow')
 
-    messenger: Messenger
+    transport: Transport
 
 
 class StorageConfig(BaseModel):
@@ -281,10 +281,10 @@ class NotifyConfig(BaseModel):
     Секция ``[api.notify]`` (§12.7/§12.9, T024): цель уведомления о
     заявке на регистрацию.
 
-    Когда заданы ``account`` (ссылка на ``[accounts.*]``) и ``chat_id``,
+    Когда заданы ``account`` (ссылка на ``[accounts.*]``) и ``address``,
     регистрация ставит команду ``notify`` в командный outbox; consumer
-    (pipeline-процесс) отправляет сообщение через ``MessageSinkPort``.
-    Пустой ``account``/``chat_id`` — уведомление отключено (заявки видны
+    (pipeline-процесс) отправляет запись через ``SinkPort``.
+    Пустой ``account``/``address`` — уведомление отключено (заявки видны
     только в ``/ui/users``); сбой отправки неблокирующий (``notify_failed``
     в аналитику, на регистрацию не влияет, §12.9 FR-5).
     """
@@ -292,13 +292,13 @@ class NotifyConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra='forbid')
 
     account: str = ''
-    chat_id: str = ''
+    address: str = ''
     thread_id: str | None = None
 
     @property
     def enabled(self) -> bool:
-        """Уведомление активно, только когда заданы и аккаунт, и чат."""
-        return bool(self.account and self.chat_id)
+        """Уведомление активно, только когда заданы и аккаунт, и адрес."""
+        return bool(self.account and self.address)
 
 
 class ApiConfig(BaseModel):
@@ -333,12 +333,15 @@ class ApiConfig(BaseModel):
 
 
 class EndpointConfig(BaseModel):
-    """Источник или цель пайплайна: ссылка на аккаунт + адрес чата (§11)."""
+    """
+    Источник или цель пайплайна: ссылка на аккаунт + адрес на транспорте
+    (§11, T041; ``address`` — обобщение прежнего ``chat_id``).
+    """
 
     model_config = ConfigDict(frozen=True, extra='forbid')
 
     account: str
-    chat_id: str
+    address: str
     thread_id: str | None = None
 
 
@@ -348,7 +351,7 @@ class PipelineConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra='forbid')
 
     processor: str
-    events: frozenset[EventKind] = Field(min_length=1)
+    events: frozenset[RecordKind] = Field(min_length=1)
     only_replies: bool = False
     sources: tuple[EndpointConfig, ...] = Field(min_length=1)
     targets: tuple[EndpointConfig, ...] = Field(min_length=1)

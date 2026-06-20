@@ -22,8 +22,8 @@ from angarion.adapters.registry_rules import (
 from angarion.domain.models import (
     CommandStatus,
     DynamicSettings,
-    OutboundRecord,
     OutboxCommand,
+    OutboxRecord,
     OutboxStatus,
     RegistryDelta,
     RegistryOutcome,
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
         CommandKind,
         DeadLetter,
         DeliveryReceipt,
-        OutboundMessage,
+        OutboundRecord,
         RegistryRecord,
         SourceCursor,
     )
@@ -75,30 +75,30 @@ class MemoryOutbox:
     """``OutboxPort``: журнал исходящих с insert-if-absent по ключу."""
 
     def __init__(self) -> None:
-        self._records: dict[str, OutboundRecord] = {}
+        self._records: dict[str, OutboxRecord] = {}
 
     async def put(
         self,
-        msg: OutboundMessage,
+        record: OutboundRecord,
         *,
         pipeline: str | None = None,
-        event_uid: UUID | None = None,
+        record_uid: UUID | None = None,
     ) -> bool:
         """True — записано; False — ключ уже известен."""
-        key = msg.idempotency_key
+        key = record.idempotency_key
         if key in self._records:
             return False
         now = datetime.now(UTC)
-        self._records[key] = OutboundRecord(
-            msg=msg,
+        self._records[key] = OutboxRecord(
+            record=record,
             next_attempt_at=now,
             created_at=now,
             pipeline=pipeline,
-            event_uid=event_uid,
+            record_uid=record_uid,
         )
         return True
 
-    async def due(self, limit: int = 50) -> list[OutboundRecord]:
+    async def due(self, limit: int = 50) -> list[OutboxRecord]:
         """Pending с подошедшим сроком, в порядке поступления."""
         now = datetime.now(UTC)
         ripe = [
@@ -149,7 +149,7 @@ class MemoryOutbox:
             }
         )
 
-    async def get(self, idempotency_key: str) -> OutboundRecord | None:
+    async def get(self, idempotency_key: str) -> OutboxRecord | None:
         """Запись по ключу или None."""
         return self._records.get(idempotency_key)
 

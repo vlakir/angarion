@@ -53,15 +53,15 @@ from tenacity import (
     wait_exponential,
 )
 
-from angarion.application.templating import compile_event_template, render_compiled
+from angarion.application.templating import compile_record_template, render_compiled
 from angarion.domain.errors import ConfigError, ProcessingError
 from angarion.domain.models import (
-    EventKind,
-    InboundEvent,
-    OutboundMessage,
+    OutboundRecord,
     PipelineContextData,
     ProcessingResult,
     ProcessorServices,
+    Record,
+    RecordKind,
     Verdict,
 )
 from angarion.domain.ports import ProcessorPort
@@ -259,11 +259,11 @@ class _CompiledLlm(BaseModel):
     user_edited: SkipValidation[Template] | None = None
     user_deleted: SkipValidation[Template] | None = None
 
-    def user(self, kind: EventKind) -> Template:
+    def user(self, kind: RecordKind) -> Template:
         """Пер-видовой user-промпт при наличии, иначе базовый."""
-        if kind is EventKind.MESSAGE_EDITED and self.user_edited is not None:
+        if kind is RecordKind.EDITED and self.user_edited is not None:
             return self.user_edited
-        if kind is EventKind.MESSAGE_DELETED and self.user_deleted is not None:
+        if kind is RecordKind.DELETED and self.user_deleted is not None:
             return self.user_deleted
         return self.user_base
 
@@ -271,7 +271,7 @@ class _CompiledLlm(BaseModel):
 class LlmProcessor(BaseModel):
     """
     Встроенный процессор ``llm`` (§10.2): текст события → ответ
-    OpenAI-совместимой модели → ``OutboundMessage`` на каждую цель.
+    OpenAI-совместимой модели → ``OutboundRecord`` на каждую цель.
 
     ``http`` — граница вызова (по умолчанию реальная ``HttpxLlmClient``;
     тесты подставляют fake). ``sleep`` инъектируется — ретраи тестируются
@@ -312,15 +312,15 @@ class LlmProcessor(BaseModel):
             cfg = LlmProcessorConfig.model_validate(ctx.settings)
             prepared = _CompiledLlm(
                 config=cfg,
-                system=compile_event_template(cfg.system_prompt),
-                user_base=compile_event_template(cfg.user_prompt),
+                system=compile_record_template(cfg.system_prompt),
+                user_base=compile_record_template(cfg.user_prompt),
                 user_edited=(
-                    compile_event_template(cfg.user_prompt_edited)
+                    compile_record_template(cfg.user_prompt_edited)
                     if cfg.user_prompt_edited
                     else None
                 ),
                 user_deleted=(
-                    compile_event_template(cfg.user_prompt_deleted)
+                    compile_record_template(cfg.user_prompt_deleted)
                     if cfg.user_prompt_deleted
                     else None
                 ),
@@ -349,16 +349,16 @@ class LlmProcessor(BaseModel):
         return api_key
 
     @staticmethod
-    def _payload(prepared: _CompiledLlm, event: InboundEvent) -> dict[str, Any]:
+    def _payload(prepared: _CompiledLlm, record: Record) -> dict[str, Any]:
         """Сформировать тело запроса: messages (Jinja2) + параметры генерации."""
         cfg = prepared.config
         messages = [
             ChatMessage(
-                role='system', content=render_compiled(prepared.system, event)
+                role='system', content=render_compiled(prepared.system, record)
             ).model_dump(),
             ChatMessage(
                 role='user',
-                content=render_compiled(prepared.user(event.kind), event),
+                content=render_compiled(prepared.user(record.kind), record),
             ).model_dump(),
         ]
         payload: dict[str, Any] = {'model': cfg.model, 'messages': messages}
@@ -419,27 +419,25 @@ class LlmProcessor(BaseModel):
 
     async def process(
         self,
-        event: InboundEvent,
+        record: Record,
         ctx: PipelineContextData,
         svc: ProcessorServices,
     ) -> ProcessingResult:
-        """Текст события → ответ модели → OutboundMessage на каждую цель."""
-        if event.text is None:
-            return ProcessingResult(
-                verdict=Verdict.DROP, note='llm: событие без текста'
-            )
+        """Текст записи → ответ модели → OutboundRecord на каждую цель."""
+        if record.text is None:
+            return ProcessingResult(verdict=Verdict.DROP, note='llm: запись без текста')
         prepared = self._config(ctx)
         api_key = self._api_key(prepared.config)
         content = await self._generate(
-            prepared.config, self._payload(prepared, event), api_key
+            prepared.config, self._payload(prepared, record), api_key
         )
         if not content:
             return ProcessingResult(
                 verdict=Verdict.DROP, note='llm: пустой ответ модели'
             )
         outbound = [
-            OutboundMessage(
-                idempotency_key=svc.make_idempotency_key(event, spec.target, n),
+            OutboundRecord(
+                idempotency_key=svc.make_idempotency_key(record, spec.target, n),
                 target=spec.target,
                 send_via=spec.send_via,
                 text=content,

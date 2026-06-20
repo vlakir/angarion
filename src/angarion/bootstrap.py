@@ -52,12 +52,12 @@ from angarion.domain.errors import ConfigError, DeliveryError
 from angarion.domain.keys import make_source_key
 from angarion.domain.models import (
     AccountRef,
-    Address,
     AnalyticsEvent,
     DeliveryReceipt,
-    EventKind,
-    OutboundMessage,
+    Endpoint,
+    OutboundRecord,
     PipelineContextData,
+    RecordKind,
     TargetSpec,
 )
 from angarion.domain.plugin import (
@@ -67,7 +67,7 @@ from angarion.domain.plugin import (
     StorageBackend,
     StorageBundle,
 )
-from angarion.domain.ports import EventQueuePort, MessageSinkPort, ProcessorPort
+from angarion.domain.ports import EventQueuePort, ProcessorPort, SinkPort
 from angarion.log import get_logger
 
 ADAPTERS_GROUP: Final = 'angarion.adapters'
@@ -218,15 +218,15 @@ def load_processors() -> None:
 def _validate_accounts(
     settings: AngarionSettings, adapters: dict[str, AdapterPlugin]
 ) -> dict[str, _Account]:
-    """Аккаунты: messenger по реестру плагинов + схема плагина (FR-2, FR-12)."""
+    """Аккаунты: transport по реестру плагинов + схема плагина (FR-2, FR-12)."""
     accounts: dict[str, _Account] = {}
     for name, section in settings.accounts.items():
-        plugin = adapters.get(section.messenger)
+        plugin = adapters.get(section.transport)
         if plugin is None:
             known = ', '.join(sorted(adapters)) or '<пусто>'
             msg = (
-                f'аккаунт {name!r}: неизвестный messenger '
-                f'{section.messenger!r}; зарегистрированы: {known}'
+                f'аккаунт {name!r}: неизвестный transport '
+                f'{section.transport!r}; зарегистрированы: {known}'
             )
             raise ConfigError(msg)
         try:
@@ -275,8 +275,8 @@ def _check_subscription(pipeline: str, cfg: PipelineConfig, account: _Account) -
     """Невыполнимая подписка → fail-fast (§12.10, FR-13)."""
     caps = account.plugin.capabilities
     requirements = (
-        (EventKind.MESSAGE_EDITED, caps.edit_events, 'edit_events'),
-        (EventKind.MESSAGE_DELETED, caps.delete_events, 'delete_events'),
+        (RecordKind.EDITED, caps.edit_events, 'edit_events'),
+        (RecordKind.DELETED, caps.delete_events, 'delete_events'),
     )
     for kind, supported, flag in requirements:
         if kind in cfg.events and not supported:
@@ -317,14 +317,14 @@ def _build_pipelines(
     for name, cfg in settings.pipelines.items():
         processor = processors.get_processor(cfg.processor)
         _validate_processor_config(name, cfg, processor)
-        sources: list[Address] = []
+        sources: list[Endpoint] = []
         for ep in cfg.sources:
             account = _endpoint_account(name, 'источник', ep, accounts)
             _check_subscription(name, cfg, account)
             sources.append(
-                Address(
-                    messenger=account.plugin.name,
-                    chat_id=ep.chat_id,
+                Endpoint(
+                    transport=account.plugin.name,
+                    address=ep.address,
                     thread_id=ep.thread_id,
                 )
             )
@@ -333,13 +333,13 @@ def _build_pipelines(
             account = _endpoint_account(name, 'цель', ep, accounts)
             targets.append(
                 TargetSpec(
-                    target=Address(
-                        messenger=account.plugin.name,
-                        chat_id=ep.chat_id,
+                    target=Endpoint(
+                        transport=account.plugin.name,
+                        address=ep.address,
                         thread_id=ep.thread_id,
                     ),
                     send_via=AccountRef(
-                        messenger=account.plugin.name, account_id=ep.account
+                        transport=account.plugin.name, account_id=ep.account
                     ),
                 )
             )
@@ -377,7 +377,7 @@ def _catchup_degradation(
             if not account.plugin.capabilities.history_fetch:
                 degraded.add(
                     make_source_key(
-                        account.plugin.name, ep.account, ep.chat_id, ep.thread_id
+                        account.plugin.name, ep.account, ep.address, ep.thread_id
                     )
                 )
     return tuple(sorted(degraded))
@@ -408,36 +408,36 @@ def _make_catchup(
 
 
 class _DispatchSink:
-    """Маршрутизация исходящих по платформе ``send_via.messenger``."""
+    """Маршрутизация исходящих по транспорту ``send_via.transport``."""
 
-    def __init__(self, sinks: dict[str, MessageSinkPort]) -> None:
+    def __init__(self, sinks: dict[str, SinkPort]) -> None:
         self._sinks = dict(sinks)
 
-    async def send(self, msg: OutboundMessage) -> DeliveryReceipt:
-        """Делегировать отправку sink'у платформы сообщения."""
-        sink = self._sinks.get(msg.send_via.messenger)
+    async def send(self, record: OutboundRecord) -> DeliveryReceipt:
+        """Делегировать отправку sink'у транспорта записи."""
+        sink = self._sinks.get(record.send_via.transport)
         if sink is None:
             known = ', '.join(sorted(self._sinks)) or '<пусто>'
             msg_text = (
-                f'нет sender для платформы {msg.send_via.messenger!r}; '
+                f'нет sender для транспорта {record.send_via.transport!r}; '
                 f'доступны: {known}'
             )
             raise DeliveryError(msg_text)
-        return await sink.send(msg)
+        return await sink.send(record)
 
 
 def _make_platform_adapters(
     settings: AngarionSettings,
     accounts: dict[str, _Account],
     deps: AdapterDeps,
-) -> tuple[tuple[Listener, ...], dict[str, MessageSinkPort]]:
-    """Listener и sender на каждую платформу, имеющую аккаунты (§12.11)."""
-    by_messenger: dict[str, dict[str, _Account]] = {}
+) -> tuple[tuple[Listener, ...], dict[str, SinkPort]]:
+    """Listener и sender на каждый транспорт, имеющий аккаунты (§12.11)."""
+    by_transport: dict[str, dict[str, _Account]] = {}
     for account in accounts.values():
-        by_messenger.setdefault(account.plugin.name, {})[account.name] = account
+        by_transport.setdefault(account.plugin.name, {})[account.name] = account
     listeners: list[Listener] = []
-    sinks: dict[str, MessageSinkPort] = {}
-    for messenger, platform_accounts in by_messenger.items():
+    sinks: dict[str, SinkPort] = {}
+    for transport, platform_accounts in by_transport.items():
         plugin = next(iter(platform_accounts.values())).plugin
         account_models = {
             name: account.config for name, account in platform_accounts.items()
@@ -446,24 +446,24 @@ def _make_platform_adapters(
             ep
             for cfg in settings.pipelines.values()
             for ep in cfg.sources
-            if accounts[ep.account].plugin.name == messenger
+            if accounts[ep.account].plugin.name == transport
         ]
         listener = plugin.make_listener(deps, account_models, platform_sources)
         if not isinstance(listener, Listener):
             msg = (
-                f'фабрика make_listener плагина {messenger!r} вернула объект '
+                f'фабрика make_listener плагина {transport!r} вернула объект '
                 f'вне протокола Listener: {type(listener).__name__}'
             )
             raise ConfigError(msg)
         sink = plugin.make_sender(deps, account_models)
-        if not isinstance(sink, MessageSinkPort):
+        if not isinstance(sink, SinkPort):
             msg = (
-                f'фабрика make_sender плагина {messenger!r} вернула объект '
-                f'вне порта MessageSinkPort: {type(sink).__name__}'
+                f'фабрика make_sender плагина {transport!r} вернула объект '
+                f'вне порта SinkPort: {type(sink).__name__}'
             )
             raise ConfigError(msg)
         listeners.append(listener)
-        sinks[messenger] = sink
+        sinks[transport] = sink
     return tuple(listeners), sinks
 
 
@@ -473,25 +473,25 @@ def _loop_guard_sources(
     """
     Источники, совпадающие хотя бы с одной целью (петля ``source==target``).
 
-    Сверка идентичности — по ``(messenger, chat_id, thread_id)``; для
+    Сверка идентичности — по ``(transport, address, thread_id)``; для
     пометки dedup нужен и ``account_id``, поэтому возвращаем сам источник.
     Пусто, если ни одна цель не совпадает с источником — guard не нужен.
     """
     targets = {
-        (accounts[ep.account].plugin.name, ep.chat_id, ep.thread_id)
+        (accounts[ep.account].plugin.name, ep.address, ep.thread_id)
         for cfg in settings.pipelines.values()
         for ep in cfg.targets
     }
     guarded: dict[tuple[str, str, str, str | None], GuardedSource] = {}
     for cfg in settings.pipelines.values():
         for ep in cfg.sources:
-            messenger = accounts[ep.account].plugin.name
-            if (messenger, ep.chat_id, ep.thread_id) in targets:
-                key = (messenger, ep.account, ep.chat_id, ep.thread_id)
+            transport = accounts[ep.account].plugin.name
+            if (transport, ep.address, ep.thread_id) in targets:
+                key = (transport, ep.account, ep.address, ep.thread_id)
                 guarded[key] = GuardedSource(
-                    messenger=messenger,
+                    transport=transport,
                     account_id=ep.account,
-                    chat_id=ep.chat_id,
+                    address=ep.address,
                     thread_id=ep.thread_id,
                 )
     return tuple(guarded.values())
@@ -519,7 +519,7 @@ class AngarionApp(BaseModel):
     listeners: tuple[Listener, ...]
     queue: EventQueuePort
     storage: StorageBundle
-    sinks: dict[str, MessageSinkPort]
+    sinks: dict[str, SinkPort]
     catchup_unavailable: tuple[str, ...]
     restart_event: asyncio.Event
 
@@ -723,7 +723,7 @@ def build_app(
         shutdown_drain_seconds=settings.worker.shutdown_drain_seconds,
         log=get_logger('angarion.worker'),
     )
-    dispatch_sink: MessageSinkPort = _DispatchSink(sinks)
+    dispatch_sink: SinkPort = _DispatchSink(sinks)
     guarded_sources = _loop_guard_sources(settings, accounts)
     if guarded_sources:
         # цель совпала с источником — гасим петлю собственных доставок

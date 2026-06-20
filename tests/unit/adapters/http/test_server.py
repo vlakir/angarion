@@ -22,13 +22,13 @@ def _memory_settings() -> AngarionSettings:
             'storage': {'backend': 'memory'},
             'queue': {'backend': 'memory'},
             'api': {'auth': 'none', 'host': '127.0.0.1', 'port': 8099},
-            'accounts': {'acc1': {'messenger': 'memory'}},
+            'accounts': {'acc1': {'transport': 'memory'}},
             'pipelines': {
                 'digest': {
                     'processor': 'passthrough',
-                    'events': ['message_new'],
-                    'sources': [{'account': 'acc1', 'chat_id': '-100'}],
-                    'targets': [{'account': 'acc1', 'chat_id': '-200'}],
+                    'events': ['new'],
+                    'sources': [{'account': 'acc1', 'address': '-100'}],
+                    'targets': [{'account': 'acc1', 'address': '-200'}],
                 }
             },
         }

@@ -1,4 +1,5 @@
-"""Встроенный процессор ``llm`` (§10.2, FR §3 спеки T007).
+"""
+Встроенный процессор ``llm`` (§10.2, FR §3 спеки T007).
 
 Процессор тестируется на fake-границе HTTP (``FakeLlmHttp``), реальная
 обёртка ``HttpxLlmClient`` — на ``httpx.MockTransport`` без сети.
@@ -10,7 +11,7 @@ from typing import Any
 
 import httpx
 import pytest
-from app_factories import make_context, make_event, make_services, make_target
+from app_factories import make_context, make_record, make_services, make_target
 
 from angarion.application.llm import (
     LLM,
@@ -23,7 +24,7 @@ from angarion.application.llm import (
 )
 from angarion.domain.errors import ConfigError, ProcessingError
 from angarion.domain.keys import make_idempotency_key
-from angarion.domain.models import EventKind, Verdict
+from angarion.domain.models import RecordKind, Verdict
 from angarion.domain.ports import ProcessorPort
 
 LLM_SETTINGS: dict[str, object] = {
@@ -86,7 +87,9 @@ def make_proc(
         if slept is not None:
             slept.append(seconds)
 
-    return LlmProcessor(http=fake, sleep=sleep, backoff_base=0.01, backoff_cap=0.01), fake
+    return LlmProcessor(
+        http=fake, sleep=sleep, backoff_base=0.01, backoff_cap=0.01
+    ), fake
 
 
 class TestLlmProcessor:
@@ -100,7 +103,7 @@ class TestLlmProcessor:
 
     async def test_delivers_to_all_targets(self) -> None:
         proc, fake = make_proc([ok('сводка')])
-        event = make_event(text='длинный текст')
+        event = make_record(text='длинный текст')
         targets = [make_target('-100111'), make_target('-100222')]
         ctx = make_context(targets=targets, settings=LLM_SETTINGS)
         result = await proc.process(event, ctx, make_services())
@@ -116,15 +119,17 @@ class TestLlmProcessor:
     async def test_text_none_dropped_without_calling_model(self) -> None:
         """Q7: text=None (DELETED без восстановления) → DROP, без вызова LLM."""
         proc, fake = make_proc([])
-        event = make_event(kind=EventKind.MESSAGE_DELETED, text=None)
-        result = await proc.process(event, make_context(settings=LLM_SETTINGS), make_services())
+        event = make_record(kind=RecordKind.DELETED, text=None)
+        result = await proc.process(
+            event, make_context(settings=LLM_SETTINGS), make_services()
+        )
         assert result.verdict is Verdict.DROP
         assert fake.calls == []
 
     async def test_empty_content_dropped(self) -> None:
         proc, _ = make_proc([ok('')])
         result = await proc.process(
-            make_event(), make_context(settings=LLM_SETTINGS), make_services()
+            make_record(), make_context(settings=LLM_SETTINGS), make_services()
         )
         assert result.verdict is Verdict.DROP
         assert result.outbound == []
@@ -132,7 +137,7 @@ class TestLlmProcessor:
     async def test_no_choices_dropped(self) -> None:
         proc, _ = make_proc([LlmHttpResult(status_code=200, body={'choices': []})])
         result = await proc.process(
-            make_event(), make_context(settings=LLM_SETTINGS), make_services()
+            make_record(), make_context(settings=LLM_SETTINGS), make_services()
         )
         assert result.verdict is Verdict.DROP
 
@@ -140,7 +145,7 @@ class TestLlmProcessor:
         slept: list[float] = []
         proc, fake = make_proc([status(429, retry_after=2.0), ok('ок')], slept)
         result = await proc.process(
-            make_event(), make_context(settings=LLM_SETTINGS), make_services()
+            make_record(), make_context(settings=LLM_SETTINGS), make_services()
         )
         assert result.verdict is Verdict.DELIVER
         assert result.outbound[0].text == 'ок'
@@ -152,7 +157,7 @@ class TestLlmProcessor:
         slept: list[float] = []
         proc, _ = make_proc([status(429, retry_after=99.0), ok('ок')], slept)
         ctx = make_context(settings={**LLM_SETTINGS, 'timeout_s': 1.5})
-        result = await proc.process(make_event(), ctx, make_services())
+        result = await proc.process(make_record(), ctx, make_services())
         assert result.verdict is Verdict.DELIVER
         assert slept == [1.5]
 
@@ -160,14 +165,14 @@ class TestLlmProcessor:
         proc, fake = make_proc([status(500), status(503), status(500)])
         with pytest.raises(ProcessingError, match='исчерпаны попытки'):
             await proc.process(
-                make_event(), make_context(settings=LLM_SETTINGS), make_services()
+                make_record(), make_context(settings=LLM_SETTINGS), make_services()
             )
         assert len(fake.calls) == 3  # max_attempts по умолчанию
 
     async def test_transport_error_retried_then_success(self) -> None:
         proc, fake = make_proc([LlmTransportError('boom'), ok('готово')])
         result = await proc.process(
-            make_event(), make_context(settings=LLM_SETTINGS), make_services()
+            make_record(), make_context(settings=LLM_SETTINGS), make_services()
         )
         assert result.outbound[0].text == 'готово'
         assert len(fake.calls) == 2
@@ -176,7 +181,7 @@ class TestLlmProcessor:
         proc, fake = make_proc([LlmTransportError('x')] * 3)
         with pytest.raises(ProcessingError):
             await proc.process(
-                make_event(), make_context(settings=LLM_SETTINGS), make_services()
+                make_record(), make_context(settings=LLM_SETTINGS), make_services()
             )
         assert len(fake.calls) == 3
 
@@ -186,13 +191,13 @@ class TestLlmProcessor:
         proc, fake = make_proc([status(code)])
         with pytest.raises(ProcessingError, match='отклонён'):
             await proc.process(
-                make_event(), make_context(settings=LLM_SETTINGS), make_services()
+                make_record(), make_context(settings=LLM_SETTINGS), make_services()
             )
         assert len(fake.calls) == 1
 
     async def test_prompts_rendered_via_jinja(self) -> None:
         proc, fake = make_proc([ok('r')])
-        event = make_event(text='привет мир')
+        event = make_record(text='привет мир')
         await proc.process(event, make_context(settings=LLM_SETTINGS), make_services())
         messages = fake.calls[0]['payload']['messages']
         assert messages[0] == {'role': 'system', 'content': 'Ты — суммаризатор.'}
@@ -200,11 +205,14 @@ class TestLlmProcessor:
 
     async def test_per_kind_user_prompt_for_edited(self) -> None:
         proc, fake = make_proc([ok('r')])
-        event = make_event(
-            kind=EventKind.MESSAGE_EDITED, text='новый', previous_text='старый'
+        event = make_record(
+            kind=RecordKind.EDITED, text='новый', previous_text='старый'
         )
         ctx = make_context(
-            settings={**LLM_SETTINGS, 'user_prompt_edited': '{{ previous_text }} => {{ text }}'}
+            settings={
+                **LLM_SETTINGS,
+                'user_prompt_edited': '{{ previous_text }} => {{ text }}',
+            }
         )
         await proc.process(event, ctx, make_services())
         assert fake.calls[0]['payload']['messages'][1]['content'] == 'старый => новый'
@@ -212,17 +220,21 @@ class TestLlmProcessor:
     async def test_per_kind_user_prompt_for_deleted(self) -> None:
         proc, fake = make_proc([ok('r')])
         # DELETED с восстановленным реестром текстом (§4.2) → промпт строится
-        event = make_event(kind=EventKind.MESSAGE_DELETED, text='был текст')
+        event = make_record(kind=RecordKind.DELETED, text='был текст')
         ctx = make_context(
             settings={**LLM_SETTINGS, 'user_prompt_deleted': 'удалено: {{ text }}'}
         )
         await proc.process(event, ctx, make_services())
-        assert fake.calls[0]['payload']['messages'][1]['content'] == 'удалено: был текст'
+        assert (
+            fake.calls[0]['payload']['messages'][1]['content'] == 'удалено: был текст'
+        )
 
     async def test_generation_params_included_when_set(self) -> None:
         proc, fake = make_proc([ok('r')])
-        ctx = make_context(settings={**LLM_SETTINGS, 'temperature': 0.2, 'max_tokens': 256})
-        await proc.process(make_event(), ctx, make_services())
+        ctx = make_context(
+            settings={**LLM_SETTINGS, 'temperature': 0.2, 'max_tokens': 256}
+        )
+        await proc.process(make_record(), ctx, make_services())
         payload = fake.calls[0]['payload']
         assert payload['temperature'] == 0.2
         assert payload['max_tokens'] == 256
@@ -230,7 +242,7 @@ class TestLlmProcessor:
     async def test_generation_params_omitted_when_unset(self) -> None:
         proc, fake = make_proc([ok('r')])
         await proc.process(
-            make_event(), make_context(settings=LLM_SETTINGS), make_services()
+            make_record(), make_context(settings=LLM_SETTINGS), make_services()
         )
         payload = fake.calls[0]['payload']
         assert 'temperature' not in payload
@@ -240,46 +252,54 @@ class TestLlmProcessor:
         proc, _ = make_proc([])
         ctx = make_context(settings={'model': 'x'})  # нет base_url/промптов
         with pytest.raises(ConfigError, match='processor_config'):
-            await proc.process(make_event(), ctx, make_services())
+            await proc.process(make_record(), ctx, make_services())
 
     async def test_bad_prompt_syntax_raises_config_error(self) -> None:
         """Битый синтаксис Jinja2 в промпте → ConfigError, без вызова модели."""
         proc, fake = make_proc([])
         ctx = make_context(settings={**LLM_SETTINGS, 'user_prompt': '{{ text '})
         with pytest.raises(ConfigError, match='processor_config'):
-            await proc.process(make_event(), ctx, make_services())
+            await proc.process(make_record(), ctx, make_services())
         assert fake.calls == []
 
     async def test_config_cached_per_pipeline(self) -> None:
         proc, fake = make_proc([ok('a'), ok('b')])
         ctx = make_context(settings=LLM_SETTINGS)
-        first = await proc.process(make_event(text='1'), ctx, make_services())
-        second = await proc.process(make_event(text='2'), ctx, make_services())
+        first = await proc.process(make_record(text='1'), ctx, make_services())
+        second = await proc.process(make_record(text='2'), ctx, make_services())
         assert first.outbound[0].text == 'a'
         assert second.outbound[0].text == 'b'
         assert len(fake.calls) == 2
 
-    async def test_api_key_env_missing_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_api_key_env_missing_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv('ANGARION_TEST_LLM_KEY', raising=False)
         proc, _ = make_proc([])
-        ctx = make_context(settings={**LLM_SETTINGS, 'api_key_env': 'ANGARION_TEST_LLM_KEY'})
+        ctx = make_context(
+            settings={**LLM_SETTINGS, 'api_key_env': 'ANGARION_TEST_LLM_KEY'}
+        )
         with pytest.raises(ConfigError, match='api_key_env'):
-            await proc.process(make_event(), ctx, make_services())
+            await proc.process(make_record(), ctx, make_services())
 
     async def test_api_key_env_read_from_environment(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv('ANGARION_TEST_LLM_KEY', 'sk-secret')
         proc, fake = make_proc([ok('r')])
-        ctx = make_context(settings={**LLM_SETTINGS, 'api_key_env': 'ANGARION_TEST_LLM_KEY'})
-        await proc.process(make_event(), ctx, make_services())
+        ctx = make_context(
+            settings={**LLM_SETTINGS, 'api_key_env': 'ANGARION_TEST_LLM_KEY'}
+        )
+        await proc.process(make_record(), ctx, make_services())
         assert fake.calls[0]['api_key'] == 'sk-secret'
 
 
 class TestHttpxLlmClient:
     async def test_success_returns_parsed_result(self) -> None:
         def handler(_: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={'choices': [{'message': {'content': 'hi'}}]})
+            return httpx.Response(
+                200, json={'choices': [{'message': {'content': 'hi'}}]}
+            )
 
         client = HttpxLlmClient(transport=httpx.MockTransport(handler))
         result = await client.post_chat(
