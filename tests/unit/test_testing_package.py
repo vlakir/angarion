@@ -26,6 +26,12 @@ CONTRACT_CLASSES = [
     'StateStoreContract',
 ]
 
+# Переиспользуемые реализации портов (не контракты): counting/null-сток
+# нагрузочного гарнеса T044.
+SINKS = [
+    'CountingSink',
+]
+
 FACTORIES = [
     'FAR_FUTURE',
     'LONG_AGO',
@@ -43,12 +49,14 @@ FACTORIES = [
 
 
 def test_public_surface_is_importable() -> None:
-    for name in CONTRACT_CLASSES + FACTORIES:
+    for name in CONTRACT_CLASSES + SINKS + FACTORIES:
         assert hasattr(angarion.testing, name), name
 
 
 def test_all_declares_exactly_the_public_surface() -> None:
-    assert sorted(angarion.testing.__all__) == sorted(CONTRACT_CLASSES + FACTORIES)
+    assert sorted(angarion.testing.__all__) == sorted(
+        CONTRACT_CLASSES + SINKS + FACTORIES
+    )
 
 
 def test_contract_classes_carry_asyncio_marker() -> None:

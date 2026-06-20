@@ -146,6 +146,7 @@ dev = [
     "uvicorn>=0.30",
     "matrix-nio[e2e]>=0.25",
     "twine>=6.2.0",
+    "pyinstrument>=4.6",
 ]
 docs = [
     "mkdocs-material>=9.7.6",
@@ -222,10 +223,11 @@ exclude = ["/migrations/"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["src"]
-addopts = "-q --tb=short --cov=src --cov-report=term-missing --cov-fail-under=90 -m 'not integration'"
+addopts = "-q --tb=short --cov=src --cov-report=term-missing --cov-fail-under=90 -m 'not integration and not perf'"
 testpaths = ["tests"]
 markers = [
     "integration: тесты на реальном Telegram-аккаунте (реквизиты в .secrets; запуск: pytest -m integration)",
+    "perf: нагрузочные прогоны (T044, машинозависимы; запуск: pytest -m perf --no-cov tests/perf)",
 ]
 
 

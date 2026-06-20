@@ -27,6 +27,24 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 <!-- Здесь накапливаются изменения для следующего milestone. -->
 
+### Added
+
+- **T044 (фаза A): ядро нагрузочного гарнеса.** Perf-тесты в
+  `tests/perf/` (маркер `@pytest.mark.perf`, вне gated-прогона:
+  `addopts = -m 'not perf'`). Гарнес (`tests/perf/_harness.py`)
+  прогоняет синтетический поток через настоящий конвейер
+  (`build_app`: ingest → queue → worker → delivery → sink) без сети и
+  реальных платформ; closed-loop burst замеряет throughput (rec/s),
+  перцентили латентности (p50/p95/p99) и профиль глубины очереди для
+  обеих матриц бэкендов (memory-потолок и persistqueue+SQLite).
+  Латентность считается меткой `perf_counter` в тексте записи
+  (passthrough ретранслирует её), без зависимости от
+  `OutboundRecord.record_uid`. Запуск:
+  `uv run pytest -m perf --no-cov tests/perf`.
+- **`angarion.testing.CountingSink`** — counting/null-сток (`SinkPort`):
+  считает доставленное без накопления записей (+ опц. `on_delivery`-хук
+  для подсчёта латентности), для больших/устойчивых perf-прогонов.
+
 ## [0.4.0] — 2026-06-20
 
 ### Changed
