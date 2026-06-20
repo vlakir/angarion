@@ -13,13 +13,13 @@ from uuid import uuid4
 
 from angarion.domain.models import (
     AccountRef,
-    Address,
     AnalyticsEvent,
     DeadLetter,
-    EventKind,
-    InboundEvent,
-    OutboundMessage,
+    Endpoint,
+    OutboundRecord,
     QueueEnvelope,
+    Record,
+    RecordKind,
     RegistryRecord,
     SourceCursor,
 )
@@ -31,36 +31,36 @@ FAR_FUTURE = datetime(2100, 1, 1, tzinfo=UTC)
 SOURCE_KEY = 'memory:acc1:-100123'
 
 
-def make_address(**overrides: object) -> Address:
-    fields: dict[str, object] = {'messenger': 'memory', 'chat_id': '-100123'}
+def make_endpoint(**overrides: object) -> Endpoint:
+    fields: dict[str, object] = {'transport': 'memory', 'address': '-100123'}
     fields.update(overrides)
-    return Address.model_validate(fields)
+    return Endpoint.model_validate(fields)
 
 
-def make_event(**overrides: object) -> InboundEvent:
+def make_record(**overrides: object) -> Record:
     fields: dict[str, object] = {
         'uid': uuid4(),
-        'kind': EventKind.MESSAGE_NEW,
+        'kind': RecordKind.NEW,
         'dedup_key': f'{SOURCE_KEY}:42:new',
         'origin': 'live',
-        'source': make_address(),
-        'received_by': AccountRef(messenger='memory', account_id='acc1'),
+        'source': make_endpoint(),
+        'received_by': AccountRef(transport='memory', account_id='acc1'),
         'external_id': '42',
         'text': 'hello',
         'event_at': NOW,
         'received_at': NOW,
     }
     fields.update(overrides)
-    return InboundEvent.model_validate(fields)
+    return Record.model_validate(fields)
 
 
 def make_envelope(**overrides: object) -> QueueEnvelope:
-    fields: dict[str, object] = {'pipeline': 'digest', 'event': make_event()}
+    fields: dict[str, object] = {'pipeline': 'digest', 'record': make_record()}
     fields.update(overrides)
     return QueueEnvelope.model_validate(fields)
 
 
-def make_record(**overrides: object) -> RegistryRecord:
+def make_registry_record(**overrides: object) -> RegistryRecord:
     fields: dict[str, object] = {
         'source_key': SOURCE_KEY,
         'external_id': '42',
@@ -82,15 +82,15 @@ def make_cursor(**overrides: object) -> SourceCursor:
     return SourceCursor.model_validate(fields)
 
 
-def make_outbound(**overrides: object) -> OutboundMessage:
+def make_outbound(**overrides: object) -> OutboundRecord:
     fields: dict[str, object] = {
         'idempotency_key': f'{SOURCE_KEY}:42:new->digest:-100999:0',
-        'target': make_address(chat_id='-100999'),
-        'send_via': AccountRef(messenger='memory', account_id='acc1'),
+        'target': make_endpoint(address='-100999'),
+        'send_via': AccountRef(transport='memory', account_id='acc1'),
         'text': 'hi',
     }
     fields.update(overrides)
-    return OutboundMessage.model_validate(fields)
+    return OutboundRecord.model_validate(fields)
 
 
 def make_analytics_event(**overrides: object) -> AnalyticsEvent:

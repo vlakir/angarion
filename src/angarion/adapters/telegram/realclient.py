@@ -35,7 +35,7 @@ from angarion.adapters.telegram.client import (
     TransientSendError,
     as_peer,
 )
-from angarion.domain.models import EventKind
+from angarion.domain.models import RecordKind
 
 _TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
     errors.ServerError,
@@ -126,12 +126,12 @@ def _extract_media(message: Message) -> tuple[RawMedia, ...]:
 
 
 def to_raw_message(
-    event: events.NewMessage.Event, kind: EventKind
+    event: events.NewMessage.Event, kind: RecordKind
 ) -> RawTelegramMessage:
     """Сырое событие Telethon NewMessage/MessageEdited → DTO."""
     message = event.message
     service = isinstance(message, MessageService)
-    event_at = (message.edit_date if kind is EventKind.MESSAGE_EDITED else None) or (
+    event_at = (message.edit_date if kind is RecordKind.EDITED else None) or (
         message.date
     )
     return RawTelegramMessage(
@@ -153,7 +153,7 @@ def to_raw_history_message(message: Message) -> RawTelegramMessage:
     """Сообщение из ``iter_messages`` (catch-up §9.3) → DTO (kind=NEW)."""
     service = isinstance(message, MessageService)
     return RawTelegramMessage(
-        kind=EventKind.MESSAGE_NEW,
+        kind=RecordKind.NEW,
         chat_id=message.chat_id,
         message_id=message.id,
         thread_id=_topic_id(message.reply_to),
@@ -325,14 +325,14 @@ class TelethonClient:
     def on_new_message(self, handler: RawMessageHandler) -> None:
         """Подписать колбэк на ``events.NewMessage``."""
         self._client.add_event_handler(
-            self._message_callback(handler, EventKind.MESSAGE_NEW),
+            self._message_callback(handler, RecordKind.NEW),
             events.NewMessage(),
         )
 
     def on_message_edited(self, handler: RawMessageHandler) -> None:
         """Подписать колбэк на ``events.MessageEdited``."""
         self._client.add_event_handler(
-            self._message_callback(handler, EventKind.MESSAGE_EDITED),
+            self._message_callback(handler, RecordKind.EDITED),
             events.MessageEdited(),
         )
 
@@ -346,7 +346,7 @@ class TelethonClient:
 
     @staticmethod
     def _message_callback(
-        handler: RawMessageHandler, kind: EventKind
+        handler: RawMessageHandler, kind: RecordKind
     ) -> Callable[[events.NewMessage.Event], Awaitable[None]]:
         async def callback(event: events.NewMessage.Event) -> None:
             await handler(to_raw_message(event, kind))

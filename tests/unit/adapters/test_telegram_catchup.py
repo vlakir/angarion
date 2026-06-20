@@ -32,9 +32,9 @@ from angarion.application.ingest import IngestService
 from angarion.application.router import Router, RouteSpec
 from angarion.domain.keys import make_media_hash, normalize_and_hash
 from angarion.domain.models import (
-    Address,
-    EventKind,
+    Endpoint,
     MediaRef,
+    RecordKind,
     RegistryRecord,
     SourceCursor,
 )
@@ -126,8 +126,8 @@ async def test_new_messages_above_cursor_emitted() -> None:
         cursor=_cursor(10),
     )
     assert [(e.kind, e.external_id) for e in ingest.events] == [
-        (EventKind.MESSAGE_NEW, '11'),
-        (EventKind.MESSAGE_NEW, '12'),
+        (RecordKind.NEW, '11'),
+        (RecordKind.NEW, '12'),
     ]
     assert all(e.origin == 'catchup' for e in ingest.events)
 
@@ -153,7 +153,7 @@ async def test_edit_detected_by_hash_divergence() -> None:
         cursor=_cursor(5),
     )
     assert [(e.kind, e.external_id) for e in ingest.events] == [
-        (EventKind.MESSAGE_EDITED, '5')
+        (RecordKind.EDITED, '5')
     ]
     assert ingest.events[0].origin == 'catchup'
 
@@ -177,7 +177,7 @@ async def test_media_edit_detected_during_catchup() -> None:
         cursor=_cursor(5),
     )
     assert [(e.kind, e.external_id) for e in ingest.events] == [
-        (EventKind.MESSAGE_EDITED, '5')
+        (RecordKind.EDITED, '5')
     ]
 
 
@@ -239,7 +239,7 @@ async def test_deletion_within_covered_range() -> None:
         cursor=_cursor(7),
     )
     assert [(e.kind, e.external_id) for e in ingest.events] == [
-        (EventKind.MESSAGE_DELETED, '6')
+        (RecordKind.DELETED, '6')
     ]
 
 
@@ -275,7 +275,7 @@ async def test_recent_window_poll_detects_edit_and_suppresses_truncation() -> No
     )
     # правка в окне поймана сверкой по реестру
     assert [(e.kind, e.external_id) for e in ingest.events] == [
-        (EventKind.MESSAGE_EDITED, '9')
+        (RecordKind.EDITED, '9')
     ]
     # узкое окно «усечено» by design — catchup_truncated подавлен
     assert await analytics.recent(kind='catchup_truncated') == []
@@ -343,7 +343,7 @@ async def test_thread_source_skips_deletion_detection() -> None:
         cursor=_cursor(7),
         thread_id='55',
     )
-    assert all(e.kind is not EventKind.MESSAGE_DELETED for e in ingest.events)
+    assert all(e.kind is not RecordKind.DELETED for e in ingest.events)
 
 
 async def test_fetch_passes_thread_filter() -> None:
@@ -369,8 +369,8 @@ async def test_redelivery_deduped_end_to_end() -> None:
             [
                 RouteSpec(
                     pipeline='p',
-                    events=frozenset(EventKind),
-                    sources=(Address(messenger='telegram', chat_id=str(CHAT)),),
+                    events=frozenset(RecordKind),
+                    sources=(Endpoint(transport='telegram', address=str(CHAT)),),
                 )
             ]
         ),

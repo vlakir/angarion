@@ -11,7 +11,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from app_factories import make_context, make_envelope, make_event, make_target
+from app_factories import make_context, make_envelope, make_record, make_target
 
 from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.storage import (
@@ -37,7 +37,6 @@ from angarion.domain.keys import make_idempotency_key
 from angarion.domain.models import (
     AnalyticsEvent,
     DynamicSettings,
-    InboundEvent,
     MediaRef,
     OutboxStatus,
     PipelineContextData,
@@ -45,6 +44,7 @@ from angarion.domain.models import (
     ProcessorServices,
     QueueEnvelope,
     QueueItem,
+    Record,
     TargetSpec,
     Verdict,
 )
@@ -67,14 +67,14 @@ class RecordingQueue(MemoryQueue):
 
 
 async def boom(
-    event: InboundEvent, ctx: PipelineContextData, svc: ProcessorServices
+    event: Record, ctx: PipelineContextData, svc: ProcessorServices
 ) -> ProcessingResult:
     msg = 'boom'
     raise ProcessingError(msg)
 
 
 async def drop(
-    event: InboundEvent, ctx: PipelineContextData, svc: ProcessorServices
+    event: Record, ctx: PipelineContextData, svc: ProcessorServices
 ) -> ProcessingResult:
     return ProcessingResult(verdict=Verdict.DROP, note='подавлено')
 
@@ -135,13 +135,13 @@ class TestStaging:
         await harness.queue.put(envelope)
         await harness.worker.process_one()
         target = make_target().target
-        key = make_idempotency_key('digest', envelope.event, target, 0)
+        key = make_idempotency_key('digest', envelope.record, target, 0)
         record = await harness.outbox.get(key)
         assert record is not None
         assert record.status is OutboxStatus.PENDING
-        assert record.msg.text == 'hello'
+        assert record.record.text == 'hello'
         assert record.pipeline == 'digest'
-        assert record.event_uid == envelope.event.uid
+        assert record.record_uid == envelope.record.uid
         depth = await harness.queue.depth()
         assert (depth.pending, depth.unacked) == (0, 0)
         kinds = await harness.kinds()
@@ -169,11 +169,11 @@ class TestStaging:
 
     async def test_processor_events_recorded(self) -> None:
         extra = AnalyticsEvent(
-            uid=make_envelope().event.uid, kind='custom_metric', at=datetime.now(UTC)
+            uid=make_envelope().record.uid, kind='custom_metric', at=datetime.now(UTC)
         )
 
         async def with_events(
-            event: InboundEvent, ctx: PipelineContextData, svc: ProcessorServices
+            event: Record, ctx: PipelineContextData, svc: ProcessorServices
         ) -> ProcessingResult:
             return ProcessingResult(verdict=Verdict.DROP, events=[extra])
 
@@ -198,7 +198,9 @@ class TestRetry:
     async def test_backoff_exponential_with_cap(
         self, attempt: int, base: float, cap: float, expected_delay: float
     ) -> None:
-        harness = WorkerHarness(boom, backoff_base=base, backoff_cap=cap, max_retries=99)
+        harness = WorkerHarness(
+            boom, backoff_base=base, backoff_cap=cap, max_retries=99
+        )
         await harness.queue.put(make_envelope(attempt=attempt))
         before = datetime.now(UTC)
         await harness.worker.process_one()
@@ -337,7 +339,7 @@ class TestPause:
         harness = WorkerHarness(passthrough)
         await harness.pause('digest')
         await harness.queue.put(make_envelope())
-        await harness.queue.put(make_envelope(event=make_event(external_id='43')))
+        await harness.queue.put(make_envelope(record=make_record(external_id='43')))
         await harness.worker.process_one()  # оба откладываются
         await harness.worker.process_one()
         assert await harness.outbox.due() == []
@@ -355,7 +357,7 @@ class TestProcessorServicesWiring:
         captured: list[ProcessorServices] = []
 
         async def capture(
-            event: InboundEvent, ctx: PipelineContextData, svc: ProcessorServices
+            event: Record, ctx: PipelineContextData, svc: ProcessorServices
         ) -> ProcessingResult:
             captured.append(svc)
             return ProcessingResult(verdict=Verdict.DROP)
@@ -366,12 +368,12 @@ class TestProcessorServicesWiring:
         await harness.worker.process_one()
         svc = captured[0]
         target = make_target().target
-        expected = make_idempotency_key('digest', envelope.event, target, 0)
-        assert svc.make_idempotency_key(envelope.event, target, 0) == expected
+        expected = make_idempotency_key('digest', envelope.record, target, 0)
+        assert svc.make_idempotency_key(envelope.record, target, 0) == expected
 
     async def test_state_scoped_to_pipeline(self) -> None:
         async def stateful(
-            event: InboundEvent, ctx: PipelineContextData, svc: ProcessorServices
+            event: Record, ctx: PipelineContextData, svc: ProcessorServices
         ) -> ProcessingResult:
             await svc.state.set('seen', event.dedup_key)
             return ProcessingResult(verdict=Verdict.DROP)
@@ -380,7 +382,7 @@ class TestProcessorServicesWiring:
         envelope = make_envelope()
         await harness.queue.put(envelope)
         await harness.worker.process_one()
-        assert await harness.state.get('digest', 'seen') == envelope.event.dedup_key
+        assert await harness.state.get('digest', 'seen') == envelope.record.dedup_key
         assert await harness.state.get('other', 'seen') is None
 
 
@@ -414,7 +416,7 @@ class TestRunLifecycle:
         release = asyncio.Event()
 
         async def slow(
-            event: InboundEvent, ctx: PipelineContextData, svc: ProcessorServices
+            event: Record, ctx: PipelineContextData, svc: ProcessorServices
         ) -> ProcessingResult:
             started.set()
             await release.wait()
@@ -445,7 +447,7 @@ class TestRunLifecycle:
         started = asyncio.Event()
 
         async def hung(
-            event: InboundEvent, ctx: PipelineContextData, svc: ProcessorServices
+            event: Record, ctx: PipelineContextData, svc: ProcessorServices
         ) -> ProcessingResult:
             started.set()
             await asyncio.sleep(100)  # «залип» (throttle/FloodWait)
@@ -462,7 +464,7 @@ class TestRunLifecycle:
     async def test_run_processes_sequentially(self) -> None:
         harness = WorkerHarness(passthrough)
         await harness.queue.put(make_envelope())
-        await harness.queue.put(make_envelope(event=make_event(external_id='43')))
+        await harness.queue.put(make_envelope(record=make_record(external_id='43')))
         task = asyncio.create_task(harness.worker.run())
         while len(await harness.outbox.due(limit=10)) < 2:
             await asyncio.sleep(0.001)
@@ -478,7 +480,7 @@ class TestForwardMedia:
     @staticmethod
     def _envelope_with_media() -> QueueEnvelope:
         ref = MediaRef(kind='photo', ref='chat:1')
-        return make_envelope(event=make_event(media=[ref]))
+        return make_envelope(record=make_record(media=[ref]))
 
     async def test_default_keeps_media(self) -> None:
         """По умолчанию (forward_media=True) медиа транзитом — как с M7."""
@@ -486,11 +488,11 @@ class TestForwardMedia:
         envelope = self._envelope_with_media()
         await harness.queue.put(envelope)
         await harness.worker.process_one()
-        key = make_idempotency_key('digest', envelope.event, make_target().target, 0)
+        key = make_idempotency_key('digest', envelope.record, make_target().target, 0)
         record = await harness.outbox.get(key)
         assert record is not None
-        assert len(record.msg.media) == 1
-        assert record.msg.media[0].kind == 'photo'
+        assert len(record.record.media) == 1
+        assert record.record.media[0].kind == 'photo'
 
     async def test_false_strips_media(self) -> None:
         """forward_media=False → media снята, текст не тронут."""
@@ -498,11 +500,11 @@ class TestForwardMedia:
         envelope = self._envelope_with_media()
         await harness.queue.put(envelope)
         await harness.worker.process_one()
-        key = make_idempotency_key('digest', envelope.event, make_target().target, 0)
+        key = make_idempotency_key('digest', envelope.record, make_target().target, 0)
         record = await harness.outbox.get(key)
         assert record is not None
-        assert record.msg.media == []
-        assert record.msg.text == 'hello'
+        assert record.record.media == []
+        assert record.record.text == 'hello'
 
     async def test_false_without_media_is_noop(self) -> None:
         """forward_media=False на событии без медиа — обычная доставка."""
@@ -510,8 +512,8 @@ class TestForwardMedia:
         envelope = make_envelope()  # без media
         await harness.queue.put(envelope)
         await harness.worker.process_one()
-        key = make_idempotency_key('digest', envelope.event, make_target().target, 0)
+        key = make_idempotency_key('digest', envelope.record, make_target().target, 0)
         record = await harness.outbox.get(key)
         assert record is not None
-        assert record.msg.media == []
-        assert record.msg.text == 'hello'
+        assert record.record.media == []
+        assert record.record.text == 'hello'

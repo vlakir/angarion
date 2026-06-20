@@ -54,9 +54,9 @@ from angarion.domain.models import (
     DeadLetter,
     DeliveryReceipt,
     DynamicSettings,
-    OutboundMessage,
     OutboundRecord,
     OutboxCommand,
+    OutboxRecord,
     OutboxStatus,
     QueueEnvelope,
     RegistryDelta,
@@ -138,9 +138,9 @@ class SqliteDedupStore:
         return _rowcount(result)
 
 
-def _row_to_outbound(row: OutboundRow) -> OutboundRecord:
-    return OutboundRecord(
-        msg=OutboundMessage.model_validate_json(row.msg),
+def _row_to_outbound(row: OutboundRow) -> OutboxRecord:
+    return OutboxRecord(
+        record=OutboundRecord.model_validate_json(row.record),
         status=OutboxStatus(row.status),
         attempts=row.attempts,
         next_attempt_at=row.next_attempt_at,
@@ -153,7 +153,7 @@ def _row_to_outbound(row: OutboundRow) -> OutboundRecord:
         ),
         last_error=row.last_error,
         pipeline=row.pipeline,
-        event_uid=UUID(row.event_uid) if row.event_uid is not None else None,
+        record_uid=UUID(row.record_uid) if row.record_uid is not None else None,
     )
 
 
@@ -166,24 +166,24 @@ class SqliteOutbox:
     @_retry_on_locked
     async def put(
         self,
-        msg: OutboundMessage,
+        record: OutboundRecord,
         *,
         pipeline: str | None = None,
-        event_uid: UUID | None = None,
+        record_uid: UUID | None = None,
     ) -> bool:
         """True — записано; False — ключ уже известен."""
         now = datetime.now(UTC)
         stmt = (
             sqlite_insert(OutboundRow)
             .values(
-                idempotency_key=msg.idempotency_key,
-                msg=msg.model_dump_json(),
+                idempotency_key=record.idempotency_key,
+                record=record.model_dump_json(),
                 status=OutboxStatus.PENDING.value,
                 attempts=0,
                 next_attempt_at=now,
                 created_at=now,
                 pipeline=pipeline,
-                event_uid=str(event_uid) if event_uid is not None else None,
+                record_uid=str(record_uid) if record_uid is not None else None,
             )
             .on_conflict_do_nothing()
         )
@@ -191,7 +191,7 @@ class SqliteOutbox:
             result = await session.execute(stmt)
         return _rowcount(result) == 1
 
-    async def due(self, limit: int = 50) -> list[OutboundRecord]:
+    async def due(self, limit: int = 50) -> list[OutboxRecord]:
         """Pending с подошедшим сроком, FIFO (rowid — порядок вставки)."""
         stmt = (
             select(OutboundRow)
@@ -262,7 +262,7 @@ class SqliteOutbox:
         async with self._sessions() as session, session.begin():
             await session.execute(stmt)
 
-    async def get(self, idempotency_key: str) -> OutboundRecord | None:
+    async def get(self, idempotency_key: str) -> OutboxRecord | None:
         """Запись по ключу или None."""
         async with self._sessions() as session:
             row = await session.get(OutboundRow, idempotency_key)
@@ -740,7 +740,7 @@ def _row_to_event(row: AnalyticsEventRow) -> AnalyticsEvent:
     return AnalyticsEvent(
         uid=UUID(row.uid),
         kind=row.kind,
-        event_uid=UUID(row.event_uid) if row.event_uid is not None else None,
+        record_uid=UUID(row.record_uid) if row.record_uid is not None else None,
         pipeline=row.pipeline,
         payload=json.loads(row.payload),
         at=row.at,
@@ -759,7 +759,7 @@ class SqliteAnalytics:
         row = AnalyticsEventRow(
             uid=str(event.uid),
             kind=event.kind,
-            event_uid=str(event.event_uid) if event.event_uid is not None else None,
+            record_uid=str(event.record_uid) if event.record_uid is not None else None,
             pipeline=event.pipeline,
             payload=json.dumps(event.payload),
             at=event.at,

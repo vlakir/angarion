@@ -1,5 +1,5 @@
 """
-Маппинг сырых событий Telethon → ``InboundEvent`` (FR «Маппинг», M3).
+Маппинг сырых событий Telethon → ``Record`` (FR «Маппинг», M3).
 
 Чистые функции над нормализованными DTO (`client.RawTelegram*`): без
 сети и без Telethon, покрыты юнит-тестами на фикстурах. Все ключи и
@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
-from angarion.adapters.telegram.client import MESSENGER
+from angarion.adapters.telegram.client import TRANSPORT
 from angarion.domain.keys import (
     make_dedup_key,
     make_media_hash,
@@ -26,10 +26,10 @@ from angarion.domain.keys import (
 )
 from angarion.domain.models import (
     AccountRef,
-    Address,
-    EventKind,
-    InboundEvent,
+    Endpoint,
     MediaRef,
+    Record,
+    RecordKind,
 )
 
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     )
 
 Origin = Literal['live', 'catchup']
-"""Источник события для ``InboundEvent.origin`` (live-подписка или catch-up §9.3)."""
+"""Источник записи для ``Record.origin`` (live-подписка или catch-up §9.3)."""
 
 
 def _str_or_none(value: int | None) -> str | None:
@@ -51,7 +51,7 @@ def raw_media_hash(raw: RawTelegramMessage) -> str | None:
     """
     media_hash сырого сообщения (M7 A3) — для catch-up-сверки правок медиа.
 
-    Эквивалентен ``InboundEvent.media_hash`` после ``map_message`` того же
+    Эквивалентен ``Record.media_hash`` после ``map_message`` того же
     сообщения: ``make_media_hash`` игнорирует ``ref``, поэтому ref-пустышка
     здесь даёт тот же хэш (live и catch-up сходятся, §9.3.5).
     """
@@ -80,9 +80,9 @@ def _to_media_ref(raw: RawMedia, source_ref: str) -> MediaRef:
 
 def map_message(
     raw: RawTelegramMessage, account_id: str, *, origin: Origin = 'live'
-) -> InboundEvent | None:
+) -> Record | None:
     """
-    NEW/EDITED-сообщение → ``InboundEvent``; ``None`` — системное
+    NEW/EDITED-сообщение → ``Record``; ``None`` — системное
     (``MessageService``), отсеивается на входе адаптера.
 
     ``origin`` — ``'live'`` для подписки, ``'catchup'`` для дозабора
@@ -96,16 +96,16 @@ def map_message(
     content_hash = normalize_and_hash(raw.text) if raw.text is not None else None
     media = [_to_media_ref(m, f'{chat_id}:{external_id}') for m in raw.media]
     media_hash = make_media_hash(media)
-    source_key = make_source_key(MESSENGER, account_id, chat_id, thread_id)
-    return InboundEvent(
+    source_key = make_source_key(TRANSPORT, account_id, chat_id, thread_id)
+    return Record(
         uid=uuid4(),
         kind=raw.kind,
         dedup_key=make_dedup_key(
             raw.kind, source_key, external_id, content_hash, media_hash
         ),
         origin=origin,
-        source=Address(messenger=MESSENGER, chat_id=chat_id, thread_id=thread_id),
-        received_by=AccountRef(messenger=MESSENGER, account_id=account_id),
+        source=Endpoint(transport=TRANSPORT, address=chat_id, thread_id=thread_id),
+        received_by=AccountRef(transport=TRANSPORT, account_id=account_id),
         external_id=external_id,
         sender_id=_str_or_none(raw.sender_id),
         sender_name=raw.sender_name,
@@ -122,9 +122,9 @@ def map_message(
 
 def map_deletion(
     raw: RawTelegramDeletion, account_id: str, *, origin: Origin = 'live'
-) -> list[InboundEvent]:
+) -> list[Record]:
     """
-    Удаление → по одному ``MESSAGE_DELETED`` на id (chat-уровень).
+    Удаление → по одному ``DELETED`` на id (chat-уровень).
 
     ``chat_id=None`` (legacy-группа, §9.4.2) → пустой список: без chat
     источник не собрать; целевой кейс — супергруппы. ``origin`` — см.
@@ -133,18 +133,16 @@ def map_deletion(
     if raw.chat_id is None:
         return []
     chat_id = str(raw.chat_id)
-    source_key = make_source_key(MESSENGER, account_id, chat_id)
+    source_key = make_source_key(TRANSPORT, account_id, chat_id)
     received_at = datetime.now(UTC)
     return [
-        InboundEvent(
+        Record(
             uid=uuid4(),
-            kind=EventKind.MESSAGE_DELETED,
-            dedup_key=make_dedup_key(
-                EventKind.MESSAGE_DELETED, source_key, str(message_id)
-            ),
+            kind=RecordKind.DELETED,
+            dedup_key=make_dedup_key(RecordKind.DELETED, source_key, str(message_id)),
             origin=origin,
-            source=Address(messenger=MESSENGER, chat_id=chat_id),
-            received_by=AccountRef(messenger=MESSENGER, account_id=account_id),
+            source=Endpoint(transport=TRANSPORT, address=chat_id),
+            received_by=AccountRef(transport=TRANSPORT, account_id=account_id),
             external_id=str(message_id),
             event_at=raw.deleted_at,
             received_at=received_at,

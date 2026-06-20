@@ -1,5 +1,5 @@
 """
-MatrixSender: доставка OutboundMessage в Matrix (MessageSinkPort, M7 B3).
+MatrixSender: доставка OutboundRecord в Matrix (SinkPort, M7 B3).
 Контракт sink + текст/медиа/тред + rate-limit/transient ретраи на fake.
 """
 
@@ -15,8 +15,8 @@ from angarion.adapters.matrix.sender import MatrixSender
 from angarion.domain.errors import ConfigError
 from angarion.domain.models import MediaRef
 from angarion.log import get_logger
-from angarion.testing.factories import make_address, make_outbound
-from angarion.testing.sink_contract import MessageSinkContract
+from angarion.testing.factories import make_endpoint, make_outbound
+from angarion.testing.sink_contract import SinkContract
 
 if TYPE_CHECKING:
     from angarion.adapters.matrix.client import MatrixClientPort
@@ -35,7 +35,7 @@ def _sender(client: FakeMatrixClient, **kw: object) -> MatrixSender:
     )
 
 
-class TestMatrixSink(MessageSinkContract):
+class TestMatrixSink(SinkContract):
     @pytest.fixture
     def sink(self) -> MatrixSender:
         return _sender(FakeMatrixClient())
@@ -87,7 +87,7 @@ class TestSend:
 
     async def test_thread_id_becomes_thread_root(self) -> None:
         client = FakeMatrixClient()
-        out = make_outbound(target=make_address(chat_id='!r:s', thread_id='$root'))
+        out = make_outbound(target=make_endpoint(address='!r:s', thread_id='$root'))
         await _sender(client).send(out)
         assert client.sent[0]['thread_root'] == '$root'
 

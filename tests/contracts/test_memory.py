@@ -14,10 +14,10 @@ from angarion.testing import (
     DedupStoreContract,
     EventQueueContract,
     MessageRegistryContract,
-    MessageSinkContract,
     OutboxContract,
     RuntimeConfigContract,
     SessionStoreContract,
+    SinkContract,
     StateStoreContract,
     make_outbound,
 )
@@ -105,7 +105,7 @@ class TestMemoryCommandOutbox(CommandOutboxContract):
         return MemoryCommandOutbox()
 
 
-class TestMemorySink(MessageSinkContract):
+class TestMemorySink(SinkContract):
     @pytest.fixture
     def sink(self) -> MemorySink:
         return MemorySink()
@@ -127,7 +127,7 @@ class TestMemorySink(MessageSinkContract):
 
 PORT_CONFORMANCE = [
     (MemoryQueue, ports.EventQueuePort),
-    (MemorySink, ports.MessageSinkPort),
+    (MemorySink, ports.SinkPort),
     (MemoryDedupStore, ports.DedupStorePort),
     (MemoryOutbox, ports.OutboxPort),
     (MemoryMessageRegistry, ports.MessageRegistryPort),

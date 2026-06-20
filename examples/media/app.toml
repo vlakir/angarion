@@ -8,7 +8,7 @@
 # переменные окружения (см. README.md). В TOML — только не-секретные параметры.
 
 [accounts.main]
-messenger = "telegram"
+transport = "telegram"
 # api_id / api_hash подаются через env:
 #   ANGARION_ACCOUNTS__MAIN__API_ID, ANGARION_ACCOUNTS__MAIN__API_HASH
 
@@ -32,11 +32,11 @@ prune_interval = 3600            # период фоновой очистки р
 
 [pipelines.media]
 processor = "media_note"         # кастомный процессор примера (см. run.py)
-events = ["message_new"]         # только новые сообщения
+events = ["new"]                 # только новые сообщения
 # Источник и цель — числовые id супергрупп (вида -100…) или @username.
 # Аккаунт должен состоять в обеих группах.
-sources = [{ account = "main", chat_id = "-100AAAAAAAAAA" }]
-targets = [{ account = "main", chat_id = "-100BBBBBBBBBB" }]
+sources = [{ account = "main", address = "-100AAAAAAAAAA" }]
+targets = [{ account = "main", address = "-100BBBBBBBBBB" }]
 
 [pipelines.media.processor_config]
 header = "📥 переслано с медиа"   # опциональный заголовок подписи

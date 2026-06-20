@@ -44,7 +44,7 @@ def test_telegram_adapter_plugin_loads_via_entry_point() -> None:
     assert plugin.capabilities.history_fetch is True
     assert plugin.capabilities.push_transport == 'client'
     account = plugin.account_config_model.model_validate(
-        {'messenger': 'telegram', 'api_id': 2040, 'api_hash': 'h'}
+        {'transport': 'telegram', 'api_id': 2040, 'api_hash': 'h'}
     )
     assert account.model_dump()['api_id'] == 2040
 
@@ -98,8 +98,8 @@ def test_passthrough_processor_loads_via_entry_point() -> None:
 
 
 def test_memory_account_model_validates_section() -> None:
-    """Схема [accounts.*] платформы memory: только messenger (§12.11)."""
+    """Схема [accounts.*] платформы memory: только transport (§12.11)."""
     plugin = load_single('angarion.adapters', 'memory')
     assert isinstance(plugin, AdapterPlugin)
-    account = plugin.account_config_model.model_validate({'messenger': 'memory'})
-    assert account.model_dump() == {'messenger': 'memory'}
+    account = plugin.account_config_model.model_validate({'transport': 'memory'})
+    assert account.model_dump() == {'transport': 'memory'}

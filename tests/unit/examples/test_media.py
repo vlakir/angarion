@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from app_factories import make_context, make_event, make_services, make_target
+from app_factories import make_context, make_record, make_services, make_target
 from media_processor import MEDIA_NOTE, MediaNoteProcessor
 
 from angarion.domain.models import MediaRef, Verdict
@@ -34,7 +34,7 @@ async def test_downloaded_media_annotated_with_on_disk_size(tmp_path: Path) -> N
     """Вложение с local_path: подпись несёт фактический размер файла на диске."""
     blob = tmp_path / 'cat.jpg'
     blob.write_bytes(b'x' * 1234)
-    event = make_event(
+    event = make_record(
         text='смотри кота',
         media=[
             MediaRef(
@@ -58,7 +58,7 @@ async def test_downloaded_media_annotated_with_on_disk_size(tmp_path: Path) -> N
 
 async def test_header_prepended_when_configured() -> None:
     """``processor_config.header`` добавляет строку-заголовок к подписи."""
-    event = make_event(text='t', media=[MediaRef(kind='photo', ref='-100123:42')])
+    event = make_record(text='t', media=[MediaRef(kind='photo', ref='-100123:42')])
     ctx = make_context(settings={'header': '📥 зеркало'})
     result = await MEDIA_NOTE.process(event, ctx, make_services())
     assert result.outbound[0].text.startswith('📥 зеркало\n')
@@ -66,7 +66,7 @@ async def test_header_prepended_when_configured() -> None:
 
 async def test_media_without_local_path_uses_fast_path_note() -> None:
     """Скачивание выключено (нет local_path): подпись помечает fast-path."""
-    event = make_event(
+    event = make_record(
         text='', media=[MediaRef(kind='video', ref='-100123:42', size=2048)]
     )
     result = await MEDIA_NOTE.process(event, make_context(), make_services())
@@ -79,7 +79,7 @@ async def test_media_without_local_path_uses_fast_path_note() -> None:
 async def test_missing_local_file_degrades_to_note(tmp_path: Path) -> None:
     """local_path задан, но файла нет: доставка не падает, подпись помечает это."""
     gone = tmp_path / 'gone.bin'  # не создаём
-    event = make_event(
+    event = make_record(
         text='x', media=[MediaRef(kind='document', ref='-1:2', local_path=str(gone))]
     )
     result = await MEDIA_NOTE.process(event, make_context(), make_services())
@@ -89,7 +89,7 @@ async def test_missing_local_file_degrades_to_note(tmp_path: Path) -> None:
 
 async def test_no_media_passthrough_text() -> None:
     """Событие без медиа с текстом — пересылается как текст."""
-    event = make_event(text='просто текст')
+    event = make_record(text='просто текст')
     result = await MEDIA_NOTE.process(event, make_context(), make_services())
     assert result.verdict is Verdict.DELIVER
     assert result.outbound[0].text == 'просто текст'
@@ -98,7 +98,7 @@ async def test_no_media_passthrough_text() -> None:
 
 async def test_no_media_no_text_dropped() -> None:
     """Ни текста, ни медиа — drop (нечего пересылать)."""
-    event = make_event(text=None)
+    event = make_record(text=None)
     result = await MEDIA_NOTE.process(event, make_context(), make_services())
     assert result.verdict is Verdict.DROP
     assert not result.outbound
@@ -106,7 +106,7 @@ async def test_no_media_no_text_dropped() -> None:
 
 async def test_one_outbound_per_target_distinct_keys() -> None:
     """Раскладка по целям: на каждую — свой ``idempotency_key``."""
-    event = make_event(text='t', media=[MediaRef(kind='photo', ref='-100123:42')])
+    event = make_record(text='t', media=[MediaRef(kind='photo', ref='-100123:42')])
     ctx = make_context(targets=[make_target('-100001'), make_target('-100002')])
     result = await MEDIA_NOTE.process(event, ctx, make_services())
     assert len(result.outbound) == 2

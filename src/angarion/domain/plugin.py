@@ -18,7 +18,7 @@ from typing import Any, Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict
 
 from angarion.domain.capabilities import AdapterCapabilities
-from angarion.domain.models import Messenger
+from angarion.domain.models import Transport
 from angarion.domain.ports import (
     AnalyticsPort,
     CommandOutboxPort,
@@ -27,10 +27,10 @@ from angarion.domain.ports import (
     DedupStorePort,
     EventQueuePort,
     MessageRegistryPort,
-    MessageSinkPort,
     OutboxPort,
     RuntimeConfigPort,
     SessionStorePort,
+    SinkPort,
     StateStorePort,
 )
 
@@ -41,7 +41,7 @@ class Listener(Protocol):
     Формализованный жизненный цикл driving-адаптера (§12.11).
 
     Listener получает ``IngestService`` через deps фабрики и эмитит в
-    него ``InboundEvent``'ы, собранные публичными хелперами ключей
+    него ``Record``'ы, собранные публичными хелперами ключей
     (§7.2).
     """
 
@@ -61,8 +61,8 @@ class Listener(Protocol):
 ListenerFactory = Callable[..., Listener]
 """Фабрика listener'а: ``(deps, accounts, sources) -> Listener``."""
 
-SenderFactory = Callable[..., MessageSinkPort]
-"""Фабрика sender'а: ``(deps, accounts) -> MessageSinkPort``."""
+SenderFactory = Callable[..., SinkPort]
+"""Фабрика sender'а: ``(deps, accounts) -> SinkPort``."""
 
 
 class LoginContext(BaseModel):
@@ -105,7 +105,7 @@ class AdapterPlugin(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra='forbid')
 
-    name: Messenger
+    name: Transport
     capabilities: AdapterCapabilities
     account_config_model: type[BaseModel]
     """Pydantic-схема секции ``[accounts.*]`` этой платформы."""

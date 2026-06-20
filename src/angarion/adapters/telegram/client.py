@@ -27,10 +27,10 @@ from typing import Final, Protocol, runtime_checkable
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
-from angarion.domain.models import EventKind
+from angarion.domain.models import RecordKind
 
-MESSENGER: Final = 'telegram'
-"""Идентификатор платформы Telegram-адаптера."""
+TRANSPORT: Final = 'telegram'
+"""Идентификатор транспорта Telegram-адаптера."""
 
 
 def as_peer(chat_id: str) -> int | str:
@@ -100,7 +100,7 @@ class RawTelegramMessage(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra='forbid')
 
-    kind: EventKind
+    kind: RecordKind
     chat_id: int
     message_id: int
     thread_id: int | None = None

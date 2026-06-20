@@ -19,7 +19,7 @@ CONTRACT_CLASSES = [
     'DedupStoreContract',
     'EventQueueContract',
     'MessageRegistryContract',
-    'MessageSinkContract',
+    'SinkContract',
     'OutboxContract',
     'RuntimeConfigContract',
     'SessionStoreContract',
@@ -31,14 +31,14 @@ FACTORIES = [
     'LONG_AGO',
     'NOW',
     'SOURCE_KEY',
-    'make_address',
     'make_analytics_event',
     'make_cursor',
     'make_dead_letter',
+    'make_endpoint',
     'make_envelope',
-    'make_event',
     'make_outbound',
     'make_record',
+    'make_registry_record',
 ]
 
 

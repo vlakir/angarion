@@ -6,7 +6,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from app_factories import NOW, SOURCE_KEY, make_address, make_event
+from app_factories import NOW, SOURCE_KEY, make_endpoint, make_record
 
 from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.storage import (
@@ -16,7 +16,7 @@ from angarion.adapters.memory.storage import (
 )
 from angarion.application.ingest import IngestService
 from angarion.application.router import Router, RouteSpec
-from angarion.domain.models import EventKind, QueueEnvelope
+from angarion.domain.models import QueueEnvelope, RecordKind
 
 
 @pytest.fixture
@@ -50,13 +50,13 @@ def service(
         [
             RouteSpec(
                 pipeline='digest',
-                events=frozenset(EventKind),
-                sources=(make_address(),),
+                events=frozenset(RecordKind),
+                sources=(make_endpoint(),),
             ),
             RouteSpec(
                 pipeline='audit',
-                events=frozenset(EventKind),
-                sources=(make_address(),),
+                events=frozenset(RecordKind),
+                sources=(make_endpoint(),),
             ),
         ]
     )
@@ -92,7 +92,7 @@ class TestDedup:
         analytics: MemoryAnalytics,
     ) -> None:
         """§6.1 шаг 1: дубль выходит до любых записей в реестр."""
-        event = make_event()
+        event = make_record()
         await dedup.mark_inbound(event.dedup_key)
         await service.ingest(event)
         assert await registry.get(SOURCE_KEY, event.external_id) is None
@@ -105,8 +105,8 @@ class TestDedup:
         queue: MemoryQueue,
         analytics: MemoryAnalytics,
     ) -> None:
-        await service.ingest(make_event())
-        await service.ingest(make_event(uid=uuid4()))
+        await service.ingest(make_record())
+        await service.ingest(make_record(uid=uuid4()))
         assert (await queue.depth()).pending == 2  # fan-out только первого
         assert 'duplicate' in await kinds(analytics)
 
@@ -115,7 +115,7 @@ class TestRegistryMaintenance:
     async def test_new_writes_record(
         self, service: IngestService, registry: MemoryMessageRegistry
     ) -> None:
-        await service.ingest(make_event(sender_id='u1', sender_name='Алиса'))
+        await service.ingest(make_record(sender_id='u1', sender_name='Алиса'))
         record = await registry.get(SOURCE_KEY, '42')
         assert record is not None
         assert record.text == 'hello'
@@ -126,18 +126,18 @@ class TestRegistryMaintenance:
         self, service: IngestService, queue: MemoryQueue
     ) -> None:
         """§6.1 шаг 2: EDITED получает previous_text из реестра."""
-        await service.ingest(make_event())
+        await service.ingest(make_record())
         await drain(queue)
-        edited = make_event(
-            kind=EventKind.MESSAGE_EDITED,
+        edited = make_record(
+            kind=RecordKind.EDITED,
             text='hello v2',
             event_at=NOW + timedelta(seconds=1),
         )
         await service.ingest(edited)
         envelopes = await drain(queue)
         assert len(envelopes) == 2
-        assert all(env.event.previous_text == 'hello' for env in envelopes)
-        assert all(env.event.text == 'hello v2' for env in envelopes)
+        assert all(env.record.previous_text == 'hello' for env in envelopes)
+        assert all(env.record.text == 'hello v2' for env in envelopes)
 
     async def test_stale_edit_routed_without_enrichment(
         self,
@@ -146,18 +146,18 @@ class TestRegistryMaintenance:
         queue: MemoryQueue,
     ) -> None:
         """Staleness-guard: устаревшая правка не трогает реестр, но маршрутизируется."""
-        await service.ingest(make_event())
+        await service.ingest(make_record())
         await service.ingest(
-            make_event(
-                kind=EventKind.MESSAGE_EDITED,
+            make_record(
+                kind=RecordKind.EDITED,
                 text='v2',
                 event_at=NOW + timedelta(seconds=10),
             )
         )
         await drain(queue)
         await service.ingest(
-            make_event(
-                kind=EventKind.MESSAGE_EDITED,
+            make_record(
+                kind=RecordKind.EDITED,
                 text='v3-late',
                 event_at=NOW + timedelta(seconds=5),
             )
@@ -167,7 +167,7 @@ class TestRegistryMaintenance:
         assert record.text == 'v2'
         envelopes = await drain(queue)
         assert len(envelopes) == 2
-        assert all(env.event.previous_text is None for env in envelopes)
+        assert all(env.record.previous_text is None for env in envelopes)
 
     async def test_deleted_enriched_from_registry(
         self,
@@ -176,12 +176,12 @@ class TestRegistryMaintenance:
         queue: MemoryQueue,
     ) -> None:
         """§6.1 шаг 2: DELETED получает текст и метаданные удалённого."""
-        await service.ingest(make_event(sender_id='u1', sender_name='Алиса'))
+        await service.ingest(make_record(sender_id='u1', sender_name='Алиса'))
         await drain(queue)
-        await service.ingest(make_event(kind=EventKind.MESSAGE_DELETED, text=None))
+        await service.ingest(make_record(kind=RecordKind.DELETED, text=None))
         envelopes = await drain(queue)
         assert len(envelopes) == 2
-        enriched = envelopes[0].event
+        enriched = envelopes[0].record
         assert enriched.text == 'hello'
         assert enriched.content_hash is not None
         assert enriched.sender_id == 'u1'
@@ -193,26 +193,26 @@ class TestRegistryMaintenance:
     async def test_deleted_unknown_message_routed_as_is(
         self, service: IngestService, queue: MemoryQueue
     ) -> None:
-        await service.ingest(make_event(kind=EventKind.MESSAGE_DELETED, text=None))
+        await service.ingest(make_record(kind=RecordKind.DELETED, text=None))
         envelopes = await drain(queue)
         assert len(envelopes) == 2
-        assert envelopes[0].event.text is None
+        assert envelopes[0].record.text is None
 
     async def test_deleted_own_fields_not_overwritten(
         self, service: IngestService, queue: MemoryQueue
     ) -> None:
         """Обогащение заполняет только отсутствующие поля события."""
-        await service.ingest(make_event(sender_id='u1', sender_name='Алиса'))
+        await service.ingest(make_record(sender_id='u1', sender_name='Алиса'))
         await drain(queue)
-        deleted = make_event(
-            kind=EventKind.MESSAGE_DELETED,
+        deleted = make_record(
+            kind=RecordKind.DELETED,
             text='снимок адаптера',
             sender_id='u1-from-event',
             sender_name='Алиса (из события)',
         )
         await service.ingest(deleted)
         envelopes = await drain(queue)
-        enriched = envelopes[0].event
+        enriched = envelopes[0].record
         assert enriched.text == 'снимок адаптера'
         assert enriched.content_hash == deleted.content_hash
         assert enriched.sender_id == 'u1-from-event'
@@ -226,8 +226,8 @@ class TestRoutingAndFanOut:
         queue: MemoryQueue,
         analytics: MemoryAnalytics,
     ) -> None:
-        foreign = make_address(chat_id='-100777')
-        event = make_event(source=foreign)
+        foreign = make_endpoint(address='-100777')
+        event = make_record(source=foreign)
         await service.ingest(event)
         assert (await queue.depth()).pending == 0
         assert await kinds(analytics) == ['unrouted']
@@ -236,22 +236,22 @@ class TestRoutingAndFanOut:
         self, service: IngestService, queue: MemoryQueue
     ) -> None:
         """§6.1 шаг 4: отдельный QueueEnvelope на каждый пайплайн."""
-        event = make_event()
+        event = make_record()
         await service.ingest(event)
         envelopes = await drain(queue)
         assert sorted(env.pipeline for env in envelopes) == ['audit', 'digest']
-        assert all(env.event.uid == event.uid for env in envelopes)
+        assert all(env.record.uid == event.uid for env in envelopes)
         assert all(env.attempt == 0 for env in envelopes)
         assert all(env.not_before is None for env in envelopes)
 
     async def test_ingested_recorded(
         self, service: IngestService, analytics: MemoryAnalytics
     ) -> None:
-        event = make_event()
+        event = make_record()
         await service.ingest(event)
         recorded = await analytics.recent(kind='ingested')
         assert len(recorded) == 1
-        assert recorded[0].event_uid == event.uid
+        assert recorded[0].record_uid == event.uid
         assert recorded[0].payload == {'pipelines': ['audit', 'digest']}
 
 
@@ -269,13 +269,13 @@ class TestCrashSafety:
             [
                 RouteSpec(
                     pipeline='digest',
-                    events=frozenset(EventKind),
-                    sources=(make_address(),),
+                    events=frozenset(RecordKind),
+                    sources=(make_endpoint(),),
                 ),
                 RouteSpec(
                     pipeline='audit',
-                    events=frozenset(EventKind),
-                    sources=(make_address(),),
+                    events=frozenset(RecordKind),
+                    sources=(make_endpoint(),),
                 ),
             ]
         )
@@ -297,10 +297,11 @@ class TestCrashSafety:
 
         class ExplodingQueue(MemoryQueue):
             async def put(self, item: QueueEnvelope) -> None:
-                raise RuntimeError('имитация падения до записи в очередь')
+                msg = 'имитация падения до записи в очередь'
+                raise RuntimeError(msg)
 
         service = self.make_service(ExplodingQueue(), dedup, registry, analytics)
-        event = make_event()
+        event = make_record()
         with pytest.raises(RuntimeError):
             await service.ingest(event)
         assert await dedup.seen(event.dedup_key) is False
@@ -321,12 +322,13 @@ class TestCrashSafety:
             async def put(self, item: QueueEnvelope) -> None:
                 self.puts += 1
                 if self.puts == 2:  # второй пайплайн первого захода
-                    raise RuntimeError('имитация kill посреди fan-out')
+                    msg = 'имитация kill посреди fan-out'
+                    raise RuntimeError(msg)
                 await super().put(item)
 
         queue = PartialFanoutQueue()
         service = self.make_service(queue, dedup, registry, analytics)
-        event = make_event()
+        event = make_record()
         with pytest.raises(RuntimeError):
             await service.ingest(event)
         assert (await queue.depth()).pending == 1  # частичный fan-out остался
@@ -345,7 +347,7 @@ class TestCrashSafety:
     ) -> None:
         """Unrouted-ветка тоже оставляет отметку: повтор — «duplicate»."""
         service = self.make_service(MemoryQueue(), dedup, registry, analytics)
-        foreign = make_address(chat_id='-100777')
-        await service.ingest(make_event(source=foreign))
-        await service.ingest(make_event(source=foreign, uid=uuid4()))
+        foreign = make_endpoint(address='-100777')
+        await service.ingest(make_record(source=foreign))
+        await service.ingest(make_record(source=foreign, uid=uuid4()))
         assert await kinds(analytics) == ['duplicate', 'unrouted']

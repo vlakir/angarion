@@ -38,9 +38,9 @@ from angarion.application.processors import FunctionProcessor
 from angarion.bootstrap import LoadedPlugins, build_app
 from angarion.config import AngarionSettings, EndpointConfig, PipelineConfig
 from angarion.domain.models import (
-    EventKind,
-    OutboundMessage,
+    OutboundRecord,
     ProcessingResult,
+    RecordKind,
     Verdict,
 )
 from angarion.domain.plugin import AdapterPlugin
@@ -53,15 +53,15 @@ if TYPE_CHECKING:
     from angarion.adapters.telegram.client import RawDeletionHandler, RawMessageHandler
     from angarion.bootstrap import AdapterDeps, AngarionApp
     from angarion.domain.models import (
-        InboundEvent,
         PipelineContextData,
         ProcessorServices,
+        Record,
     )
 
 ACCOUNT = 'main'
 CHAT = '-100555'  # один чат: одновременно источник и цель
 PEER = -100555
-ALL_KINDS = frozenset({EventKind.MESSAGE_NEW, EventKind.MESSAGE_EDITED})
+ALL_KINDS = frozenset({RecordKind.NEW, RecordKind.EDITED})
 
 
 class _EchoingClient:
@@ -108,7 +108,7 @@ class _EchoingClient:
         # вернул receipt и guard пометил dedup. Эмулируем эту задержку,
         # иначе тест проверял бы недостижимое в бою синхронное эхо.
         echo = RawTelegramMessage(
-            kind=EventKind.MESSAGE_NEW,
+            kind=RecordKind.NEW,
             chat_id=PEER,
             message_id=message_id,
             text=text,
@@ -162,11 +162,11 @@ class _Pool:
 
 
 async def _mirror(
-    event: InboundEvent, ctx: PipelineContextData, svc: ProcessorServices
+    event: Record, ctx: PipelineContextData, svc: ProcessorServices
 ) -> ProcessingResult:
     """Доставляет текст входящего в цель (которая = источник)."""
     outbound = [
-        OutboundMessage(
+        OutboundRecord(
             idempotency_key=svc.make_idempotency_key(event, spec.target, n),
             target=spec.target,
             send_via=spec.send_via,
@@ -188,7 +188,7 @@ def _settings(db_path: Path) -> AngarionSettings:
         {
             'accounts': {
                 ACCOUNT: {
-                    'messenger': 'telegram',
+                    'transport': 'telegram',
                     'api_id': 12345,
                     'api_hash': 'deadbeefcafe',
                 }
@@ -205,8 +205,8 @@ def _settings(db_path: Path) -> AngarionSettings:
                 'self_mirror': PipelineConfig(
                     processor='mirror',
                     events=ALL_KINDS,
-                    sources=(EndpointConfig(account=ACCOUNT, chat_id=CHAT),),
-                    targets=(EndpointConfig(account=ACCOUNT, chat_id=CHAT),),
+                    sources=(EndpointConfig(account=ACCOUNT, address=CHAT),),
+                    targets=(EndpointConfig(account=ACCOUNT, address=CHAT),),
                 )
             },
         }
@@ -266,7 +266,7 @@ async def _wait_until(condition: object, timeout: float = 2.0) -> None:
 
 def _raw(message_id: int, text: str) -> RawTelegramMessage:
     return RawTelegramMessage(
-        kind=EventKind.MESSAGE_NEW,
+        kind=RecordKind.NEW,
         chat_id=PEER,
         message_id=message_id,
         text=text,

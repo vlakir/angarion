@@ -19,10 +19,10 @@ from angarion.adapters.telegram.media import enrich_with_downloads
 from angarion.config import MediaConfig
 from angarion.domain.models import (
     AccountRef,
-    Address,
-    EventKind,
-    InboundEvent,
+    Endpoint,
     MediaRef,
+    Record,
+    RecordKind,
 )
 from angarion.log import get_logger
 
@@ -32,14 +32,14 @@ NOW = datetime(2026, 6, 13, 12, 0, tzinfo=UTC)
 LOG = get_logger('test')
 
 
-def _event(*media: MediaRef) -> InboundEvent:
-    return InboundEvent(
+def _event(*media: MediaRef) -> Record:
+    return Record(
         uid=uuid4(),
-        kind=EventKind.MESSAGE_NEW,
+        kind=RecordKind.NEW,
         dedup_key='dk',
         origin='live',
-        source=Address(messenger='telegram', chat_id='-100123'),
-        received_by=AccountRef(messenger='telegram', account_id='main'),
+        source=Endpoint(transport='telegram', address='-100123'),
+        received_by=AccountRef(transport='telegram', account_id='main'),
         external_id='42',
         media=list(media),
         event_at=NOW,

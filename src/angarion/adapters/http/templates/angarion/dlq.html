@@ -17,7 +17,7 @@
     {% for letter in letters %}
     <tr>
       <td><code>{{ letter.envelope.pipeline }}</code></td>
-      <td><code>{{ letter.envelope.event.uid }}</code></td>
+      <td><code>{{ letter.envelope.record.uid }}</code></td>
       <td>{{ letter.error }}</td>
       <td>{{ letter.failed_at }}</td>
       <td>

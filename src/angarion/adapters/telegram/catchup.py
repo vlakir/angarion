@@ -4,7 +4,7 @@
 
 Чистая логика над портом ``TelegramClientPort`` (``fetch_history``) и
 доменными портами реестра/курсоров: тестируется на fake-клиенте без сети.
-Эмитит ``InboundEvent`` (``origin='catchup'``) в тот же ``IngestService``,
+Эмитит ``Record`` (``origin='catchup'``) в тот же ``IngestService``,
 что и live — дедуп гасит пересечения (§9.3.5).
 
 Ключевые решения (§9.3.4, W-truncation):
@@ -29,13 +29,13 @@ from uuid import uuid4
 
 from angarion.adapters.registry_rules import id_at_least
 from angarion.adapters.telegram.client import (
-    MESSENGER,
+    TRANSPORT,
     RawTelegramDeletion,
 )
 from angarion.adapters.telegram.mapping import map_deletion, map_message, raw_media_hash
 from angarion.adapters.telegram.media import enrich_with_downloads
 from angarion.domain.keys import make_source_key, normalize_and_hash
-from angarion.domain.models import AnalyticsEvent, EventKind, SourceCursor
+from angarion.domain.models import AnalyticsEvent, RecordKind, SourceCursor
 
 if TYPE_CHECKING:
     from datetime import timedelta
@@ -96,7 +96,7 @@ async def run_catchup(
     ``catchup_truncated`` для него — шум (truncation-guard при этом всё
     равно не даёт ложных удалений ниже окна — §9.3.4).
     """
-    source_key = make_source_key(MESSENGER, account_id, str(chat_id), thread_id)
+    source_key = make_source_key(TRANSPORT, account_id, str(chat_id), thread_id)
     cursor = await cursors.load(source_key)
     last_seen = _last_seen(cursor)
     known = await registry.known_ids(source_key, '')
@@ -198,7 +198,7 @@ async def _emit_messages(
     """NEW (id > курсора, неизвестно) / EDITED (известно, хэш расходится)."""
     for raw in reversed(fetched):  # старые первыми — естественный порядок
         msg_source_key = make_source_key(
-            MESSENGER,
+            TRANSPORT,
             account_id,
             str(raw.chat_id),
             str(raw.thread_id) if raw.thread_id is not None else None,
@@ -208,7 +208,7 @@ async def _emit_messages(
             new_hash = normalize_and_hash(raw.text) if raw.text is not None else None
             new_media_hash = raw_media_hash(raw)
             if record.content_hash != new_hash or record.media_hash != new_media_hash:
-                edited = raw.model_copy(update={'kind': EventKind.MESSAGE_EDITED})
+                edited = raw.model_copy(update={'kind': RecordKind.EDITED})
                 event = map_message(edited, account_id, origin='catchup')
                 if event is not None:
                     event = await enrich_with_downloads(

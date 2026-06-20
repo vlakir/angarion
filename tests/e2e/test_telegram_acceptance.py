@@ -13,15 +13,15 @@ telegram-плагин собирает настоящие ``TelegramListener``/`
 Сценарий целиком:
 
 1. **Live-работа.** Приходят два новых сообщения live → конвейер
-   доставляет два ``MESSAGE_NEW`` в цель.
+   доставляет два ``NEW`` в цель.
 2. **Простой.** ``app.stop()`` — процесс «выключен».
 3. **Правки/удаления при простое.** На «сервере» (история fake-клиента)
    за это время: одно сообщение отредактировано, одно удалено, одно
    новое опубликовано.
 4. **Рестарт.** Свежий ``build_app`` на **том же** sqlite-файле (реестр и
    курсоры переживают перезапуск): catch-up §9.3 сверяет историю с
-   реестром и эмитит ``MESSAGE_EDITED`` (с previous_text), ``MESSAGE_NEW``
-   и ``MESSAGE_DELETED`` (с восстановленным из реестра текстом) → все три
+   реестром и эмитит ``EDITED`` (с previous_text), ``NEW``
+   и ``DELETED`` (с восстановленным из реестра текстом) → все три
    доходят до цели.
 
 Суточный прогон (N4 спеки) — ручной, на личном тестовом аккаунте
@@ -55,12 +55,12 @@ from angarion.config import (
     PipelineConfig,
 )
 from angarion.domain.models import (
-    EventKind,
-    InboundEvent,
-    OutboundMessage,
+    OutboundRecord,
     PipelineContextData,
     ProcessingResult,
     ProcessorServices,
+    Record,
+    RecordKind,
     Verdict,
 )
 from angarion.domain.plugin import AdapterPlugin
@@ -87,7 +87,7 @@ SRC_CHAT = '-100123'  # источник; резолвится в одноимё
 DST_CHAT = '-100222'  # цель доставки
 SRC_PEER = -100123
 ALL_KINDS = frozenset(
-    {EventKind.MESSAGE_NEW, EventKind.MESSAGE_EDITED, EventKind.MESSAGE_DELETED}
+    {RecordKind.NEW, RecordKind.EDITED, RecordKind.DELETED}
 )
 
 
@@ -192,12 +192,12 @@ class _FakePool:
 
 
 async def annotate(
-    event: InboundEvent, ctx: PipelineContextData, svc: ProcessorServices
+    event: Record, ctx: PipelineContextData, svc: ProcessorServices
 ) -> ProcessingResult:
     """Свидетель обогащения: текст исходящего = kind|text|previous_text."""
     text = f'{event.kind}|{event.text}|{event.previous_text}'
     outbound = [
-        OutboundMessage(
+        OutboundRecord(
             idempotency_key=svc.make_idempotency_key(event, spec.target, n),
             target=spec.target,
             send_via=spec.send_via,
@@ -215,7 +215,7 @@ def sandbox_processors(monkeypatch: pytest.MonkeyPatch) -> None:
     processors.register(FunctionProcessor(name='annotate', fn=annotate))
 
 
-def _raw(message_id: int, text: str, *, kind: EventKind = EventKind.MESSAGE_NEW) -> RawTelegramMessage:
+def _raw(message_id: int, text: str, *, kind: RecordKind = RecordKind.NEW) -> RawTelegramMessage:
     return RawTelegramMessage(
         kind=kind,
         chat_id=SRC_PEER,
@@ -287,7 +287,7 @@ def _settings(db_path: Path) -> AngarionSettings:
         {
             'accounts': {
                 ACCOUNT: {
-                    'messenger': 'telegram',
+                    'transport': 'telegram',
                     'api_id': 12345,
                     'api_hash': 'deadbeefcafe',
                 }
@@ -304,8 +304,8 @@ def _settings(db_path: Path) -> AngarionSettings:
                 'mirror': PipelineConfig(
                     processor='annotate',
                     events=ALL_KINDS,
-                    sources=(EndpointConfig(account=ACCOUNT, chat_id=SRC_CHAT),),
-                    targets=(EndpointConfig(account=ACCOUNT, chat_id=DST_CHAT),),
+                    sources=(EndpointConfig(account=ACCOUNT, address=SRC_CHAT),),
+                    targets=(EndpointConfig(account=ACCOUNT, address=DST_CHAT),),
                 )
             },
         }
@@ -349,8 +349,8 @@ class TestTelegramAcceptance:
 
         live_texts = set(_delivered_texts(client))
         assert live_texts == {
-            'message_new|v1|None',
-            'message_new|will-be-deleted|None',
+            'new|v1|None',
+            'new|will-be-deleted|None',
         }
         before_restart = len(client.sent)
 
@@ -369,7 +369,7 @@ class TestTelegramAcceptance:
 
         catchup_texts = set(_delivered_texts(client)[before_restart:])
         assert catchup_texts == {
-            'message_edited|v2|v1',  # правка: previous_text из реестра
-            'message_new|fresh|None',  # новое за время простоя
-            'message_deleted|will-be-deleted|None',  # удаление: текст восстановлен
+            'edited|v2|v1',  # правка: previous_text из реестра
+            'new|fresh|None',  # новое за время простоя
+            'deleted|will-be-deleted|None',  # удаление: текст восстановлен
         }

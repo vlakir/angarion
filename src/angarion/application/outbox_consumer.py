@@ -8,7 +8,7 @@ Pipeline-процесс фоном опрашивает командный outbo
 (захват/пометка — ``UPDATE ... WHERE status=...``); исполнение здесь
 идемпотентно по построению (отправка/catch-up повторяемы).
 
-Виды команд v1: ``notify`` (отправка через ``MessageSinkPort``),
+Виды команд v1: ``notify`` (отправка через ``SinkPort``),
 ``catchup`` (ручной catch-up источника через инъецированный колбэк над
 listener'ами), ``restart_pipeline`` (взвести событие graceful-остановки
 процесса — супервизор поднимет, §3.2). Расширение — новый член
@@ -20,7 +20,7 @@ listener'ами), ``restart_pipeline`` (взвести событие graceful-�
 уведомление» (§12.7): сбой не влияет на регистрацию, она уже состоялась.
 
 Модуль без ``from __future__ import annotations``: pydantic-модель
-``OutboundMessage`` собирается из payload в runtime.
+``OutboundRecord`` собирается из payload в runtime.
 """
 
 import asyncio
@@ -35,10 +35,10 @@ from structlog.typing import FilteringBoundLogger
 from angarion.domain.models import (
     AnalyticsEvent,
     CommandKind,
-    OutboundMessage,
+    OutboundRecord,
     OutboxCommand,
 )
-from angarion.domain.ports import AnalyticsPort, CommandOutboxPort, MessageSinkPort
+from angarion.domain.ports import AnalyticsPort, CommandOutboxPort, SinkPort
 
 NOTIFY_FAILED: Final = 'notify_failed'
 """Вид события аналитики при сбое исполнения ``notify`` (§12.9)."""
@@ -60,7 +60,7 @@ class OutboxConsumer:
         self,
         *,
         command_outbox: CommandOutboxPort,
-        sink: MessageSinkPort,
+        sink: SinkPort,
         analytics: AnalyticsPort,
         catchup: CatchupFn,
         request_restart: RestartFn,
@@ -112,8 +112,8 @@ class OutboxConsumer:
     async def _execute(self, command: OutboxCommand) -> str | None:
         """Диспетчеризация по виду; возвращает короткий результат для аудита."""
         if command.kind is CommandKind.NOTIFY:
-            message = OutboundMessage.model_validate(command.payload['message'])
-            receipt = await self._sink.send(message)
+            record = OutboundRecord.model_validate(command.payload['record'])
+            receipt = await self._sink.send(record)
             return f'sent:{receipt.external_id}'
         if command.kind is CommandKind.CATCHUP:
             source_key = command.payload['source_key']

@@ -2,7 +2,7 @@
 MemoryListener (§12.4, plan 2.6): программная инжекция событий.
 
 Поведенчески — настоящий driving-адаптер: ``emit(raw)`` маппит сырое
-событие в ``InboundEvent`` публичными хелперами ключей (§7.2) и
+событие в ``Record`` публичными хелперами ключей (§7.2) и
 подаёт его в ``IngestService``.
 """
 
@@ -23,7 +23,7 @@ from angarion.application.ingest import IngestService
 from angarion.application.router import Router, RouteSpec
 from angarion.domain.errors import NotSupportedError
 from angarion.domain.keys import make_dedup_key, make_source_key, normalize_and_hash
-from angarion.domain.models import Address, EventKind
+from angarion.domain.models import Endpoint, RecordKind
 
 CHAT = '-100123'
 
@@ -36,8 +36,8 @@ def make_ingest() -> tuple[IngestService, MemoryQueue, MemoryAnalytics]:
         [
             RouteSpec(
                 pipeline='digest',
-                events=frozenset(EventKind),
-                sources=(Address(messenger='memory', chat_id=CHAT),),
+                events=frozenset(RecordKind),
+                sources=(Endpoint(transport='memory', address=CHAT),),
             )
         ]
     )
@@ -84,7 +84,7 @@ class TestEmit:
         listener, queue, _ = make_pipeline_env()
         event = await listener.emit(
             {
-                'chat_id': CHAT,
+                'address': CHAT,
                 'external_id': '42',
                 'text': 'hello\r\nworld',
                 'sender_id': 'u1',
@@ -93,40 +93,40 @@ class TestEmit:
         )
         source_key = make_source_key('memory', 'main', CHAT)
         content_hash = normalize_and_hash('hello\r\nworld')
-        assert event.kind is EventKind.MESSAGE_NEW
+        assert event.kind is RecordKind.NEW
         assert event.origin == 'live'
         assert event.dedup_key == make_dedup_key(
-            EventKind.MESSAGE_NEW, source_key, '42', content_hash
+            RecordKind.NEW, source_key, '42', content_hash
         )
         assert event.content_hash == content_hash
-        assert event.source == Address(messenger='memory', chat_id=CHAT)
-        assert event.received_by.messenger == 'memory'
+        assert event.source == Endpoint(transport='memory', address=CHAT)
+        assert event.received_by.transport == 'memory'
         assert event.received_by.account_id == 'main'
         assert event.sender_name == 'Alice'
-        assert event.raw['chat_id'] == CHAT
+        assert event.raw['address'] == CHAT
         assert event.received_at.tzinfo is not None
         item = await queue.get()
-        assert item.envelope.event == event
+        assert item.envelope.record == event
 
     async def test_emit_edited_uses_content_hash_in_dedup_key(self) -> None:
         listener, _, _ = make_pipeline_env()
         event = await listener.emit(
             {
-                'kind': 'message_edited',
-                'chat_id': CHAT,
+                'kind': 'edited',
+                'address': CHAT,
                 'external_id': '42',
                 'text': 'v2',
             }
         )
-        assert event.kind is EventKind.MESSAGE_EDITED
+        assert event.kind is RecordKind.EDITED
         assert event.dedup_key.endswith(f':edit:{normalize_and_hash("v2")}')
 
     async def test_emit_deleted_without_text(self) -> None:
         listener, _, _ = make_pipeline_env()
         event = await listener.emit(
-            {'kind': 'message_deleted', 'chat_id': CHAT, 'external_id': '42'}
+            {'kind': 'deleted', 'address': CHAT, 'external_id': '42'}
         )
-        assert event.kind is EventKind.MESSAGE_DELETED
+        assert event.kind is RecordKind.DELETED
         assert event.text is None
         assert event.content_hash is None
         assert event.dedup_key.endswith(':del')
@@ -137,7 +137,7 @@ class TestEmit:
         event = await listener.emit(
             {
                 'account': 'backup',
-                'chat_id': CHAT,
+                'address': CHAT,
                 'thread_id': '7',
                 'external_id': '43',
                 'text': 'reply',
@@ -157,12 +157,12 @@ class TestEmit:
         listener, _, _ = make_pipeline_env()
         with pytest.raises(ValueError, match='аккаунт'):
             await listener.emit(
-                {'account': 'ghost', 'chat_id': CHAT, 'external_id': '1', 'text': 'x'}
+                {'account': 'ghost', 'address': CHAT, 'external_id': '1', 'text': 'x'}
             )
 
     async def test_duplicate_emit_is_deduplicated_by_ingest(self) -> None:
         listener, queue, analytics = make_pipeline_env()
-        raw = {'chat_id': CHAT, 'external_id': '42', 'text': 'same'}
+        raw = {'address': CHAT, 'external_id': '42', 'text': 'same'}
         await listener.emit(raw)
         await listener.emit(raw)
         depth = await queue.depth()

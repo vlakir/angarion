@@ -1,4 +1,4 @@
-"""Маппинг сырых событий Telethon → InboundEvent (M3, фаза 2)."""
+"""Маппинг сырых событий Telethon → Record (M3, фаза 2)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from angarion.domain.keys import (
     make_source_key,
     normalize_and_hash,
 )
-from angarion.domain.models import EventKind
+from angarion.domain.models import RecordKind
 
 ACCOUNT = 'main'
 SOURCE_KEY = make_source_key('telegram', ACCOUNT, '-100123')
@@ -21,10 +21,10 @@ SOURCE_KEY = make_source_key('telegram', ACCOUNT, '-100123')
 def test_new_message_maps_to_inbound() -> None:
     event = map_message(raw_message(), ACCOUNT)
     assert event is not None
-    assert event.kind is EventKind.MESSAGE_NEW
+    assert event.kind is RecordKind.NEW
     assert event.origin == 'live'
-    assert event.source.messenger == 'telegram'
-    assert event.source.chat_id == '-100123'
+    assert event.source.transport == 'telegram'
+    assert event.source.address == '-100123'
     assert event.source.thread_id is None
     assert event.received_by.account_id == ACCOUNT
     assert event.external_id == '42'
@@ -33,16 +33,16 @@ def test_new_message_maps_to_inbound() -> None:
     assert event.text == 'привет'
     assert event.content_hash == normalize_and_hash('привет')
     assert event.dedup_key == make_dedup_key(
-        EventKind.MESSAGE_NEW, SOURCE_KEY, '42', event.content_hash
+        RecordKind.NEW, SOURCE_KEY, '42', event.content_hash
     )
 
 
 def test_edited_message_dedup_includes_hash() -> None:
-    event = map_message(raw_message(kind=EventKind.MESSAGE_EDITED, text='ред'), ACCOUNT)
+    event = map_message(raw_message(kind=RecordKind.EDITED, text='ред'), ACCOUNT)
     assert event is not None
-    assert event.kind is EventKind.MESSAGE_EDITED
+    assert event.kind is RecordKind.EDITED
     assert event.dedup_key == make_dedup_key(
-        EventKind.MESSAGE_EDITED, SOURCE_KEY, '42', normalize_and_hash('ред')
+        RecordKind.EDITED, SOURCE_KEY, '42', normalize_and_hash('ред')
     )
 
 
@@ -53,7 +53,7 @@ def test_service_message_is_filtered() -> None:
 def test_reply_sets_reply_to_external_id() -> None:
     event = map_message(raw_message(reply_to_message_id=10), ACCOUNT)
     assert event is not None
-    assert event.kind is EventKind.MESSAGE_NEW
+    assert event.kind is RecordKind.NEW
     assert event.reply_to_external_id == '10'
 
 
@@ -108,10 +108,10 @@ def test_media_only_edited_does_not_crash() -> None:
     в make_dedup_key (раньше: content_hash обязателен для EDITED)."""
     media = (RawMedia(kind='photo', size=2048),)
     event = map_message(
-        raw_message(kind=EventKind.MESSAGE_EDITED, text=None, media=media), ACCOUNT
+        raw_message(kind=RecordKind.EDITED, text=None, media=media), ACCOUNT
     )
     assert event is not None
-    assert event.kind is EventKind.MESSAGE_EDITED
+    assert event.kind is RecordKind.EDITED
     assert ':edit:media:' in event.dedup_key
 
 
@@ -140,11 +140,11 @@ def test_deletion_maps_each_id() -> None:
     events = map_deletion(raw_deletion(message_ids=(10, 11)), ACCOUNT)
     assert [e.external_id for e in events] == ['10', '11']
     for event in events:
-        assert event.kind is EventKind.MESSAGE_DELETED
-        assert event.source.chat_id == '-100123'
+        assert event.kind is RecordKind.DELETED
+        assert event.source.address == '-100123'
         assert event.source.thread_id is None
         assert event.dedup_key == make_dedup_key(
-            EventKind.MESSAGE_DELETED, SOURCE_KEY, event.external_id
+            RecordKind.DELETED, SOURCE_KEY, event.external_id
         )
 
 

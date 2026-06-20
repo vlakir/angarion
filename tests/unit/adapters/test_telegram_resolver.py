@@ -13,8 +13,8 @@ from angarion.log import get_logger
 pytestmark = pytest.mark.asyncio
 
 
-def _ep(account: str, chat_id: str) -> EndpointConfig:
-    return EndpointConfig(account=account, chat_id=chat_id)
+def _ep(account: str, address: str) -> EndpointConfig:
+    return EndpointConfig(account=account, address=address)
 
 
 async def _resolve(clients, sources):  # type: ignore[no-untyped-def]
@@ -52,7 +52,7 @@ async def test_account_without_sources_is_empty() -> None:
 
 async def test_thread_id_carried_into_source_key() -> None:
     client = FakeTelegramClient(peer_ids={'@grp': -100123})
-    ep = EndpointConfig(account='main', chat_id='@grp', thread_id='55')
+    ep = EndpointConfig(account='main', address='@grp', thread_id='55')
     resolved, _ = await _resolve({'main': client}, [ep])
     assert resolved[0].thread_id == '55'
     assert resolved[0].source_key == 'telegram:main:-100123:55'

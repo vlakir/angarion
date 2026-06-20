@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from angarion.adapters.telegram.resolver import ResolvedSource
     from angarion.application.ingest import IngestService
     from angarion.config import EndpointConfig
-    from angarion.domain.models import InboundEvent
+    from angarion.domain.models import Record
     from angarion.domain.ports import (
         AnalyticsPort,
         CursorStorePort,
@@ -250,9 +250,9 @@ class TelegramListener:
         async def handle(raw: RawTelegramMessage) -> None:
             if str(raw.chat_id) not in self._chat_ids.get(account_id, set()):
                 return
-            event = map_message(raw, account_id)
-            if event is not None:
-                await self._buffer.put(event)
+            record = map_message(raw, account_id)
+            if record is not None:
+                await self._buffer.put(record)
 
         return handle
 
@@ -261,8 +261,8 @@ class TelegramListener:
             known = self._chat_ids.get(account_id, set())
             if raw.chat_id is None or str(raw.chat_id) not in known:
                 return
-            for event in map_deletion(raw, account_id):
-                await self._buffer.put(event)
+            for record in map_deletion(raw, account_id):
+                await self._buffer.put(record)
 
         return handle
 
@@ -270,11 +270,11 @@ class TelegramListener:
         while True:
             await self._emit(await self._buffer.get())
 
-    async def _emit(self, event: InboundEvent) -> None:
+    async def _emit(self, record: Record) -> None:
         """Скачать медиа по политике (A3) → ingest (live и дослив буфера)."""
-        client = self._clients.get(event.received_by.account_id)
+        client = self._clients.get(record.received_by.account_id)
         if client is not None:
-            event = await enrich_with_downloads(
-                event, client=client, policy=self._media_policy, log=self._log
+            record = await enrich_with_downloads(
+                record, client=client, policy=self._media_policy, log=self._log
             )
-        await self._ingest.ingest(event)
+        await self._ingest.ingest(record)

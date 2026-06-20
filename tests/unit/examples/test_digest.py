@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from app_factories import make_context, make_event, make_services, make_target
+from app_factories import make_context, make_record, make_services, make_target
 from processor import DIGEST, DigestProcessor, DigestState
 
 from angarion.application.llm import LlmHttpResult, LlmTransportError
@@ -109,7 +109,7 @@ async def feed(
     """Скормить процессору ``count`` различных событий (разные external_id)."""
     for i in range(start, start + count):
         ctx = make_context(settings=settings)
-        await proc.process(make_event(external_id=str(i), text=f'msg{i}'), ctx, svc)
+        await proc.process(make_record(external_id=str(i), text=f'msg{i}'), ctx, svc)
 
 
 class TestDigestProcessor:
@@ -121,7 +121,7 @@ class TestDigestProcessor:
         proc, fake = make_proc()
         svc = make_services()
         ctx = make_context(settings=BASE_SETTINGS)
-        result = await proc.process(make_event(external_id='1', text='a'), ctx, svc)
+        result = await proc.process(make_record(external_id='1', text='a'), ctx, svc)
         assert result.verdict is Verdict.DROP
         assert result.outbound == []
         assert fake.calls == []  # LLM не дёргается до сброса
@@ -134,7 +134,7 @@ class TestDigestProcessor:
         targets = [make_target('-100111'), make_target('-100222')]
         await feed(proc, svc, count=2, settings=BASE_SETTINGS)
         ctx = make_context(targets=targets, settings=BASE_SETTINGS)
-        result = await proc.process(make_event(external_id='2', text='c'), ctx, svc)
+        result = await proc.process(make_record(external_id='2', text='c'), ctx, svc)
         assert result.verdict is Verdict.DELIVER
         assert [m.text for m in result.outbound] == ['СВОДКА', 'СВОДКА']
         assert len(fake.calls) == 1
@@ -152,7 +152,7 @@ class TestDigestProcessor:
         proc, _ = make_proc()
         svc = make_services()
         ctx = make_context(settings=BASE_SETTINGS)
-        event = make_event(external_id='1', text='a')
+        event = make_record(external_id='1', text='a')
         first = await proc.process(event, ctx, svc)
         second = await proc.process(event, ctx, svc)  # повторная доставка
         assert first.verdict is Verdict.DROP
@@ -166,7 +166,7 @@ class TestDigestProcessor:
         svc = make_services()
         await feed(proc, svc, count=2, settings=BASE_SETTINGS)
         ctx = make_context(settings=BASE_SETTINGS)
-        trigger = make_event(external_id='2', text='c')
+        trigger = make_record(external_id='2', text='c')
         flushed = await proc.process(trigger, ctx, svc)
         again = await proc.process(trigger, ctx, svc)  # повтор триггера
         assert flushed.verdict is Verdict.DELIVER
@@ -182,11 +182,11 @@ class TestDigestProcessor:
         settings = {**BASE_SETTINGS, 'n': 100, 'max_age_s': 60.0}
         ctx = make_context(settings=settings)
         first = await proc.process(
-            make_event(external_id='1', text='a'), ctx, svc
+            make_record(external_id='1', text='a'), ctx, svc
         )
         assert first.verdict is Verdict.DROP  # батч молод — копим
         clock.advance(120)  # батчу теперь 120с > max_age
-        result = await proc.process(make_event(external_id='2', text='b'), ctx, svc)
+        result = await proc.process(make_record(external_id='2', text='b'), ctx, svc)
         assert result.verdict is Verdict.DELIVER
         assert len(fake.calls) == 1
 
@@ -205,7 +205,7 @@ class TestDigestProcessor:
         svc = make_services()
         ctx = make_context(settings=BASE_SETTINGS)
         result = await proc.process(
-            make_event(external_id='1', text=None), ctx, svc
+            make_record(external_id='1', text=None), ctx, svc
         )
         assert result.verdict is Verdict.DROP
         assert fake.calls == []
@@ -216,7 +216,7 @@ class TestDigestProcessor:
         svc = make_services()
         await feed(proc, svc, count=2, settings=BASE_SETTINGS)
         ctx = make_context(settings=BASE_SETTINGS)
-        result = await proc.process(make_event(external_id='2', text='c'), ctx, svc)
+        result = await proc.process(make_record(external_id='2', text='c'), ctx, svc)
         assert result.verdict is Verdict.DELIVER
         assert 'msg0' in result.outbound[0].text  # сырой батч как fallback
 
@@ -227,7 +227,7 @@ class TestDigestProcessor:
         await feed(proc, svc, count=2, settings=BASE_SETTINGS)
         ctx = make_context(settings=BASE_SETTINGS)
         with pytest.raises(ProcessingError):
-            await proc.process(make_event(external_id='2', text='c'), ctx, svc)
+            await proc.process(make_record(external_id='2', text='c'), ctx, svc)
         # накопление уже персистировано — на повторе не задвоится
         state = DigestState.model_validate_json(await svc.state.get('state'))
         assert len(state.items) == 3
@@ -238,13 +238,13 @@ class TestDigestProcessor:
         await feed(proc, svc, count=2, settings=BASE_SETTINGS)
         ctx = make_context(settings=BASE_SETTINGS)
         with pytest.raises(ProcessingError):
-            await proc.process(make_event(external_id='2', text='c'), ctx, svc)
+            await proc.process(make_record(external_id='2', text='c'), ctx, svc)
 
     async def test_invalid_config_raises_config_error(self) -> None:
         proc, _ = make_proc()
         ctx = make_context(settings={'n': 3})  # нет base_url/model/промптов
         with pytest.raises(ConfigError, match='processor_config'):
-            await proc.process(make_event(), ctx, make_services())
+            await proc.process(make_record(), ctx, make_services())
 
     async def test_api_key_env_missing_raises(
         self, monkeypatch: pytest.MonkeyPatch
@@ -255,7 +255,7 @@ class TestDigestProcessor:
         settings = {**BASE_SETTINGS, 'n': 1, 'api_key_env': 'ANGARION_TEST_DIGEST_KEY'}
         ctx = make_context(settings=settings)
         with pytest.raises(ConfigError, match='api_key_env'):
-            await proc.process(make_event(external_id='1', text='a'), ctx, svc)
+            await proc.process(make_record(external_id='1', text='a'), ctx, svc)
 
     async def test_api_key_env_read_from_environment(
         self, monkeypatch: pytest.MonkeyPatch
@@ -265,5 +265,5 @@ class TestDigestProcessor:
         svc = make_services()
         settings = {**BASE_SETTINGS, 'n': 1, 'api_key_env': 'ANGARION_TEST_DIGEST_KEY'}
         ctx = make_context(settings=settings)
-        await proc.process(make_event(external_id='1', text='a'), ctx, svc)
+        await proc.process(make_record(external_id='1', text='a'), ctx, svc)
         assert fake.calls[0]['api_key'] == 'sk-secret'

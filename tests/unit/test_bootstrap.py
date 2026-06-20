@@ -40,9 +40,9 @@ from angarion.domain.capabilities import AdapterCapabilities
 from angarion.domain.errors import ConfigError, DeliveryError
 from angarion.domain.models import (
     AccountRef,
-    Address,
-    EventKind,
-    OutboundMessage,
+    Endpoint,
+    OutboundRecord,
+    RecordKind,
 )
 from angarion.domain.plugin import AdapterPlugin
 
@@ -53,11 +53,11 @@ SRC_CHAT = '-100111'
 DST_CHAT = '-100222'
 
 
-def make_outbound() -> OutboundMessage:
-    return OutboundMessage(
+def make_outbound() -> OutboundRecord:
+    return OutboundRecord(
         idempotency_key='k->digest:-100999:0',
-        target=Address(messenger='memory', chat_id='-100999'),
-        send_via=AccountRef(messenger='memory', account_id='main'),
+        target=Endpoint(transport='memory', address='-100999'),
+        send_via=AccountRef(transport='memory', account_id='main'),
         text='hi',
     )
 
@@ -71,7 +71,7 @@ def make_settings(
     fields: dict[str, object] = {
         'accounts': accounts
         if accounts is not None
-        else {'main': AccountConfig(messenger='memory')},
+        else {'main': AccountConfig(transport='memory')},
         'worker': WorkerConfig(poll_interval=0.01),
         'pipelines': pipelines
         if pipelines is not None
@@ -84,9 +84,9 @@ def make_settings(
 def make_pipeline(**overrides: object) -> PipelineConfig:
     fields: dict[str, object] = {
         'processor': 'passthrough',
-        'events': frozenset({EventKind.MESSAGE_NEW}),
-        'sources': (EndpointConfig(account='main', chat_id=SRC_CHAT),),
-        'targets': (EndpointConfig(account='main', chat_id=DST_CHAT),),
+        'events': frozenset({RecordKind.NEW}),
+        'sources': (EndpointConfig(account='main', address=SRC_CHAT),),
+        'targets': (EndpointConfig(account='main', address=DST_CHAT),),
     }
     fields.update(overrides)
     return PipelineConfig.model_validate(fields)
@@ -95,7 +95,7 @@ def make_pipeline(**overrides: object) -> PipelineConfig:
 class StubAccountConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra='allow')
 
-    messenger: str
+    transport: str
 
 
 class StubListener:
@@ -136,7 +136,7 @@ def stub_plugins(**caps_overrides: object) -> LoadedPlugins:
 
 def stub_settings(pipeline: PipelineConfig) -> AngarionSettings:
     return make_settings(
-        accounts={'main': AccountConfig(messenger='stub')},
+        accounts={'main': AccountConfig(transport='stub')},
         pipelines={'digest': pipeline},
     )
 
@@ -260,14 +260,14 @@ class TestPluginLoading:
 class TestAccountValidation:
     def test_unknown_messenger_fails_with_known_list(self) -> None:
         settings = make_settings(
-            accounts={'main': AccountConfig(messenger='ghost')}, pipelines={}
+            accounts={'main': AccountConfig(transport='ghost')}, pipelines={}
         )
         with pytest.raises(ConfigError, match="ghost.*memory"):
             build_app(settings)
 
     def test_account_section_validated_by_plugin_model(self) -> None:
         """Лишний ключ для memory-аккаунта (extra='forbid' у плагина)."""
-        bad = AccountConfig.model_validate({'messenger': 'memory', 'token': 'x'})
+        bad = AccountConfig.model_validate({'transport': 'memory', 'token': 'x'})
         settings = make_settings(accounts={'main': bad}, pipelines={})
         with pytest.raises(ConfigError, match='main'):
             build_app(settings)
@@ -295,7 +295,7 @@ class TestReferentialIntegrity:
 
     def test_source_references_unknown_account(self) -> None:
         pipeline = make_pipeline(
-            sources=(EndpointConfig(account='ghost', chat_id=SRC_CHAT),)
+            sources=(EndpointConfig(account='ghost', address=SRC_CHAT),)
         )
         settings = make_settings(pipelines={'digest': pipeline})
         with pytest.raises(ConfigError, match='ghost'):
@@ -303,7 +303,7 @@ class TestReferentialIntegrity:
 
     def test_target_references_unknown_account(self) -> None:
         pipeline = make_pipeline(
-            targets=(EndpointConfig(account='ghost', chat_id=DST_CHAT),)
+            targets=(EndpointConfig(account='ghost', address=DST_CHAT),)
         )
         settings = make_settings(pipelines={'digest': pipeline})
         with pytest.raises(ConfigError, match='ghost'):
@@ -351,7 +351,7 @@ class TestCapabilitiesMatrix:
 
     def test_edited_subscription_without_edit_events_fails(self) -> None:
         pipeline = make_pipeline(
-            events=frozenset({EventKind.MESSAGE_EDITED}),
+            events=frozenset({RecordKind.EDITED}),
         )
         with pytest.raises(ConfigError, match='edit_events'):
             build_app(
@@ -359,7 +359,7 @@ class TestCapabilitiesMatrix:
             )
 
     def test_deleted_subscription_without_delete_events_fails(self) -> None:
-        pipeline = make_pipeline(events=frozenset({EventKind.MESSAGE_DELETED}))
+        pipeline = make_pipeline(events=frozenset({RecordKind.DELETED}))
         with pytest.raises(ConfigError, match='delete_events'):
             build_app(
                 stub_settings(pipeline), plugins=stub_plugins(delete_events=False)
@@ -368,7 +368,7 @@ class TestCapabilitiesMatrix:
     def test_thread_id_without_threads_fails(self) -> None:
         pipeline = make_pipeline(
             sources=(
-                EndpointConfig(account='main', chat_id=SRC_CHAT, thread_id='7'),
+                EndpointConfig(account='main', address=SRC_CHAT, thread_id='7'),
             )
         )
         with pytest.raises(ConfigError, match='thread'):
@@ -377,7 +377,7 @@ class TestCapabilitiesMatrix:
     def test_thread_id_in_target_without_threads_fails(self) -> None:
         pipeline = make_pipeline(
             targets=(
-                EndpointConfig(account='main', chat_id=DST_CHAT, thread_id='7'),
+                EndpointConfig(account='main', address=DST_CHAT, thread_id='7'),
             )
         )
         with pytest.raises(ConfigError, match='thread'):
@@ -419,7 +419,7 @@ class TestPluginFactoryContracts:
         broken = plugins.adapters['stub'].model_copy(
             update={'make_sender': lambda *_args: object()}
         )
-        with pytest.raises(ConfigError, match='MessageSinkPort'):
+        with pytest.raises(ConfigError, match='SinkPort'):
             build_app(
                 stub_settings(make_pipeline()),
                 plugins=plugins.model_copy(update={'adapters': {'stub': broken}}),
@@ -441,7 +441,7 @@ class TestAppAssembly:
             listener = app.listeners[0]
             assert isinstance(listener, MemoryListener)
             await listener.emit(
-                {'chat_id': SRC_CHAT, 'external_id': '1', 'text': 'hi'}
+                {'address': SRC_CHAT, 'external_id': '1', 'text': 'hi'}
             )
             sink = app.sinks['memory']
             assert isinstance(sink, MemorySink)
@@ -450,7 +450,7 @@ class TestAppAssembly:
                     break
                 await asyncio.sleep(0.01)
             assert sink.sent[0].text == 'hi'
-            assert sink.sent[0].target.chat_id == DST_CHAT
+            assert sink.sent[0].target.address == DST_CHAT
         finally:
             await app.stop()
 

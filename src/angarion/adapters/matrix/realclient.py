@@ -54,7 +54,7 @@ from angarion.adapters.matrix.client import (
 )
 from angarion.adapters.matrix.session import MatrixSession
 from angarion.domain.errors import ConfigError
-from angarion.domain.models import EventKind
+from angarion.domain.models import RecordKind
 
 if TYPE_CHECKING:
     from angarion.adapters.matrix.client import (
@@ -145,7 +145,7 @@ def to_raw_message(
     Перевод ``RoomMessageText``/``RoomMessageMedia`` → ``RawMatrixMessage``.
 
     Правка (``m.relates_to.rel_type == "m.replace"``) раскрывается в
-    ``kind=MESSAGE_EDITED`` с ``event_id`` оригинала и текстом из
+    ``kind=EDITED`` с ``event_id`` оригинала и текстом из
     ``m.new_content`` — ``external_id`` совпадает с записью реестра.
     Тред (``m.thread``) → ``thread_id``; reply → ``reply_to_event_id``.
     Медиа-сообщение несёт ``mxc``-ссылку, текст у него ``None``.
@@ -161,7 +161,7 @@ def to_raw_message(
     is_thread = relates.get('rel_type') == 'm.thread'
     reply = relates.get('m.in_reply_to') or {}
     return RawMatrixMessage(
-        kind=EventKind.MESSAGE_EDITED if is_edit else EventKind.MESSAGE_NEW,
+        kind=RecordKind.EDITED if is_edit else RecordKind.NEW,
         room_id=room_id,
         event_id=relates['event_id'] if is_edit else event.event_id,
         thread_id=relates.get('event_id') if is_thread else None,
@@ -438,7 +438,7 @@ class MatrixClient:
 
     async def _message_cb(self, room: MatrixRoom, event: RoomMessage) -> None:
         raw = to_raw_message(room.room_id, event, room.user_name(event.sender))
-        edited = raw.kind is EventKind.MESSAGE_EDITED
+        edited = raw.kind is RecordKind.EDITED
         handlers = self._on_edit if edited else self._on_new
         for handler in handlers:
             await handler(raw)

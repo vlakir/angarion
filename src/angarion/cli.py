@@ -156,8 +156,8 @@ async def cmd_login(
     """
     Интерактивная авторизация аккаунта → зашифрованная сессия в БД.
 
-    Платформо-агностично: шов логина принадлежит плагину (``make_login``,
-    M7 B1), CLI лишь резолвит плагин по ``messenger`` аккаунта и отдаёт
+    Транспорт-агностично: шов логина принадлежит плагину (``make_login``,
+    M7 B1), CLI лишь резолвит плагин по ``transport`` аккаунта и отдаёт
     ему непрозрачный ``SessionStorePort`` + ключ шифрования.
     """
     registry = plugins if plugins is not None else load_plugins()
@@ -166,12 +166,12 @@ async def cmd_login(
         known = ', '.join(sorted(settings.accounts)) or '<пусто>'
         msg = f'аккаунт {account_name!r} не найден в конфиге; известны: {known}'
         raise ConfigError(msg)
-    plugin = registry.adapters.get(section.messenger)
+    plugin = registry.adapters.get(section.transport)
     if plugin is None:
         known = ', '.join(sorted(registry.adapters)) or '<пусто>'
         msg = (
-            f'аккаунт {account_name!r}: неизвестный messenger '
-            f'{section.messenger!r}; зарегистрированы: {known}'
+            f'аккаунт {account_name!r}: неизвестный transport '
+            f'{section.transport!r}; зарегистрированы: {known}'
         )
         raise ConfigError(msg)
     if plugin.make_login is None:

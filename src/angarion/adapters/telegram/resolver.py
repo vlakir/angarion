@@ -23,7 +23,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
-from angarion.adapters.telegram.client import MESSENGER
+from angarion.adapters.telegram.client import TRANSPORT
 from angarion.domain.keys import make_source_key
 from angarion.domain.models import AnalyticsEvent
 
@@ -75,12 +75,12 @@ async def resolve_sources(
         if source_client is None:
             continue
         try:
-            chat_id = await source_client.resolve_peer(ep.chat_id)
+            chat_id = await source_client.resolve_peer(ep.address)
         except Exception as exc:
             log.warning(
                 'source_unavailable',
                 account=ep.account,
-                chat_id=ep.chat_id,
+                chat_id=ep.address,
                 error=str(exc),
             )
             await analytics.record(
@@ -89,7 +89,7 @@ async def resolve_sources(
                     kind='source_unavailable',
                     payload={
                         'account': ep.account,
-                        'chat_id': ep.chat_id,
+                        'chat_id': ep.address,
                         'error': str(exc),
                     },
                     at=datetime.now(UTC),
@@ -102,7 +102,7 @@ async def resolve_sources(
                 chat_id=chat_id,
                 thread_id=ep.thread_id,
                 source_key=make_source_key(
-                    MESSENGER, ep.account, str(chat_id), ep.thread_id
+                    TRANSPORT, ep.account, str(chat_id), ep.thread_id
                 ),
                 recent_poll=ep in recent_poll_endpoints,
             )

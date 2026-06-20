@@ -12,17 +12,17 @@ from __future__ import annotations
 import hashlib
 import unicodedata
 
-from angarion.domain.models import Address, EventKind, InboundEvent, MediaRef
+from angarion.domain.models import Endpoint, MediaRef, Record, RecordKind
 
 
 def make_source_key(
-    messenger: str,
+    transport: str,
     account_id: str,
-    chat_id: str,
+    address: str,
     thread_id: str | None = None,
 ) -> str:
-    """Ключ источника: ``messenger:account_id:chat_id[:thread_id]``."""
-    key = f'{messenger}:{account_id}:{chat_id}'
+    """Ключ источника: ``transport:account_id:address[:thread_id]``."""
+    key = f'{transport}:{account_id}:{address}'
     if thread_id is not None:
         key = f'{key}:{thread_id}'
     return key
@@ -77,7 +77,7 @@ def make_media_hash(media: list[MediaRef]) -> str | None:
 
 def _edit_slot(content_hash: str | None, media_hash: str | None) -> str | None:
     """
-    Слот версии для ключа ``MESSAGE_EDITED`` из текстового и медиа-хэшей.
+    Слот версии для ключа ``EDITED`` из текстового и медиа-хэшей.
 
     Текст без медиа (``media_hash is None``) → слот = ``content_hash``: ключ
     байт-в-байт прежний (golden-контракт §7.2 не меняется). Медиа-only
@@ -94,7 +94,7 @@ def _edit_slot(content_hash: str | None, media_hash: str | None) -> str | None:
 
 
 def make_dedup_key(
-    kind: EventKind,
+    kind: RecordKind,
     source_key: str,
     external_id: str,
     content_hash: str | None = None,
@@ -103,21 +103,19 @@ def make_dedup_key(
     """
     Ключ входящей дедупликации (§7.2).
 
-    Для ``MESSAGE_EDITED`` в ключ входит хэш содержимого (не edit_date):
+    Для ``EDITED`` в ключ входит хэш содержимого (не edit_date):
     гранулярность времени платформ — секунда, хэш различает версии надёжно и
     одинаково работает в live и catch-up. Следствие: правка, вернувшая прежний
     текст, — дубль (осознанно). С M7 версию-слот формирует ``_edit_slot`` из
     текстового и медиа-хэшей: текст-без-медиа даёт прежний ключ, медиа влияет
     аддитивно (правка вложения = новая версия; медиа-only больше не падает).
     """
-    if kind is EventKind.MESSAGE_NEW:
+    if kind is RecordKind.NEW:
         return f'{source_key}:{external_id}:new'
-    if kind is EventKind.MESSAGE_EDITED:
+    if kind is RecordKind.EDITED:
         slot = _edit_slot(content_hash, media_hash)
         if slot is None:
-            msg = (
-                'content_hash или media_hash обязателен для ключа MESSAGE_EDITED (§7.2)'
-            )
+            msg = 'content_hash или media_hash обязателен для ключа EDITED (§7.2)'
             raise ValueError(msg)
         return f'{source_key}:{external_id}:edit:{slot}'
     return f'{source_key}:{external_id}:del'
@@ -125,8 +123,8 @@ def make_dedup_key(
 
 def make_idempotency_key(
     pipeline: str,
-    event: InboundEvent,
-    target: Address,
+    record: Record,
+    target: Endpoint,
     n: int,
 ) -> str:
     """
@@ -135,6 +133,6 @@ def make_idempotency_key(
     Имя пайплайна включено обязательно: при multicast два пайплайна
     могут слать в одну группу и не должны подавлять друг друга.
     Worker частично применяет функцию со своим пайплайном (A-9), у
-    процессора остаётся сигнатура ``(event, target, n) -> str``.
+    процессора остаётся сигнатура ``(record, target, n) -> str``.
     """
-    return f'{event.dedup_key}->{pipeline}:{target.chat_id}:{n}'
+    return f'{record.dedup_key}->{pipeline}:{target.address}:{n}'

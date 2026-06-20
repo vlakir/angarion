@@ -18,11 +18,11 @@ from angarion.config import (
     load_settings,
 )
 from angarion.domain.errors import ConfigError
-from angarion.domain.models import EventKind, MediaRef
+from angarion.domain.models import MediaRef, RecordKind
 
 SAMPLE_TOML = """
 [accounts.main]
-messenger = "memory"
+transport = "memory"
 
 [storage]
 backend = "memory"
@@ -42,10 +42,10 @@ enabled = false
 
 [pipelines.digest]
 processor = "passthrough"
-events = ["message_new", "message_edited"]
+events = ["new", "edited"]
 only_replies = true
-sources = [{ account = "main", chat_id = "-100111" }]
-targets = [{ account = "main", chat_id = "-100222", thread_id = "5" }]
+sources = [{ account = "main", address = "-100111" }]
+targets = [{ account = "main", address = "-100222", thread_id = "5" }]
 
 [pipelines.digest.processor_config]
 template = "{{ text }}"
@@ -86,33 +86,31 @@ def test_defaults_without_any_config() -> None:
 def test_load_settings_parses_toml(tmp_path: Path) -> None:
     """TOML §11 разбирается в типизированные секции."""
     settings = load_settings(write_toml(tmp_path))
-    assert settings.accounts['main'].messenger == 'memory'
+    assert settings.accounts['main'].transport == 'memory'
     assert settings.queue.depth_warn == 100
     assert settings.worker.max_retries == 3
     assert settings.catchup.enabled is False
     pipeline = settings.pipelines['digest']
     assert pipeline.processor == 'passthrough'
-    assert pipeline.events == frozenset(
-        {EventKind.MESSAGE_NEW, EventKind.MESSAGE_EDITED}
-    )
+    assert pipeline.events == frozenset({RecordKind.NEW, RecordKind.EDITED})
     assert pipeline.only_replies is True
-    assert pipeline.sources == (EndpointConfig(account='main', chat_id='-100111'),)
+    assert pipeline.sources == (EndpointConfig(account='main', address='-100111'),)
     assert pipeline.targets[0].thread_id == '5'
     assert pipeline.processor_config == {'template': '{{ text }}'}
 
 
 def test_account_section_keeps_plugin_specific_keys(tmp_path: Path) -> None:
     """[accounts.*] — сырой dict: схема аккаунта принадлежит плагину (C-4)."""
-    toml = '[accounts.main]\nmessenger = "memory"\nsession = "x.session"\n'
+    toml = '[accounts.main]\ntransport = "memory"\nsession = "x.session"\n'
     settings = load_settings(write_toml(tmp_path, toml))
     dumped = settings.accounts['main'].model_dump()
-    assert dumped == {'messenger': 'memory', 'session': 'x.session'}
+    assert dumped == {'transport': 'memory', 'session': 'x.session'}
 
 
 def test_account_without_messenger_fails(tmp_path: Path) -> None:
-    """Ключ messenger обязателен в каждой секции аккаунта (FR-2)."""
+    """Ключ transport обязателен в каждой секции аккаунта (FR-2)."""
     toml = '[accounts.main]\nsession = "x.session"\n'
-    with pytest.raises(ConfigError, match='messenger'):
+    with pytest.raises(ConfigError, match='transport'):
         load_settings(write_toml(tmp_path, toml))
 
 
@@ -164,9 +162,9 @@ def test_pipeline_requires_events_sources_targets() -> None:
     """Пустые events/sources/targets — незрелая декларация, fail-fast."""
     base = {
         'processor': 'passthrough',
-        'events': ['message_new'],
-        'sources': [{'account': 'main', 'chat_id': '-1'}],
-        'targets': [{'account': 'main', 'chat_id': '-2'}],
+        'events': ['new'],
+        'sources': [{'account': 'main', 'address': '-1'}],
+        'targets': [{'account': 'main', 'address': '-2'}],
     }
     PipelineConfig.model_validate(base)
     for field in ('events', 'sources', 'targets'):
@@ -175,14 +173,14 @@ def test_pipeline_requires_events_sources_targets() -> None:
 
 
 def test_pipeline_rejects_unknown_event_kind() -> None:
-    """Вид события вне закрытого EventKind — fail-fast."""
+    """Вид события вне закрытого RecordKind — fail-fast."""
     with pytest.raises(ValidationError):
         PipelineConfig.model_validate(
             {
                 'processor': 'passthrough',
                 'events': ['message_reacted'],
-                'sources': [{'account': 'main', 'chat_id': '-1'}],
-                'targets': [{'account': 'main', 'chat_id': '-2'}],
+                'sources': [{'account': 'main', 'address': '-1'}],
+                'targets': [{'account': 'main', 'address': '-2'}],
             }
         )
 

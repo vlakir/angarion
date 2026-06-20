@@ -11,27 +11,27 @@ from angarion.adapters.telegram.client import FloodWaitError, TransientSendError
 from angarion.adapters.telegram.sender import TelegramSender, as_peer
 from angarion.domain.models import (
     AccountRef,
-    Address,
     DeliveryReceipt,
     DynamicSettings,
+    Endpoint,
     MediaRef,
-    OutboundMessage,
+    OutboundRecord,
 )
 from angarion.log import get_logger
 
 
 def _msg(
     *,
-    chat_id: str = '-100123',
+    address: str = '-100123',
     thread_id: str | None = None,
     text: str = 'привет',
     extra: dict[str, object] | None = None,
     account: str = 'main',
-) -> OutboundMessage:
-    return OutboundMessage(
-        idempotency_key=f'k:{chat_id}:{text}',
-        target=Address(messenger='telegram', chat_id=chat_id, thread_id=thread_id),
-        send_via=AccountRef(messenger='telegram', account_id=account),
+) -> OutboundRecord:
+    return OutboundRecord(
+        idempotency_key=f'k:{address}:{text}',
+        target=Endpoint(transport='telegram', address=address, thread_id=thread_id),
+        send_via=AccountRef(transport='telegram', account_id=account),
         text=text,
         extra=extra or {},
     )
@@ -42,17 +42,17 @@ def _media_msg(
     text: str = 'подпись',
     ref: str | None = '-100123:42',
     local_path: str | None = None,
-    chat_id: str = '-100999',
-) -> OutboundMessage:
+    address: str = '-100999',
+) -> OutboundRecord:
     media = (
         [MediaRef(kind='photo', ref=ref, local_path=local_path)]
         if ref is not None or local_path is not None
         else []
     )
-    return OutboundMessage(
-        idempotency_key=f'k:{chat_id}:media',
-        target=Address(messenger='telegram', chat_id=chat_id),
-        send_via=AccountRef(messenger='telegram', account_id='main'),
+    return OutboundRecord(
+        idempotency_key=f'k:{address}:media',
+        target=Endpoint(transport='telegram', address=address),
+        send_via=AccountRef(transport='telegram', account_id='main'),
         text=text,
         media=media,
     )
@@ -220,7 +220,7 @@ async def test_multi_account_routes_to_send_via_client() -> None:
     b = FakeTelegramClient()
     clock = FakeClock()
     sender = _sender({'acc_a': a, 'acc_b': b}, clock)
-    await sender.send(_msg(account='acc_b', chat_id='-100222'))
+    await sender.send(_msg(account='acc_b', address='-100222'))
     assert a.sent == []
     assert b.sent[0]['chat_id'] == -100222
 
@@ -244,9 +244,9 @@ async def test_account_rate_throttles_across_chats() -> None:
         {'main': client}, clock, chat_per_second=1000.0, account_per_minute=60.0
     )
     for i in range(60):  # израсходовали стартовый бакет аккаунта
-        await sender.send(_msg(chat_id=f'-10{i:04d}', text=str(i)))
+        await sender.send(_msg(address=f'-10{i:04d}', text=str(i)))
     assert clock.slept == []
-    await sender.send(_msg(chat_id='-19999', text='over'))  # 61-е → ждём ~1с
+    await sender.send(_msg(address='-19999', text='over'))  # 61-е → ждём ~1с
     assert clock.slept == [1.0]
 
 
@@ -281,9 +281,9 @@ async def test_dynamic_account_limit_overrides_file() -> None:
     )
     await rt.save(DynamicSettings(sender_account_per_minute=60.0))  # 60/min = 1/с
     for i in range(60):  # стартовый бакет аккаунта (capacity 60)
-        await sender.send(_msg(chat_id=f'-10{i:04d}', text=str(i)))
+        await sender.send(_msg(address=f'-10{i:04d}', text=str(i)))
     assert clock.slept == []
-    await sender.send(_msg(chat_id='-19999', text='over'))  # 61-е → ждём ~1с
+    await sender.send(_msg(address='-19999', text='over'))  # 61-е → ждём ~1с
     assert clock.slept == [1.0]
 
 
@@ -300,12 +300,12 @@ async def test_dynamic_limit_reset_reverts_to_file() -> None:
         runtime_config=rt,
     )
     await rt.save(DynamicSettings(sender_chat_per_second=1.0))
-    await sender.send(_msg(chat_id='-100111', text='1'))
-    await sender.send(_msg(chat_id='-100111', text='2'))  # под override'ом → 1с
+    await sender.send(_msg(address='-100111', text='1'))
+    await sender.send(_msg(address='-100111', text='2'))  # под override'ом → 1с
     assert clock.slept == [1.0]
     await rt.reset('sender_chat_per_second')  # возврат к файлу (1000/с)
     for i in range(5):  # свежий чат: бакет на файловом темпе, без ожидания
-        await sender.send(_msg(chat_id='-100222', text=f'r{i}'))
+        await sender.send(_msg(address='-100222', text=f'r{i}'))
     assert clock.slept == [1.0]  # новых ожиданий не добавилось
 
 

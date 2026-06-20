@@ -65,7 +65,7 @@ class TelegramAccountConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra='forbid')
 
-    messenger: Literal['telegram']
+    transport: Literal['telegram']
     api_id: int = Field(gt=0)
     api_hash: str = Field(min_length=1)
 

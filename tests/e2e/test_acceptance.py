@@ -32,12 +32,12 @@ from angarion.config import (
 )
 from angarion.domain.errors import ProcessingError
 from angarion.domain.models import (
-    EventKind,
-    InboundEvent,
-    OutboundMessage,
+    OutboundRecord,
     PipelineContextData,
     ProcessingResult,
     ProcessorServices,
+    Record,
+    RecordKind,
     Verdict,
 )
 
@@ -50,17 +50,17 @@ SRC_CHAT = '-100111'
 DST_DIGEST = '-100222'
 DST_MIRROR = '-100333'
 ALL_KINDS = frozenset(
-    {EventKind.MESSAGE_NEW, EventKind.MESSAGE_EDITED, EventKind.MESSAGE_DELETED}
+    {RecordKind.NEW, RecordKind.EDITED, RecordKind.DELETED}
 )
 
 
 async def annotate(
-    event: InboundEvent, ctx: PipelineContextData, svc: ProcessorServices
+    event: Record, ctx: PipelineContextData, svc: ProcessorServices
 ) -> ProcessingResult:
     """Процессор-свидетель обогащения: текст исходящего = kind|text|previous_text."""
     text = f'{event.kind}|{event.text}|{event.previous_text}'
     outbound = [
-        OutboundMessage(
+        OutboundRecord(
             idempotency_key=svc.make_idempotency_key(event, spec.target, n),
             target=spec.target,
             send_via=spec.send_via,
@@ -72,7 +72,7 @@ async def annotate(
 
 
 async def explode(
-    event: InboundEvent, ctx: PipelineContextData, svc: ProcessorServices
+    event: Record, ctx: PipelineContextData, svc: ProcessorServices
 ) -> ProcessingResult:
     """Всегда падающий процессор — для ретрай-сценария до DLQ."""
     msg = 'boom'
@@ -91,8 +91,8 @@ def make_pipeline(processor: str, target_chat: str) -> PipelineConfig:
     return PipelineConfig(
         processor=processor,
         events=ALL_KINDS,
-        sources=(EndpointConfig(account='main', chat_id=SRC_CHAT),),
-        targets=(EndpointConfig(account='main', chat_id=target_chat),),
+        sources=(EndpointConfig(account='main', address=SRC_CHAT),),
+        targets=(EndpointConfig(account='main', address=target_chat),),
     )
 
 
@@ -102,7 +102,7 @@ def make_settings(
     """Конфиг для E2E: backoff/poll ужаты, чтобы ретраи шли мгновенно."""
     return AngarionSettings.model_validate(
         {
-            'accounts': {'main': AccountConfig(messenger='memory')},
+            'accounts': {'main': AccountConfig(transport='memory')},
             'worker': WorkerConfig(
                 max_retries=max_retries,
                 backoff_base=0.001,
@@ -148,23 +148,23 @@ class TestEndToEndMulticast:
         try:
             listener, sink = app_parts(app)
             await listener.emit(
-                {'chat_id': SRC_CHAT, 'external_id': '7', 'text': 'hello'}
+                {'address': SRC_CHAT, 'external_id': '7', 'text': 'hello'}
             )
             await wait_until(lambda: len(sink.sent) >= 2)
             await listener.emit(
                 {
-                    'chat_id': SRC_CHAT,
+                    'address': SRC_CHAT,
                     'external_id': '7',
-                    'kind': 'message_edited',
+                    'kind': 'edited',
                     'text': 'hello v2',
                 }
             )
             await wait_until(lambda: len(sink.sent) >= 4)
             await listener.emit(
                 {
-                    'chat_id': SRC_CHAT,
+                    'address': SRC_CHAT,
                     'external_id': '7',
-                    'kind': 'message_deleted',
+                    'kind': 'deleted',
                 }
             )
             await wait_until(lambda: len(sink.sent) >= 6)
@@ -173,13 +173,13 @@ class TestEndToEndMulticast:
 
         texts_by_target: dict[str, list[str]] = {}
         for msg in sink.sent:
-            texts_by_target.setdefault(msg.target.chat_id, []).append(msg.text)
+            texts_by_target.setdefault(msg.target.address, []).append(msg.text)
         expected = [
-            'message_new|hello|None',
+            'new|hello|None',
             # EDITED обогащено вытесненной версией из реестра (§6.1)
-            'message_edited|hello v2|hello',
+            'edited|hello v2|hello',
             # DELETED пришло без текста — текст восстановлен реестром (§6.1)
-            'message_deleted|hello v2|None',
+            'deleted|hello v2|None',
         ]
         assert texts_by_target == {DST_DIGEST: expected, DST_MIRROR: expected}
 
@@ -204,7 +204,7 @@ class TestRetryToDeadLetters:
         try:
             listener, sink = app_parts(app)
             await listener.emit(
-                {'chat_id': SRC_CHAT, 'external_id': '1', 'text': 'x'}
+                {'address': SRC_CHAT, 'external_id': '1', 'text': 'x'}
             )
             letters = await app.storage.dead_letters.list()
             for _ in range(500):
@@ -237,7 +237,7 @@ class TestInboundDedup:
         await app.start()
         try:
             listener, sink = app_parts(app)
-            raw = {'chat_id': SRC_CHAT, 'external_id': '42', 'text': 'однажды'}
+            raw = {'address': SRC_CHAT, 'external_id': '42', 'text': 'однажды'}
             await listener.emit(raw)
             await wait_until(lambda: len(sink.sent) == 1)
             await listener.emit(raw)

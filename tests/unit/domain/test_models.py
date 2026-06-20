@@ -11,20 +11,20 @@ from pydantic import BaseModel, ValidationError
 
 from angarion.domain.models import (
     AccountRef,
-    Address,
     AnalyticsEvent,
     DeadLetter,
     DeliveryReceipt,
-    EventKind,
-    InboundEvent,
+    Endpoint,
     MediaRef,
-    OutboundMessage,
+    OutboundRecord,
     PipelineContextData,
     ProcessingResult,
     ProcessorServices,
     QueueDepth,
     QueueEnvelope,
     QueueItem,
+    Record,
+    RecordKind,
     RegistryDelta,
     RegistryOutcome,
     RegistryRecord,
@@ -41,27 +41,27 @@ NOW = datetime(2026, 6, 11, 12, 0, tzinfo=UTC)
 UID = UUID('00000000-0000-0000-0000-000000000001')
 
 
-def make_address(**overrides: object) -> Address:
-    fields: dict[str, object] = {'messenger': 'telegram', 'chat_id': '-100123'}
+def make_endpoint(**overrides: object) -> Endpoint:
+    fields: dict[str, object] = {'transport': 'telegram', 'address': '-100123'}
     fields.update(overrides)
-    return Address.model_validate(fields)
+    return Endpoint.model_validate(fields)
 
 
-def make_event(**overrides: object) -> InboundEvent:
+def make_record(**overrides: object) -> Record:
     fields: dict[str, object] = {
         'uid': UID,
-        'kind': EventKind.MESSAGE_NEW,
+        'kind': RecordKind.NEW,
         'dedup_key': 'telegram:acc1:-100123:42:new',
         'origin': 'live',
-        'source': make_address(),
-        'received_by': AccountRef(messenger='telegram', account_id='acc1'),
+        'source': make_endpoint(),
+        'received_by': AccountRef(transport='telegram', account_id='acc1'),
         'external_id': '42',
         'text': 'hello',
         'event_at': NOW,
         'received_at': NOW,
     }
     fields.update(overrides)
-    return InboundEvent.model_validate(fields)
+    return Record.model_validate(fields)
 
 
 def make_media(**overrides: object) -> MediaRef:
@@ -70,23 +70,23 @@ def make_media(**overrides: object) -> MediaRef:
     return MediaRef.model_validate(fields)
 
 
-def make_outbound(**overrides: object) -> OutboundMessage:
+def make_outbound(**overrides: object) -> OutboundRecord:
     fields: dict[str, object] = {
         'idempotency_key': 'k->p:c:0',
-        'target': make_address(chat_id='-100999'),
-        'send_via': AccountRef(messenger='telegram', account_id='acc1'),
+        'target': make_endpoint(address='-100999'),
+        'send_via': AccountRef(transport='telegram', account_id='acc1'),
         'text': 'hi',
     }
     fields.update(overrides)
-    return OutboundMessage.model_validate(fields)
+    return OutboundRecord.model_validate(fields)
 
 
 def representative_dtos() -> list[BaseModel]:
     """По экземпляру каждого DTO — для общих инвариантов."""
     return [
-        make_address(thread_id='55', title='angarion 1'),
-        AccountRef(messenger='telegram', account_id='acc1'),
-        make_event(previous_text='old', content_hash='abc', raw={'id': 42}),
+        make_endpoint(thread_id='55', title='angarion 1'),
+        AccountRef(transport='telegram', account_id='acc1'),
+        make_record(previous_text='old', content_hash='abc', raw={'id': 42}),
         make_media(
             ref='AgACfile_id',
             mime_type='image/jpeg',
@@ -95,26 +95,26 @@ def representative_dtos() -> list[BaseModel]:
             width=800,
             height=600,
         ),
-        make_event(media=[make_media(), make_media(kind='document')]),
+        make_record(media=[make_media(), make_media(kind='document')]),
         make_outbound(extra={'parse_mode': 'html'}),
         make_outbound(media=[make_media()]),
         ProcessingResult(verdict=Verdict.DELIVER, outbound=[make_outbound()]),
-        AnalyticsEvent(uid=UID, kind='ingested', event_uid=UID, at=NOW),
+        AnalyticsEvent(uid=UID, kind='ingested', record_uid=UID, at=NOW),
         PipelineContextData(
             pipeline='digest',
             targets=[
                 TargetSpec(
-                    target=make_address(chat_id='-100999'),
-                    send_via=AccountRef(messenger='telegram', account_id='acc1'),
+                    target=make_endpoint(address='-100999'),
+                    send_via=AccountRef(transport='telegram', account_id='acc1'),
                 )
             ],
             settings={'window': 10},
         ),
-        QueueEnvelope(pipeline='digest', event=make_event()),
+        QueueEnvelope(pipeline='digest', record=make_record()),
         QueueDepth(pending=1, unacked=0),
         DeadLetter(
             uid=UID,
-            envelope=QueueEnvelope(pipeline='digest', event=make_event(), attempt=5),
+            envelope=QueueEnvelope(pipeline='digest', record=make_record(), attempt=5),
             error='ProcessingError: boom',
             failed_at=NOW,
         ),
@@ -128,10 +128,12 @@ def representative_dtos() -> list[BaseModel]:
         ),
         RegistryVersion(text='old', content_hash='def', recorded_at=NOW),
         RegistryDelta(outcome=RegistryOutcome.TEXT_CHANGED, previous_text='old'),
-        SourceCursor(source_key='telegram:acc1:-100123', payload={'last': 42}, updated_at=NOW),
+        SourceCursor(
+            source_key='telegram:acc1:-100123', payload={'last': 42}, updated_at=NOW
+        ),
         TargetSpec(
-            target=make_address(chat_id='-100999'),
-            send_via=AccountRef(messenger='telegram', account_id='acc1'),
+            target=make_endpoint(address='-100999'),
+            send_via=AccountRef(transport='telegram', account_id='acc1'),
         ),
     ]
 
@@ -162,62 +164,58 @@ class TestDTOInvariants:
         assert restored == dto
 
 
-class TestAddress:
+class TestEndpoint:
     def test_thread_id_defaults_to_none(self) -> None:
-        assert make_address().thread_id is None
+        assert make_endpoint().thread_id is None
 
     @pytest.mark.parametrize(
-        'bad_messenger',
+        'bad_transport',
         ['Telegram', '1telegram', 't', 'a' * 33, 'tele-gram', ''],
     )
-    def test_messenger_pattern_enforced(self, bad_messenger: str) -> None:
+    def test_transport_pattern_enforced(self, bad_transport: str) -> None:
         with pytest.raises(ValidationError):
-            make_address(messenger=bad_messenger)
+            make_endpoint(transport=bad_transport)
 
-    @pytest.mark.parametrize('good_messenger', ['telegram', 'max', 'my_imap2'])
-    def test_messenger_pattern_accepts(self, good_messenger: str) -> None:
-        assert make_address(messenger=good_messenger).messenger == good_messenger
+    @pytest.mark.parametrize('good_transport', ['telegram', 'max', 'my_imap2'])
+    def test_transport_pattern_accepts(self, good_transport: str) -> None:
+        assert make_endpoint(transport=good_transport).transport == good_transport
 
 
-class TestEventKind:
+class TestRecordKind:
     def test_closed_set(self) -> None:
-        assert {k.value for k in EventKind} == {
-            'message_new',
-            'message_edited',
-            'message_deleted',
-        }
+        assert {k.value for k in RecordKind} == {'new', 'edited', 'deleted'}
 
 
-class TestInboundEvent:
+class TestRecord:
     def test_naive_datetime_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            make_event(event_at=datetime(2026, 6, 11, 12, 0))
+            make_record(event_at=datetime(2026, 6, 11, 12, 0))
 
     def test_origin_is_closed(self) -> None:
         with pytest.raises(ValidationError):
-            make_event(origin='replay')
+            make_record(origin='replay')
 
     def test_optional_enrichment_defaults(self) -> None:
-        event = make_event()
-        assert event.previous_text is None
-        assert event.content_hash is None
-        assert event.reply_to_external_id is None
-        assert event.has_media is False
-        assert event.media == []
-        assert event.raw == {}
+        record = make_record()
+        assert record.previous_text is None
+        assert record.content_hash is None
+        assert record.reply_to_external_id is None
+        assert record.has_media is False
+        assert record.media == []
+        assert record.raw == {}
 
     def test_media_carried(self) -> None:
-        event = make_event(media=[make_media(kind='video')])
-        assert [m.kind for m in event.media] == ['video']
+        record = make_record(media=[make_media(kind='video')])
+        assert [m.kind for m in record.media] == ['video']
 
     def test_has_media_derives_from_media(self) -> None:
-        assert make_event().has_media is False
-        assert make_event(media=[make_media()]).has_media is True
+        assert make_record().has_media is False
+        assert make_record(media=[make_media()]).has_media is True
 
     def test_has_media_not_an_input_field(self) -> None:
         """``has_media`` — производное свойство, не поле ввода (M7 A2)."""
         with pytest.raises(ValidationError):
-            make_event(has_media=True)
+            make_record(has_media=True)
 
 
 class TestMediaRef:
@@ -234,40 +232,40 @@ class TestMediaRef:
         assert media.local_path is None
 
     def test_kind_is_open_string(self) -> None:
-        """``kind`` — открытая строка (как ``Messenger``): новые платформы
+        """``kind`` — открытая строка (как ``Transport``): новые транспорты
         регистрируют свои виды вложений без правки домена."""
         assert MediaRef(kind='lottie_sticker').kind == 'lottie_sticker'
 
 
 class TestQueueEnvelope:
     def test_defaults(self) -> None:
-        envelope = QueueEnvelope(pipeline='digest', event=make_event())
+        envelope = QueueEnvelope(pipeline='digest', record=make_record())
         assert envelope.attempt == 0
         assert envelope.not_before is None
 
     def test_retry_copy(self) -> None:
         """C-8: retry — копия с attempt+1 и not_before в будущем."""
-        envelope = QueueEnvelope(pipeline='digest', event=make_event())
+        envelope = QueueEnvelope(pipeline='digest', record=make_record())
         retry = envelope.model_copy(
             update={'attempt': envelope.attempt + 1, 'not_before': NOW}
         )
         assert retry.attempt == 1
         assert retry.not_before == NOW
-        assert retry.event == envelope.event
+        assert retry.record == envelope.record
         assert envelope.attempt == 0
 
     def test_not_before_requires_aware_datetime(self) -> None:
         with pytest.raises(ValidationError):
             QueueEnvelope(
                 pipeline='digest',
-                event=make_event(),
+                record=make_record(),
                 not_before=datetime(2026, 6, 11),
             )
 
 
 class TestQueueItem:
     def test_receipt_is_opaque(self) -> None:
-        envelope = QueueEnvelope(pipeline='digest', event=make_event())
+        envelope = QueueEnvelope(pipeline='digest', record=make_record())
         item = QueueItem(envelope=envelope, receipt=7)
         assert item.receipt == 7
         assert QueueItem(envelope=envelope, receipt={'tag': 'x'}).receipt == {
@@ -312,8 +310,8 @@ class FakeState:
         return []
 
 
-def fake_factory(event: InboundEvent, target: Address, n: int) -> str:
-    return f'{event.dedup_key}->{target.chat_id}:{n}'
+def fake_factory(record: Record, target: Endpoint, n: int) -> str:
+    return f'{record.dedup_key}->{target.address}:{n}'
 
 
 class TestProcessorServices:

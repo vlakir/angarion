@@ -40,12 +40,12 @@ from angarion.domain.errors import NotSupportedError
 from angarion.domain.keys import make_dedup_key, make_source_key, normalize_and_hash
 from angarion.domain.models import (
     AccountRef,
-    Address,
     DeliveryReceipt,
-    EventKind,
-    InboundEvent,
+    Endpoint,
     QueueEnvelope,
     QueueItem,
+    Record,
+    RecordKind,
 )
 from angarion.domain.plugin import (
     AdapterPlugin,
@@ -61,10 +61,10 @@ if TYPE_CHECKING:
 
     from angarion.bootstrap import AdapterDeps
     from angarion.config import EndpointConfig, QueueConfig, StorageConfig
-    from angarion.domain.models import OutboundMessage, QueueDepth
+    from angarion.domain.models import OutboundRecord, QueueDepth
     from angarion.domain.ports import DedupStorePort, EventQueuePort
 
-MESSENGER: Final = 'filesink'
+TRANSPORT: Final = 'filesink'
 ACCOUNT: Final = 'acc'
 SRC_CHAT: Final = '-1'
 DST_CHAT: Final = '-2'
@@ -79,9 +79,9 @@ POINT_AFTER_SEND: Final = 'after_send'
 
 def expected_keys(count: int) -> set[str]:
     """Ключи идемпотентности всех ожидаемых доставок (паритет с worker)."""
-    source_key = make_source_key(MESSENGER, ACCOUNT, SRC_CHAT)
+    source_key = make_source_key(TRANSPORT, ACCOUNT, SRC_CHAT)
     return {
-        f'{make_dedup_key(EventKind.MESSAGE_NEW, source_key, str(i))}'
+        f'{make_dedup_key(RecordKind.NEW, source_key, str(i))}'
         f'->{PIPELINE}:{DST_CHAT}:0'
         for i in range(count)
     }
@@ -89,8 +89,8 @@ def expected_keys(count: int) -> set[str]:
 
 def target_key(target: str) -> str:
     """Ключ доставки события-мишени kill-точки."""
-    source_key = make_source_key(MESSENGER, ACCOUNT, SRC_CHAT)
-    dedup = make_dedup_key(EventKind.MESSAGE_NEW, source_key, target)
+    source_key = make_source_key(TRANSPORT, ACCOUNT, SRC_CHAT)
+    dedup = make_dedup_key(RecordKind.NEW, source_key, target)
     return f'{dedup}->{PIPELINE}:{DST_CHAT}:0'
 
 
@@ -99,17 +99,17 @@ def _die() -> None:
     os.kill(os.getpid(), signal.SIGKILL)
 
 
-def _build_events(count: int) -> list[InboundEvent]:
-    source_key = make_source_key(MESSENGER, ACCOUNT, SRC_CHAT)
+def _build_events(count: int) -> list[Record]:
+    source_key = make_source_key(TRANSPORT, ACCOUNT, SRC_CHAT)
     now = datetime.now(UTC)
     return [
-        InboundEvent(
+        Record(
             uid=uuid4(),
-            kind=EventKind.MESSAGE_NEW,
-            dedup_key=make_dedup_key(EventKind.MESSAGE_NEW, source_key, str(i)),
+            kind=RecordKind.NEW,
+            dedup_key=make_dedup_key(RecordKind.NEW, source_key, str(i)),
             origin='live',
-            source=Address(messenger=MESSENGER, chat_id=SRC_CHAT),
-            received_by=AccountRef(messenger=MESSENGER, account_id=ACCOUNT),
+            source=Endpoint(transport=TRANSPORT, address=SRC_CHAT),
+            received_by=AccountRef(transport=TRANSPORT, account_id=ACCOUNT),
             external_id=str(i),
             text=f'msg-{i}',
             content_hash=normalize_and_hash(f'msg-{i}'),
@@ -123,7 +123,7 @@ def _build_events(count: int) -> list[InboundEvent]:
 class ReplayListener:
     """Listener: ре-эмит всех событий на каждом старте (модель catch-up)."""
 
-    def __init__(self, ingest: object, events: list[InboundEvent]) -> None:
+    def __init__(self, ingest: object, events: list[Record]) -> None:
         self._ingest = ingest
         self._events = events
         self._task: asyncio.Task[None] | None = None
@@ -152,7 +152,7 @@ class FileSink:
         self._path = path
         self._kill_key = kill_key
 
-    async def send(self, msg: OutboundMessage) -> DeliveryReceipt:
+    async def send(self, msg: OutboundRecord) -> DeliveryReceipt:
         with self._path.open('a', encoding='utf-8') as log:
             log.write(msg.idempotency_key + '\n')
             log.flush()
@@ -196,7 +196,7 @@ class KillingQueue:
     async def ack(self, item: QueueItem) -> None:
         if (
             self._kill_id is not None
-            and item.envelope.event.external_id == self._kill_id
+            and item.envelope.record.external_id == self._kill_id
         ):
             _die()  # обработка зафиксирована в outbox, ack не записан
         await self._inner.ack(item)
@@ -215,17 +215,17 @@ class KillingQueue:
 
 
 class FilesinkAccountConfig(BaseModel):
-    """Секция ``[accounts.*]`` платформы filesink: только ``messenger``."""
+    """Секция ``[accounts.*]`` платформы filesink: только ``transport``."""
 
     model_config = ConfigDict(frozen=True, extra='forbid')
 
-    messenger: Literal['filesink']
+    transport: Literal['filesink']
 
 
 def make_settings(data_dir: Path) -> AngarionSettings:
     return AngarionSettings.model_validate(
         {
-            'accounts': {ACCOUNT: {'messenger': MESSENGER}},
+            'accounts': {ACCOUNT: {'transport': TRANSPORT}},
             'storage': {'backend': 'sqlite', 'path': str(data_dir / 'app.db')},
             'queue': {
                 'backend': 'persistqueue',
@@ -236,9 +236,9 @@ def make_settings(data_dir: Path) -> AngarionSettings:
             'pipelines': {
                 PIPELINE: {
                     'processor': 'passthrough',
-                    'events': ['message_new'],
-                    'sources': [{'account': ACCOUNT, 'chat_id': SRC_CHAT}],
-                    'targets': [{'account': ACCOUNT, 'chat_id': DST_CHAT}],
+                    'events': ['new'],
+                    'sources': [{'account': ACCOUNT, 'address': SRC_CHAT}],
+                    'targets': [{'account': ACCOUNT, 'address': DST_CHAT}],
                 }
             },
         }
@@ -249,8 +249,8 @@ def make_plugins(
     data_dir: Path, point: str, target: str, count: int
 ) -> LoadedPlugins:
     """Реестры с инструментированными kill-точками поверх боевых бэкендов."""
-    source_key = make_source_key(MESSENGER, ACCOUNT, SRC_CHAT)
-    target_dedup = make_dedup_key(EventKind.MESSAGE_NEW, source_key, target)
+    source_key = make_source_key(TRANSPORT, ACCOUNT, SRC_CHAT)
+    target_dedup = make_dedup_key(RecordKind.NEW, source_key, target)
     events = _build_events(count)
 
     def make_listener(
@@ -287,7 +287,7 @@ def make_plugins(
         )
 
     plugin = AdapterPlugin(
-        name=MESSENGER,
+        name=TRANSPORT,
         capabilities=AdapterCapabilities(
             user_account=True,
             edit_events=True,
@@ -301,7 +301,7 @@ def make_plugins(
         make_sender=make_sender,
     )
     return LoadedPlugins(
-        adapters={MESSENGER: plugin},
+        adapters={TRANSPORT: plugin},
         queues={'persistqueue': QueueBackend(name='persistqueue', make=make_queue)},
         storages={'sqlite': StorageBackend(name='sqlite', make=make_storage)},
     )

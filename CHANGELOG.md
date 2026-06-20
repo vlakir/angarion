@@ -197,6 +197,32 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Changed
 
+- **BREAKING — транспорт-агностичная модель ядра (T041, фундамент v2).**
+  Публичная модель и контракт обобщены с «события мессенджера» до
+  транспорт-агностичной записи; мессенджер-семантика (new/edited/deleted,
+  реестр, catch-up) становится опциональной capability адаптера. Big-bang
+  без алиасов (pre-alpha). Переименования публичного API:
+  `InboundEvent`→`Record`, `OutboundMessage`→`OutboundRecord` (прежний
+  outbox-журнал `OutboundRecord`→`OutboxRecord`), `Address`→`Endpoint`
+  (`messenger`→`transport`, `chat_id`→`address`), `Messenger`→`Transport`,
+  `EventKind`→`RecordKind` со значениями `message_new/edited/deleted`→
+  `new/edited/deleted`, `MessageSinkPort`→`SinkPort`; поля
+  `QueueEnvelope.event`→`.record`, `OutboxRecord.msg`→`.record`,
+  `AnalyticsEvent.event_uid`→`.record_uid`, `OutboxPort.put(event_uid=)`→
+  `record_uid=`. Публичный инструмент авторов адаптеров `angarion.testing`:
+  `MessageSinkContract`→`SinkContract`, фабрики `make_address`→
+  `make_endpoint`, `make_event`→`make_record`, прежняя `make_record`
+  (RegistryRecord)→`make_registry_record`; шаблоны процессоров
+  `compile/render_event_template`→`*_record_template`. **Ключи конфига TOML**
+  без обратной совместимости: `[accounts.*].messenger`→`transport`, в
+  source/target `chat_id`→`address` (тип `str`). Сохранены (не несут
+  мессенджер-специфики): `MessageRegistryPort`/`Contract` (реестр —
+  capability класса «мессенджер»), `EventQueuePort`/`Contract`,
+  `AnalyticsEvent`, ключ `events` в подписке пайплайна. Persistence
+  мигрирует Alembic-ревизия `0008_t041_record_columns`. Telegram/Matrix
+  работают без регресса. Спека `specs/T041-record-transport-model/`, ADR
+  2026-06-20.
+
 - `InboundEvent.has_media` стал производным свойством от `media` (T010,
   M7 A2): доступ `event.has_media` сохранён, но это больше не входное поле
   (в JSON-дамп не входит — выводится из сериализуемого `media`). ADR

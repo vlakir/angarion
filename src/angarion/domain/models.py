@@ -10,6 +10,12 @@
 ``ProcessorServices`` — НЕ DTO, а конструкция композиции (A-2 спеки
 T002): frozen pydantic-модель с ``arbitrary_types_allowed``,
 JSON-контракт на неё не распространяется.
+
+Транспорт-агностичная модель (T041): базовая сущность входа — ``Record``
+(обобщение прежнего ``InboundEvent``), выхода — ``OutboundRecord``.
+Мессенджер-семантика (``RecordKind`` new/edited/deleted) — опциональный
+профиль записи, активный для транспортов класса «мессенджер»; для прочих
+транспортов запись всегда ``new``.
 """
 
 from collections.abc import Callable
@@ -27,12 +33,12 @@ from pydantic import (
 )
 from structlog.typing import FilteringBoundLogger
 
-Messenger = Annotated[str, StringConstraints(pattern=r'^[a-z][a-z0-9_]{1,31}$')]
-"""Открытый строковый идентификатор платформы (§4.1).
+Transport = Annotated[str, StringConstraints(pattern=r'^[a-z][a-z0-9_]{1,31}$')]
+"""Открытый строковый идентификатор класса транспорта (§4.1, T041).
 
-Не enum: сторонние адаптеры регистрируют свои значения через entry
-points (§12.11). Валидация по реестру загруженных плагинов — при
-старте (fail-fast с перечнем известных).
+Не enum: сторонние адаптеры регистрируют свои значения (telegram, matrix,
+kafka, imap, …) через entry points (§12.11). Валидация по реестру
+загруженных плагинов — при старте (fail-fast с перечнем известных).
 """
 
 
@@ -42,11 +48,18 @@ class DomainModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra='forbid')
 
 
-class Address(DomainModel):
-    """Адрес чата/топика на платформе; thread_id входит в идентичность."""
+class Endpoint(DomainModel):
+    """
+    Адрес источника/назначения на транспорте (T041, обобщение прежнего
+    ``Address``).
 
-    messenger: Messenger
-    chat_id: str
+    ``address`` — локатор внутри транспорта: chat/topic у мессенджера,
+    очередь/топик у брокера, mailbox у почты. ``thread_id`` входит в
+    идентичность (тред — отдельная точка приёма/доставки).
+    """
+
+    transport: Transport
+    address: str
     thread_id: str | None = None
     title: str | None = None
 
@@ -54,25 +67,32 @@ class Address(DomainModel):
 class AccountRef(DomainModel):
     """Ссылка на учётную запись, через которую идёт приём/отправка."""
 
-    messenger: Messenger
+    transport: Transport
     account_id: str
 
 
-class EventKind(StrEnum):
-    """Закрытый набор видов событий (§15.20); ответ — атрибут, не вид."""
+class RecordKind(StrEnum):
+    """
+    Вид записи (T041, обобщение прежнего ``EventKind``).
 
-    MESSAGE_NEW = 'message_new'
-    MESSAGE_EDITED = 'message_edited'
-    MESSAGE_DELETED = 'message_deleted'
+    Закрытый набор мессенджер-семантики (§15.20); ответ — атрибут, не вид.
+    Транспорты без правок/удалений эмитят только ``NEW``; ``EDITED`` /
+    ``DELETED`` активны для транспортов, объявивших соответствующие
+    capabilities (§12.10).
+    """
+
+    NEW = 'new'
+    EDITED = 'edited'
+    DELETED = 'deleted'
 
 
 class MediaRef(DomainModel):
     r"""
-    Структурная ссылка на вложение события (§4.2, M7).
+    Структурная ссылка на вложение записи (§4.2, M7).
 
-    ``kind`` — **открытая строка** (как ``Messenger``): photo / video /
-    document / audio / voice / sticker / … — новые платформы вводят свои
-    виды без правки домена. ``ref`` — непрозрачная платформенная ссылка
+    ``kind`` — **открытая строка** (как ``Transport``): photo / video /
+    document / audio / voice / sticker / … — новые транспорты вводят свои
+    виды без правки домена. ``ref`` — непрозрачная транспортная ссылка
     для пересылки **без скачивания** (Telegram ``file_id``, Matrix
     ``mxc://``); ``local_path`` ставится при скачивании по требованию
     (фаза A3 M7), ``None`` = доступны только метаданные.
@@ -93,14 +113,20 @@ class MediaRef(DomainModel):
     local_path: str | None = None
 
 
-class InboundEvent(DomainModel):
-    """Нормализованное входящее событие (§4.2)."""
+class Record(DomainModel):
+    """
+    Нормализованная входящая запись (§4.2, T041 — обобщение прежнего
+    ``InboundEvent``).
+
+    Транспорт-агностична: ``source`` несёт транспорт и адрес, ``kind`` —
+    мессенджер-семантику (для не-мессенджеров всегда ``NEW``).
+    """
 
     uid: UUID
-    kind: EventKind
+    kind: RecordKind
     dedup_key: str
     origin: Literal['live', 'catchup']
-    source: Address
+    source: Endpoint
     received_by: AccountRef
     external_id: str
     sender_id: str | None = None
@@ -120,19 +146,23 @@ class InboundEvent(DomainModel):
         """
         Факт наличия вложений (§4.2): производное от ``media`` (M7 A2).
 
-        Обратная совместимость по **доступу** (``event.has_media`` — как до
-        M7); задаётся только через ``media``. В JSON-дамп не входит (выводится
+        Обратная совместимость по **доступу** (``record.has_media``);
+        задаётся только через ``media``. В JSON-дамп не входит (выводится
         из ``media``, который сериализуется) — ``@computed_field`` потребовал
         бы pydantic-плагина mypy (project-wide config), осознанно не вводим.
         """
         return bool(self.media)
 
 
-class OutboundMessage(DomainModel):
-    """Исходящее сообщение (§4.3); extra ядро не интерпретирует."""
+class OutboundRecord(DomainModel):
+    """
+    Исходящая запись (§4.3, T041 — обобщение прежнего ``OutboundMessage``).
+
+    ``extra`` ядро не интерпретирует.
+    """
 
     idempotency_key: str
-    target: Address
+    target: Endpoint
     send_via: AccountRef
     text: str
     media: list[MediaRef] = Field(default_factory=list)
@@ -151,17 +181,17 @@ class AnalyticsEvent(DomainModel):
 
     uid: UUID
     kind: str
-    event_uid: UUID | None = None
+    record_uid: UUID | None = None
     pipeline: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     at: AwareDatetime
 
 
 class ProcessingResult(DomainModel):
-    """Результат обработки события процессором (§4.3)."""
+    """Результат обработки записи процессором (§4.3)."""
 
     verdict: Verdict
-    outbound: list[OutboundMessage] = Field(default_factory=list)
+    outbound: list[OutboundRecord] = Field(default_factory=list)
     events: list[AnalyticsEvent] = Field(default_factory=list)
     note: str | None = None
 
@@ -169,7 +199,7 @@ class ProcessingResult(DomainModel):
 class TargetSpec(DomainModel):
     """Цель пайплайна: адрес + аккаунт отправки (§4.4)."""
 
-    target: Address
+    target: Endpoint
     send_via: AccountRef
 
 
@@ -190,7 +220,7 @@ class QueueEnvelope(DomainModel):
     """
 
     pipeline: str
-    event: InboundEvent
+    record: Record
     attempt: int = 0
     not_before: AwareDatetime | None = None
 
@@ -210,7 +240,7 @@ class QueueDepth(DomainModel):
 
 
 class DeliveryReceipt(DomainModel):
-    """Подтверждение отправки: id у платформы (если сообщает) и время."""
+    """Подтверждение отправки: id у транспорта (если сообщает) и время."""
 
     external_id: str | None = None
     delivered_at: AwareDatetime
@@ -224,18 +254,19 @@ class OutboxStatus(StrEnum):
     FAILED = 'failed'
 
 
-class OutboundRecord(DomainModel):
+class OutboxRecord(DomainModel):
     """
-    Запись outbox исходящих (C-9): журнал «что должно быть
-    отправлено». Ключ записи — ``msg.idempotency_key`` (insert-if-absent
-    в ``OutboxPort.put`` — выходная идемпотентность §7.3).
+    Запись outbox исходящих (C-9, T041 — прежний ``OutboundRecord``):
+    журнал «что должно быть отправлено». Ключ записи —
+    ``record.idempotency_key`` (insert-if-absent в ``OutboxPort.put`` —
+    выходная идемпотентность §7.3).
 
     ``finished_at`` — момент перехода в терминальный статус
     (sent/failed); по нему работает ``prune()``. ``pipeline`` и
-    ``event_uid`` — контекст наблюдаемости для аналитики доставки.
+    ``record_uid`` — контекст наблюдаемости для аналитики доставки.
     """
 
-    msg: OutboundMessage
+    record: OutboundRecord
     status: OutboxStatus = OutboxStatus.PENDING
     attempts: int = 0
     next_attempt_at: AwareDatetime
@@ -244,7 +275,7 @@ class OutboundRecord(DomainModel):
     receipt: DeliveryReceipt | None = None
     last_error: str | None = None
     pipeline: str | None = None
-    event_uid: UUID | None = None
+    record_uid: UUID | None = None
 
 
 class DeadLetter(DomainModel):
@@ -332,7 +363,7 @@ class CommandKind(StrEnum):
     """
     Виды команд командного outbox v1 (§12.9): мост api→pipeline.
 
-    ``notify`` — уведомление через ``MessageSinkPort`` (заявка на
+    ``notify`` — уведомление через ``SinkPort`` (заявка на
     регистрацию §12.7); ``catchup`` — ручной catch-up источника
     (``payload['source_key']``); ``restart_pipeline`` — graceful
     перезапуск pipeline-процесса. Расширение — новый член enum'а;
@@ -416,7 +447,7 @@ class ProcessorServices(BaseModel):
 
     ``make_idempotency_key`` — частичное применение
     ``domain.keys.make_idempotency_key`` с зафиксированным пайплайном
-    (A-9): процессор передаёт событие, цель и порядковый номер
+    (A-9): процессор передаёт запись, цель и порядковый номер
     исходящего.
     """
 
@@ -424,4 +455,4 @@ class ProcessorServices(BaseModel):
 
     log: SkipValidation[FilteringBoundLogger]
     state: ScopedState
-    make_idempotency_key: Callable[[InboundEvent, Address, int], str]
+    make_idempotency_key: Callable[[Record, Endpoint, int], str]

@@ -6,7 +6,7 @@ M5/C, фаза 3).
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 import pytest
 import structlog
@@ -17,6 +17,9 @@ from angarion.application.settings import (
     apply_log_level_on_change,
 )
 from angarion.domain.models import DynamicSettings
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 @pytest.fixture(autouse=True)

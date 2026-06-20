@@ -26,7 +26,7 @@ from angarion.domain.models import CommandKind
 
 def _deps(api: ApiConfig, command_outbox: MemoryCommandOutbox, analytics: MemoryAnalytics) -> AngarionDeps:
     settings = make_settings(
-        api=api, accounts={'acc1': AccountConfig(messenger='memory')}
+        api=api, accounts={'acc1': AccountConfig(transport='memory')}
     )
     return AngarionDeps(
         queue=MemoryQueue(),
@@ -52,23 +52,23 @@ async def test_notify_disabled_is_noop() -> None:
 async def test_notify_enabled_enqueues_command() -> None:
     outbox, analytics = MemoryCommandOutbox(), MemoryAnalytics()
     api = ApiConfig(
-        auth='none', notify=NotifyConfig(account='acc1', chat_id='-999')
+        auth='none', notify=NotifyConfig(account='acc1', address='-999')
     )
     deps = _deps(api, outbox, analytics)
     await notify_registration(deps, login='alice')
     commands = await outbox.take()
     assert len(commands) == 1
     assert commands[0].kind is CommandKind.NOTIFY
-    message = commands[0].payload['message']
-    assert message['target']['chat_id'] == '-999'
-    assert message['send_via']['account_id'] == 'acc1'
-    assert 'alice' in message['text']
+    record = commands[0].payload['record']
+    assert record['target']['address'] == '-999'
+    assert record['send_via']['account_id'] == 'acc1'
+    assert 'alice' in record['text']
 
 
 async def test_notify_unknown_account_records_failure_without_raising() -> None:
     outbox, analytics = MemoryCommandOutbox(), MemoryAnalytics()
     api = ApiConfig(
-        auth='none', notify=NotifyConfig(account='ghost', chat_id='-999')
+        auth='none', notify=NotifyConfig(account='ghost', address='-999')
     )
     deps = _deps(api, outbox, analytics)
     await notify_registration(deps, login='alice')  # не падает

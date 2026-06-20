@@ -181,7 +181,7 @@ class PipelineWorker:
     ) -> ProcessingResult:
         """§6.3 (C-9): обработка + фиксация outbound в outbox (до ack)."""
         svc = self._make_services(envelope)
-        result = await binding.processor.process(envelope.event, binding.ctx, svc)
+        result = await binding.processor.process(envelope.record, binding.ctx, svc)
         if result.verdict is Verdict.DELIVER:
             for out in result.outbound:
                 staged = (
@@ -192,7 +192,7 @@ class PipelineWorker:
                 await self._outbox.put(
                     staged,
                     pipeline=envelope.pipeline,
-                    event_uid=envelope.event.uid,
+                    record_uid=envelope.record.uid,
                 )
         for extra in result.events:
             await self._analytics.record(extra)
@@ -202,7 +202,7 @@ class PipelineWorker:
         """Сервисы процессора: лог с correlation id (§14.6), state, ключи."""
         return ProcessorServices(
             log=self._log.bind(
-                pipeline=envelope.pipeline, event_uid=str(envelope.event.uid)
+                pipeline=envelope.pipeline, record_uid=str(envelope.record.uid)
             ),
             state=ScopedStateStore(self._state, envelope.pipeline),
             make_idempotency_key=partial(make_idempotency_key, envelope.pipeline),
@@ -251,7 +251,7 @@ class PipelineWorker:
         self._log.warning(
             'retry_scheduled',
             pipeline=envelope.pipeline,
-            event_uid=str(envelope.event.uid),
+            record_uid=str(envelope.record.uid),
             attempt=retry.attempt,
             delay=delay,
             error=error,
@@ -269,7 +269,7 @@ class PipelineWorker:
         self._log.error(
             'dead_lettered',
             pipeline=envelope.pipeline,
-            event_uid=str(envelope.event.uid),
+            record_uid=str(envelope.record.uid),
             attempt=envelope.attempt,
             error=error,
         )
@@ -284,7 +284,7 @@ class PipelineWorker:
             AnalyticsEvent(
                 uid=uuid4(),
                 kind=kind,
-                event_uid=envelope.event.uid,
+                record_uid=envelope.record.uid,
                 pipeline=envelope.pipeline,
                 payload=payload or {},
                 at=datetime.now(UTC),

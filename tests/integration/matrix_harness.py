@@ -46,7 +46,7 @@ from angarion.adapters.queue.persistqueue_ import QUEUE_BACKEND
 from angarion.adapters.storage.plugin import STORAGE_BACKEND
 from angarion.bootstrap import LoadedPlugins, build_app
 from angarion.config import AngarionSettings, EndpointConfig, PipelineConfig
-from angarion.domain.models import EventKind
+from angarion.domain.models import RecordKind
 from angarion.domain.plugin import AdapterPlugin
 from angarion.log import get_logger
 
@@ -273,7 +273,7 @@ def build_settings(
     payload: dict[str, Any] = {
         'accounts': {
             ACCOUNT: {
-                'messenger': 'matrix',
+                'transport': 'matrix',
                 'homeserver': homeserver,
                 'user_id': user_id,
             }
@@ -292,14 +292,14 @@ def mirror_pipeline(
     source_room: str,
     target_room: str,
     processor: str = 'integration_echo',
-    events: frozenset[EventKind] | None = None,
+    events: frozenset[RecordKind] | None = None,
 ) -> PipelineConfig:
     """Пайплайн «зеркало»: source_room → target_room."""
     return PipelineConfig(
         processor=processor,
-        events=events if events is not None else frozenset(EventKind),
-        sources=(EndpointConfig(account=ACCOUNT, chat_id=source_room),),
-        targets=(EndpointConfig(account=ACCOUNT, chat_id=target_room),),
+        events=events if events is not None else frozenset(RecordKind),
+        sources=(EndpointConfig(account=ACCOUNT, address=source_room),),
+        targets=(EndpointConfig(account=ACCOUNT, address=target_room),),
     )
 
 

@@ -16,7 +16,7 @@ from angarion.adapters.memory.sink import MemorySink
 from angarion.adapters.memory.storage import MemoryAnalytics, MemoryOutbox
 from angarion.application.delivery import DeliveryWorker
 from angarion.domain.errors import DeliveryError
-from angarion.domain.models import DeliveryReceipt, OutboundMessage, OutboxStatus
+from angarion.domain.models import DeliveryReceipt, OutboundRecord, OutboxStatus
 
 
 class FlakySink(MemorySink):
@@ -27,7 +27,7 @@ class FlakySink(MemorySink):
         self._calls = 0
         self._fail_on = fail_on
 
-    async def send(self, msg: OutboundMessage) -> DeliveryReceipt:
+    async def send(self, msg: OutboundRecord) -> DeliveryReceipt:
         self._calls += 1
         if self._calls in self._fail_on:
             error = 'сеть моргнула'
@@ -68,8 +68,8 @@ class TestDelivery:
     async def test_delivers_pending_and_marks_sent(self) -> None:
         harness = DeliveryHarness()
         msg = make_outbound()
-        event_uid = uuid4()
-        await harness.outbox.put(msg, pipeline='digest', event_uid=event_uid)
+        record_uid = uuid4()
+        await harness.outbox.put(msg, pipeline='digest', record_uid=record_uid)
         assert await harness.worker.drain_due() == 1
         assert harness.sink.sent == [msg]
         record = await harness.outbox.get(msg.idempotency_key)
@@ -79,7 +79,7 @@ class TestDelivery:
         delivered = await harness.analytics.recent(kind='delivered')
         assert len(delivered) == 1
         assert delivered[0].pipeline == 'digest'
-        assert delivered[0].event_uid == event_uid
+        assert delivered[0].record_uid == record_uid
 
     async def test_nothing_due(self) -> None:
         harness = DeliveryHarness()
@@ -116,9 +116,7 @@ class TestDelivery:
         assert await harness.worker.deliver_next() is False  # ещё не срок
 
     async def test_exhausted_attempts_mark_failed(self) -> None:
-        harness = DeliveryHarness(
-            sink=FlakySink(fail_on={1, 2, 3, 4}), max_retries=2
-        )
+        harness = DeliveryHarness(sink=FlakySink(fail_on={1, 2, 3, 4}), max_retries=2)
         msg = make_outbound()
         await harness.outbox.put(msg)
         assert await harness.worker.drain_due() == 3  # 1 попытка + 2 ретрая
@@ -150,7 +148,7 @@ class TestRunLifecycle:
         release = asyncio.Event()
 
         class SlowSink(MemorySink):
-            async def send(self, msg: OutboundMessage) -> DeliveryReceipt:
+            async def send(self, msg: OutboundRecord) -> DeliveryReceipt:
                 started.set()
                 await release.wait()
                 return await super().send(msg)
@@ -173,7 +171,7 @@ class TestRunLifecycle:
         started = asyncio.Event()
 
         class HungSink(MemorySink):
-            async def send(self, msg: OutboundMessage) -> DeliveryReceipt:
+            async def send(self, msg: OutboundRecord) -> DeliveryReceipt:
                 started.set()
                 await asyncio.sleep(100)  # «залип» в долгом ожидании
                 return await super().send(msg)

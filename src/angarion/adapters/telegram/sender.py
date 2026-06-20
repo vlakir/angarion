@@ -1,5 +1,5 @@
 """
-TelegramSender (FR «Sender», M3, фаза 4): ``MessageSinkPort`` поверх
+TelegramSender (FR «Sender», M3, фаза 4): ``SinkPort`` поверх
 границы Telethon с троттлингом и устойчивой отправкой.
 
 Перед отправкой — token-bucket троттлинг per (account, chat): бакет чата
@@ -16,7 +16,7 @@ TelegramSender (FR «Sender», M3, фаза 4): ``MessageSinkPort`` поверх
 Проброшенное исключение ловит ``DeliveryWorker`` (§8): reschedule с
 backoff, после ``max_retries`` — терминальный ``failed``; сообщение не
 теряется. Telegram-специфику (``parse_mode``/``silent``/
-``disable_preview``) sender читает из ``OutboundMessage.extra`` — ядро
+``disable_preview``) sender читает из ``OutboundRecord.extra`` — ядро
 поле не интерпретирует.
 
 Часы/сон инъектируются (тесты — детерминированно, без реальных пауз).
@@ -52,13 +52,13 @@ if TYPE_CHECKING:
 
     from angarion.adapters.telegram.client import TelegramClientPort
     from angarion.adapters.telegram.registry import ClientPool
-    from angarion.domain.models import OutboundMessage
+    from angarion.domain.models import OutboundRecord
     from angarion.domain.ports import RuntimeConfigPort
 
 
 class TelegramSendOptions(BaseModel):
     """
-    Telegram-специфика из ``OutboundMessage.extra`` (ядро не трактует).
+    Telegram-специфика из ``OutboundRecord.extra`` (ядро не трактует).
 
     ``extra='ignore'`` — незнакомые ключи extra не ломают отправку.
     """
@@ -71,7 +71,7 @@ class TelegramSendOptions(BaseModel):
 
 
 class TelegramSender:
-    """``MessageSinkPort``: троттлинг + FloodWait-повтор + transient-ретраи."""
+    """``SinkPort``: троттлинг + FloodWait-повтор + transient-ретраи."""
 
     def __init__(
         self,
@@ -120,19 +120,21 @@ class TelegramSender:
         }
         self._chat_buckets: dict[tuple[str, str], TokenBucket] = {}
 
-    async def send(self, msg: OutboundMessage) -> DeliveryReceipt:
+    async def send(self, record: OutboundRecord) -> DeliveryReceipt:
         """Троттлинг → устойчивая отправка → ``DeliveryReceipt`` (UTC)."""
-        account_id = msg.send_via.account_id
+        account_id = record.send_via.account_id
         client = self._pool.clients[account_id]
-        opts = TelegramSendOptions.model_validate(msg.extra)
+        opts = TelegramSendOptions.model_validate(record.extra)
         await self._apply_dynamic_limits()
-        await self._throttle(account_id, msg.target.chat_id)
+        await self._throttle(account_id, record.target.address)
         reply_to = (
-            int(msg.target.thread_id) if msg.target.thread_id is not None else None
+            int(record.target.thread_id)
+            if record.target.thread_id is not None
+            else None
         )
-        peer = as_peer(msg.target.chat_id)
+        peer = as_peer(record.target.address)
         do_send = self._send_op(
-            client=client, peer=peer, msg=msg, reply_to=reply_to, opts=opts
+            client=client, peer=peer, record=record, reply_to=reply_to, opts=opts
         )
         message_id = await self._send_resilient(do_send=do_send, peer=peer)
         return DeliveryReceipt(
@@ -144,7 +146,7 @@ class TelegramSender:
         *,
         client: TelegramClientPort,
         peer: int | str,
-        msg: OutboundMessage,
+        record: OutboundRecord,
         reply_to: int | None,
         opts: TelegramSendOptions,
     ) -> Callable[[], Awaitable[int]]:
@@ -155,7 +157,7 @@ class TelegramSender:
         0-арный корутин-факторий для ``_send_resilient`` (FloodWait/transient-
         обёртка едина для обоих).
         """
-        media = msg.media[0] if msg.media else None
+        media = record.media[0] if record.media else None
         if media is not None and (
             media.local_path is not None or media.ref is not None
         ):
@@ -167,7 +169,7 @@ class TelegramSender:
                     peer,
                     source_ref=source_ref,
                     local_path=local_path,
-                    text=msg.text,
+                    text=record.text,
                     reply_to=reply_to,
                     parse_mode=opts.parse_mode,
                     silent=opts.silent,
@@ -177,7 +179,7 @@ class TelegramSender:
             async def do_send() -> int:
                 return await client.send_message(
                     peer,
-                    msg.text,
+                    record.text,
                     reply_to=reply_to,
                     parse_mode=opts.parse_mode,
                     silent=opts.silent,

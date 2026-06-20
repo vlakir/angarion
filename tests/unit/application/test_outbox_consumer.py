@@ -19,7 +19,7 @@ from angarion.domain.models import (
     CommandKind,
     CommandStatus,
     DeliveryReceipt,
-    OutboundMessage,
+    OutboundRecord,
 )
 from angarion.testing.factories import make_outbound
 
@@ -27,13 +27,13 @@ pytestmark = pytest.mark.asyncio
 
 
 class FakeSink:
-    """``MessageSinkPort`` для тестов: запоминает отправки или падает."""
+    """``SinkPort`` для тестов: запоминает отправки или падает."""
 
     def __init__(self, *, fail: bool = False) -> None:
-        self.sent: list[OutboundMessage] = []
+        self.sent: list[OutboundRecord] = []
         self._fail = fail
 
-    async def send(self, msg: OutboundMessage) -> DeliveryReceipt:
+    async def send(self, msg: OutboundRecord) -> DeliveryReceipt:
         if self._fail:
             msg_text = 'sink boom'
             raise RuntimeError(msg_text)
@@ -75,7 +75,7 @@ async def test_notify_dispatch_sends_and_marks_done() -> None:
     sink = FakeSink()
     message = make_outbound()
     command = await outbox.put(
-        CommandKind.NOTIFY, payload={'message': message.model_dump(mode='json')}
+        CommandKind.NOTIFY, payload={'record': message.model_dump(mode='json')}
     )
     consumer = _make_consumer(outbox, analytics, sink=sink)
     processed = await consumer.poll_once()
@@ -91,7 +91,7 @@ async def test_notify_failure_marks_failed_and_records_notify_failed() -> None:
     outbox, analytics = MemoryCommandOutbox(), MemoryAnalytics()
     command = await outbox.put(
         CommandKind.NOTIFY,
-        payload={'message': make_outbound().model_dump(mode='json')},
+        payload={'record': make_outbound().model_dump(mode='json')},
     )
     consumer = _make_consumer(outbox, analytics, sink=FakeSink(fail=True))
     await consumer.poll_once()
@@ -100,7 +100,8 @@ async def test_notify_failure_marks_failed_and_records_notify_failed() -> None:
     assert stored.status is CommandStatus.FAILED
     assert 'sink boom' in (stored.error or '')
     failures = await analytics.recent(kind=NOTIFY_FAILED)
-    assert failures and failures[0].payload['command_uid'] == str(command.uid)
+    assert failures
+    assert failures[0].payload['command_uid'] == str(command.uid)
 
 
 async def test_catchup_dispatch_invokes_callback() -> None:

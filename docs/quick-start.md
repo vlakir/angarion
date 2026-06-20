@@ -31,13 +31,13 @@ backend = "persistqueue"
 path = "queue.db"
 
 [accounts.main]
-messenger = "telegram"
+transport = "telegram"
 # api_id / api_hash — через env, не в TOML (§17.7)
 
 [pipelines.relay]
-source = { account = "main", chat_id = -1001234567890 }
+source = { account = "main", address = "-1001234567890" }
 processor = "passthrough"
-sink = { account = "main", chat_id = -1009876543210 }
+sink = { account = "main", address = "-1009876543210" }
 ```
 
 !!! danger "Секреты — только через env"

@@ -15,7 +15,7 @@ from angarion import __version__
 from angarion.adapters.http import AngarionDeps, create_app
 from angarion.adapters.memory.storage import MemoryAnalytics, MemoryCursorStore
 from angarion.config import EndpointConfig, PipelineConfig
-from angarion.domain.models import AnalyticsEvent, EventKind, SourceCursor
+from angarion.domain.models import AnalyticsEvent, RecordKind, SourceCursor
 
 NOW = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
 
@@ -72,9 +72,9 @@ async def test_diagnostics_skips_source_with_unknown_account(
         pipelines={
             'digest': PipelineConfig(
                 processor='passthrough',
-                events=frozenset({EventKind.MESSAGE_NEW}),
-                sources=(EndpointConfig(account='ghost', chat_id='-100'),),
-                targets=(EndpointConfig(account='acc1', chat_id='-200'),),
+                events=frozenset({RecordKind.NEW}),
+                sources=(EndpointConfig(account='ghost', address='-100'),),
+                targets=(EndpointConfig(account='acc1', address='-200'),),
             )
         }
     )

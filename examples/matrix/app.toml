@@ -5,7 +5,7 @@
 # README.md). В TOML — только не-секретные параметры.
 
 [accounts.main]
-messenger = "matrix"
+transport = "matrix"
 homeserver = "https://matrix.example.org"   # URL твоего homeserver'а
 user_id = "@bot:matrix.example.org"          # полный MXID аккаунта
 # Пароль — через env ANGARION_MATRIX_PASSWORD (секрет), не в TOML.
@@ -25,10 +25,10 @@ backend = "memory"               # для примера; боевой — persi
 
 [pipelines.mirror]
 processor = "passthrough"        # ретрансляция текста и вложений как есть
-events = ["message_new"]         # только новые сообщения
+events = ["new"]                 # только новые сообщения
 # Источник и цель — room_id (вида !abc:server) или alias (#room:server).
 # Аккаунт должен состоять в обеих комнатах. Зашифрованные комнаты
 # поддержаны: listener расшифрует входящее (нужен extra angarion[matrix]
 # с nio[e2e] → системная libolm, см. README репозитория).
-sources = [{ account = "main", chat_id = "!SOURCE_ROOM:matrix.example.org" }]
-targets = [{ account = "main", chat_id = "!TARGET_ROOM:matrix.example.org" }]
+sources = [{ account = "main", address = "!SOURCE_ROOM:matrix.example.org" }]
+targets = [{ account = "main", address = "!TARGET_ROOM:matrix.example.org" }]

@@ -2,7 +2,7 @@
 Реестр процессоров и встроенный ``passthrough`` (§10.1–10.2 ТЗ, FR-17).
 
 Регистрация: ``@processor('name')`` для async-функций с сигнатурой
-``(event, ctx, svc) -> ProcessingResult`` либо ``register()`` для
+``(record, ctx, svc) -> ProcessingResult`` либо ``register()`` для
 готовых объектов ``ProcessorPort``. Загрузка внешних процессоров
 через entry points ``angarion.processors`` — bootstrap (Фаза 4).
 
@@ -20,21 +20,21 @@ from typing import Final
 from jinja2 import Template, TemplateSyntaxError
 from pydantic import BaseModel, ConfigDict, PrivateAttr, SkipValidation, ValidationError
 
-from angarion.application.templating import compile_event_template, render_compiled
+from angarion.application.templating import compile_record_template, render_compiled
 from angarion.domain.errors import ConfigError
 from angarion.domain.models import (
-    EventKind,
-    InboundEvent,
-    OutboundMessage,
+    OutboundRecord,
     PipelineContextData,
     ProcessingResult,
     ProcessorServices,
+    Record,
+    RecordKind,
     Verdict,
 )
 from angarion.domain.ports import ProcessorPort
 
 ProcessorFn = Callable[
-    [InboundEvent, PipelineContextData, ProcessorServices],
+    [Record, PipelineContextData, ProcessorServices],
     Awaitable[ProcessingResult],
 ]
 """Сигнатура функции-процессора (§10.1)."""
@@ -57,12 +57,12 @@ class FunctionProcessor(BaseModel):
 
     async def process(
         self,
-        event: InboundEvent,
+        record: Record,
         ctx: PipelineContextData,
         svc: ProcessorServices,
     ) -> ProcessingResult:
         """Делегировать обработку обёрнутой функции."""
-        return await self.fn(event, ctx, svc)
+        return await self.fn(record, ctx, svc)
 
 
 _registry: dict[str, ProcessorPort] = {}
@@ -103,12 +103,12 @@ def registered() -> dict[str, ProcessorPort]:
 
 @processor('passthrough')
 async def passthrough(
-    event: InboundEvent,
+    record: Record,
     ctx: PipelineContextData,
     svc: ProcessorServices,
 ) -> ProcessingResult:
     """
-    Ретрансляция текста и вложений события во все цели как есть (§10.2).
+    Ретрансляция текста и вложений записи во все цели как есть (§10.2).
 
     DROP только когда нечего ретранслировать — нет ни текста, ни вложений
     (DELETED без восстановления реестром): ``text=None`` обязан переживать
@@ -116,17 +116,17 @@ async def passthrough(
     непустом ``media``) — доставляется с пустой подписью (M7, фаза A2);
     ``media`` переносится транзитом, sender переотправляет вложения.
     """
-    if event.text is None and not event.media:
+    if record.text is None and not record.media:
         return ProcessingResult(
             verdict=Verdict.DROP, note='passthrough: ни текста, ни вложений'
         )
     outbound = [
-        OutboundMessage(
-            idempotency_key=svc.make_idempotency_key(event, spec.target, n),
+        OutboundRecord(
+            idempotency_key=svc.make_idempotency_key(record, spec.target, n),
             target=spec.target,
             send_via=spec.send_via,
-            text=event.text or '',
-            media=event.media,
+            text=record.text or '',
+            media=record.media,
         )
         for n, spec in enumerate(ctx.targets)
     ]
@@ -153,7 +153,7 @@ class TemplateProcessorConfig(BaseModel):
 
 
 class _CompiledTemplates(BaseModel):
-    """Скомпилированные шаблоны видов события (кэш по пайплайну, W1)."""
+    """Скомпилированные шаблоны видов записи (кэш по пайплайну, W1)."""
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
@@ -161,11 +161,11 @@ class _CompiledTemplates(BaseModel):
     edited: SkipValidation[Template] | None = None
     deleted: SkipValidation[Template] | None = None
 
-    def select(self, kind: EventKind) -> Template:
-        """Шаблон под вид события: пер-видовой при наличии, иначе базовый."""
-        if kind is EventKind.MESSAGE_EDITED and self.edited is not None:
+    def select(self, kind: RecordKind) -> Template:
+        """Шаблон под вид записи: пер-видовой при наличии, иначе базовый."""
+        if kind is RecordKind.EDITED and self.edited is not None:
             return self.edited
-        if kind is EventKind.MESSAGE_DELETED and self.deleted is not None:
+        if kind is RecordKind.DELETED and self.deleted is not None:
             return self.deleted
         return self.base
 
@@ -173,9 +173,9 @@ class _CompiledTemplates(BaseModel):
 class TemplateProcessor(BaseModel):
     """
     Встроенный процессор ``template`` (§10.2): детерминированное
-    переписывание события Jinja2-шаблоном по его полям, без LLM.
+    переписывание записи Jinja2-шаблоном по её полям, без LLM.
 
-    Шаблон выбирается по виду события (база / ``edited`` / ``deleted`` с
+    Шаблон выбирается по виду записи (база / ``edited`` / ``deleted`` с
     fallback на базу). Пустой рендер → DROP (FR §3, N1): для DELETED без
     ``deleted``-шаблона базовый ``{{ text }}`` (``text=None``) отрендерится
     пусто.
@@ -212,9 +212,9 @@ class TemplateProcessor(BaseModel):
         try:
             cfg = TemplateProcessorConfig.model_validate(ctx.settings)
             compiled = _CompiledTemplates(
-                base=compile_event_template(cfg.template),
-                edited=compile_event_template(cfg.edited) if cfg.edited else None,
-                deleted=compile_event_template(cfg.deleted) if cfg.deleted else None,
+                base=compile_record_template(cfg.template),
+                edited=compile_record_template(cfg.edited) if cfg.edited else None,
+                deleted=compile_record_template(cfg.deleted) if cfg.deleted else None,
             )
         except (ValidationError, TemplateSyntaxError) as exc:
             msg = (
@@ -227,19 +227,19 @@ class TemplateProcessor(BaseModel):
 
     async def process(
         self,
-        event: InboundEvent,
+        record: Record,
         ctx: PipelineContextData,
         svc: ProcessorServices,
     ) -> ProcessingResult:
-        """Отрендерить шаблон вида события → OutboundMessage на каждую цель."""
-        text = render_compiled(self._config(ctx).select(event.kind), event)
+        """Отрендерить шаблон вида записи → OutboundRecord на каждую цель."""
+        text = render_compiled(self._config(ctx).select(record.kind), record)
         if not text:
             return ProcessingResult(
                 verdict=Verdict.DROP, note='template: пустой рендер'
             )
         outbound = [
-            OutboundMessage(
-                idempotency_key=svc.make_idempotency_key(event, spec.target, n),
+            OutboundRecord(
+                idempotency_key=svc.make_idempotency_key(record, spec.target, n),
                 target=spec.target,
                 send_via=spec.send_via,
                 text=text,
