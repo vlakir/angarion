@@ -20,7 +20,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd ../.. && pwd)"
 
-# Dev-удобство: подхватить реквизиты из `.secrets` (если есть).
+# Dev-удобство: подхватить реквизиты из `.secrets` (если есть). Аккаунт main
+# здесь — Matrix, поэтому Telegram-креды из `.secrets` (api_id/api_hash/
+# StringSession) на него НЕ мапятся — иначе MatrixAccountConfig упадёт на
+# чужих полях. Opt-out из TG-маппинга — через ANGARION_DEV_MAIN_TRANSPORT.
+export ANGARION_DEV_MAIN_TRANSPORT=matrix
 # shellcheck source=../../scripts/example_dev.sh
 source "$ROOT/scripts/example_dev.sh"
 

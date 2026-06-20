@@ -22,7 +22,7 @@ class FakeConnectedClient(FakeTelegramClient):
 
 
 def make_registry(
-    *, with_session: bool = True
+    *, env_sessions: dict[str, str] | None = None
 ) -> tuple[ClientRegistry, MemorySessionStore, list[tuple[int, str, str]]]:
     store = MemorySessionStore()
     calls: list[tuple[int, str, str]] = []
@@ -36,6 +36,7 @@ def make_registry(
     registry = ClientRegistry(
         credentials={'main': (12345, 'hash')},
         session_store=store,
+        env_sessions=env_sessions or {},
         connect=connect,
     )
     return registry, store, calls
@@ -60,6 +61,27 @@ class TestConnectAll:
         await registry.connect_all()
         await registry.connect_all()
         assert len(calls) == 1
+
+    async def test_env_session_used_directly_without_store(self) -> None:
+        """T042: StringSession из env подключается напрямую, минуя app.db."""
+        registry, _store, calls = make_registry(env_sessions={'main': 'ENV-STRING'})
+        await registry.connect_all()
+        # store пуст, но ConfigError нет — сессия пришла из env
+        assert calls == [(12345, 'hash', 'ENV-STRING')]
+
+    async def test_env_session_takes_priority_over_stored(self) -> None:
+        """T042: env-сессия имеет приоритет над сохранённой в app.db."""
+        registry, store, calls = make_registry(env_sessions={'main': 'ENV-STRING'})
+        await store.save('main', 'STORED-STRING')
+        await registry.connect_all()
+        assert calls == [(12345, 'hash', 'ENV-STRING')]
+
+    async def test_falls_back_to_store_without_env_session(self) -> None:
+        """T042: без env-сессии — прежний путь из app.db (дефолт не сломан)."""
+        registry, store, calls = make_registry(env_sessions={})
+        await store.save('main', 'STORED-STRING')
+        await registry.connect_all()
+        assert calls == [(12345, 'hash', 'STORED-STRING')]
 
 
 class TestDisconnectAll:

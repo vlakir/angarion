@@ -112,6 +112,17 @@ uv run angarion run --config app.toml     # боевой запуск конве
 `[pipelines.*]` (пример полей — в [CONCEPT.md](CONCEPT.md) §11);
 `api_id`/`api_hash`/`ANGARION_SESSION_KEY` подаются через env, не в TOML.
 
+**Dev/CI без login (T042).** Если у вас уже есть авторизованная
+`StringSession`, её можно отдать рантайму прямо из окружения —
+`ANGARION_ACCOUNTS__<NAME>__SESSION` (для аккаунта `main` —
+`ANGARION_ACCOUNTS__MAIN__SESSION`). Тогда не нужны ни `angarion login`,
+ни ключ шифрования: env-сессия подключается напрямую, в обход `app.db`
+(приоритетнее сохранённой). Это **dev/CI-путь** — строка сессии это
+полноценные учётные данные аккаунта в открытом виде, поэтому держите её
+вне TOML (только env, git-ignored) и не используйте как prod-дефолт;
+боевое хранение остаётся зашифрованным в `app.db`. Примеры в `examples/`
+подхватывают такую сессию автоматически из git-ignored `.secrets`.
+
 ## Дорожная карта
 
 | Этап | Содержимое | Статус |
