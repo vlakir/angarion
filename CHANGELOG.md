@@ -29,6 +29,27 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Added
 
+- **T044 (фаза B): матрица бэкендов, sustained/ramp, отчёты.** Гарнес
+  гоняет обе конфигурации из `_harness.BACKENDS` — memory-потолок и
+  persistqueue+SQLite. Добавлена open-loop форма `run_sustained` (подача
+  с целевым темпом `target_rps` за фиксированное время + профиль
+  `queue.depth()` во времени, МНК-наклон глубины и вердикт насыщения:
+  ingest-bound — подача не достигает target, либо delivery-bound —
+  очередь растёт). Отчёты (`PerfReport`/`SustainedReport`) печатаются
+  человекочитаемо и опционально сохраняются JSON-артефактом
+  (`ANGARION_PERF_JSON_DIR`). Опциональный soft-порог
+  `ANGARION_PERF_MIN_RPS` (по умолчанию выкл) — лёгкий regression-сигнал.
+  Knobs: `ANGARION_PERF_BURST_N`, `ANGARION_PERF_SUSTAINED_RPS`,
+  `ANGARION_PERF_SUSTAINED_SECONDS`.
+- **Baseline M1 (числа машинозависимы, dev-машина 2026-06-20).** Burst
+  N=2000: memory ~6.5k rec/s, persistqueue+SQLite ~112 rec/s — **цена
+  персистентности ~58×**. Латентность burst (под пиковой глубиной
+  очереди): memory p50≈132 / p99≈230 ms, sqlite p50≈38 / p99≈180 ms.
+  Sustained target=500 rec/s: memory успевает (доставка ≈500 rec/s,
+  очередь не растёт); persistqueue+SQLite **насыщен на входе** — подача
+  не дотягивает до target (~113 rec/s), т.к. `emit` сам пишет в SQLite
+  (dedup/registry) и конкурирует с доставкой за единый write-lock.
+  Локализация сериализующей точки — фаза C.
 - **T044 (фаза A): ядро нагрузочного гарнеса.** Perf-тесты в
   `tests/perf/` (маркер `@pytest.mark.perf`, вне gated-прогона:
   `addopts = -m 'not perf'`). Гарнес (`tests/perf/_harness.py`)

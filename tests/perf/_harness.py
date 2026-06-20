@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
+from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -49,7 +51,6 @@ from angarion.testing import CountingSink
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from pathlib import Path
 
     from pydantic import BaseModel as PydanticModel
 
@@ -61,6 +62,14 @@ StorageBackendName = Literal['memory', 'sqlite']
 SRC_CHAT = '-100perfsrc'
 DST_CHAT = '-100perfdst'
 ACCOUNT = 'main'
+
+#: Матрица бэкендов из spec §3: (1) memory-потолок, (2) реалистичная
+#: персистентность persistqueue+SQLite. Не полное декартово произведение —
+#: ровно две осмысленные конфигурации.
+BACKENDS: tuple[tuple[QueueBackendName, StorageBackendName], ...] = (
+    ('memory', 'memory'),
+    ('persistqueue', 'sqlite'),
+)
 
 
 class PerfReport(BaseModel):
@@ -98,12 +107,86 @@ class PerfReport(BaseModel):
         )
 
 
+class DepthSample(BaseModel):
+    """Точка профиля очереди во времени: (секунды от старта, глубина, доставлено)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    t_s: float
+    depth: int
+    delivered: int
+
+
+class SustainedReport(BaseModel):
+    """
+    Сводка sustained/ramp-прогона: подача с целевым темпом ``target_rps`` в
+    течение ``duration_s`` и профиль ``queue.depth()`` во времени. Цель —
+    насыщение/backpressure: успевает ли конвейер за темпом подачи (slope
+    глубины очереди) и где точка, после которой обработка отстаёт.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    queue_backend: QueueBackendName
+    storage_backend: StorageBackendName
+    target_rps: float
+    duration_s: float
+    poll_interval: float
+    submitted: int
+    delivered: int
+    submit_rps: float
+    delivery_rps: float
+    peak_depth: int
+    final_depth: int
+    depth_slope_rps: float
+    saturated: bool
+    samples: tuple[DepthSample, ...]
+
+    def render(self) -> str:
+        """Человекочитаемый отчёт по sustained-прогону (числа + условия)."""
+        if self.submit_rps < self.target_rps * 0.9:
+            verdict = 'НАСЫЩЕН (подача не достигает target — узкое место на входе)'
+        elif self.depth_slope_rps > self.target_rps * 0.05:
+            verdict = 'НАСЫЩЕН (очередь растёт — доставка отстаёт)'
+        else:
+            verdict = 'успевает'
+        return '\n'.join(
+            (
+                f'sustained-прогон: queue={self.queue_backend} '
+                f'storage={self.storage_backend} '
+                f'target={self.target_rps:.0f} rec/s '
+                f'duration={self.duration_s:.1f}s poll={self.poll_interval}s',
+                f'  подано/доставлено: {self.submitted}/{self.delivered}',
+                f'  темп подачи:       {self.submit_rps:.1f} rec/s',
+                f'  темп доставки:     {self.delivery_rps:.1f} rec/s',
+                f'  глубина оч.:       peak={self.peak_depth} '
+                f'final={self.final_depth} slope={self.depth_slope_rps:+.1f} rec/s',
+                f'  вердикт:           {verdict}',
+            )
+        )
+
+
 def _percentile(values_sorted: Sequence[float], q: float) -> float:
     """Перцентиль методом ближайшего ранга (``q`` в [0, 1])."""
     if not values_sorted:
         return 0.0
     idx = min(len(values_sorted) - 1, max(0, math.ceil(q * len(values_sorted)) - 1))
     return values_sorted[idx]
+
+
+def _slope(points: Sequence[DepthSample]) -> float:
+    """МНК-наклон глубины очереди по времени (rec/s); 0.0 при <2 точках."""
+    n = len(points)
+    if n < 2:
+        return 0.0
+    sx = sum(p.t_s for p in points)
+    sy = sum(p.depth for p in points)
+    sxx = sum(p.t_s * p.t_s for p in points)
+    sxy = sum(p.t_s * p.depth for p in points)
+    denom = n * sxx - sx * sx
+    if denom == 0:
+        return 0.0
+    return (n * sxy - sx * sy) / denom
 
 
 def _perf_memory_plugin(sink: CountingSink) -> AdapterPlugin:
@@ -284,3 +367,149 @@ async def _drive_burst(
             raise TimeoutError(msg)
         await asyncio.sleep(sample_interval)
     return peak_depth, emit_start
+
+
+async def run_sustained(
+    *,
+    target_rps: float,
+    duration_s: float,
+    queue_backend: QueueBackendName = 'memory',
+    storage_backend: StorageBackendName = 'memory',
+    poll_interval: float = 0.001,
+    tmp_path: Path | None = None,
+    sample_interval: float = 0.05,
+) -> SustainedReport:
+    """
+    Open-loop sustained: подавать записи с целевым темпом ``target_rps`` в
+    течение ``duration_s`` секунд, сэмплируя глубину очереди. Если конвейер
+    не успевает (delivery < target), очередь растёт — это и есть насыщение;
+    наклон глубины (``depth_slope_rps``) — мера отставания.
+    """
+    sink = CountingSink()
+    settings = build_perf_settings(
+        queue_backend=queue_backend,
+        storage_backend=storage_backend,
+        poll_interval=poll_interval,
+        tmp_path=tmp_path,
+    )
+    app = build_app(settings, plugins=build_perf_plugins(sink))
+    await app.start()
+    try:
+        listener = app.listeners[0]
+        if not isinstance(listener, MemoryListener):
+            msg = 'ожидался MemoryListener в гарнесе'
+            raise TypeError(msg)
+        samples, submitted, submit_elapsed = await _drive_sustained(
+            app=app,
+            listener=listener,
+            sink=sink,
+            target_rps=target_rps,
+            duration_s=duration_s,
+            sample_interval=sample_interval,
+        )
+        delivered = sink.count
+        final = await app.queue.depth()
+    finally:
+        await app.stop()
+
+    depths = [s.depth for s in samples]
+    slope = _slope(samples)
+    return SustainedReport(
+        queue_backend=queue_backend,
+        storage_backend=storage_backend,
+        target_rps=target_rps,
+        duration_s=duration_s,
+        poll_interval=poll_interval,
+        submitted=submitted,
+        delivered=delivered,
+        submit_rps=submitted / submit_elapsed if submit_elapsed > 0 else 0.0,
+        delivery_rps=delivered / submit_elapsed if submit_elapsed > 0 else 0.0,
+        peak_depth=max(depths, default=0),
+        final_depth=final.pending + final.unacked,
+        depth_slope_rps=slope,
+        # насыщение: либо подача не дотягивает до target (ingest-bound),
+        # либо очередь растёт быстрее 5% target (delivery-bound).
+        saturated=(
+            submitted / submit_elapsed < target_rps * 0.9
+            if submit_elapsed > 0
+            else True
+        )
+        or slope > target_rps * 0.05,
+        samples=tuple(samples),
+    )
+
+
+async def _drive_sustained(
+    *,
+    app: AngarionApp,
+    listener: MemoryListener,
+    sink: CountingSink,
+    target_rps: float,
+    duration_s: float,
+    sample_interval: float,
+) -> tuple[list[DepthSample], int, float]:
+    """Подача с целевым темпом + сэмплирование глубины; (профиль, подано, время)."""
+    start = perf_counter()
+    deadline = start + duration_s
+    next_sample = start + sample_interval
+    samples: list[DepthSample] = []
+    submitted = 0
+    while perf_counter() < deadline:
+        due = int((perf_counter() - start) * target_rps)
+        while submitted <= due and perf_counter() < deadline:
+            await listener.emit(
+                {
+                    'address': SRC_CHAT,
+                    'external_id': str(submitted),
+                    'text': repr(perf_counter()),
+                }
+            )
+            submitted += 1
+        if perf_counter() >= next_sample:
+            depth = await app.queue.depth()
+            samples.append(
+                DepthSample(
+                    t_s=perf_counter() - start,
+                    depth=depth.pending + depth.unacked,
+                    delivered=sink.count,
+                )
+            )
+            next_sample += sample_interval
+        next_emit_at = start + (submitted + 1) / target_rps
+        sleep_for = min(next_emit_at, next_sample) - perf_counter()
+        if sleep_for > 0:
+            await asyncio.sleep(min(sleep_for, sample_interval))
+    return samples, submitted, perf_counter() - start
+
+
+def maybe_write_json(report: BaseModel, *, label: str) -> Path | None:
+    """
+    Если задан ``ANGARION_PERF_JSON_DIR`` — сохранить отчёт JSON-артефактом
+    ``<dir>/<label>.json`` (для сравнения прогонов). Иначе ничего не делает.
+    """
+    directory = os.environ.get('ANGARION_PERF_JSON_DIR')
+    if not directory:
+        return None
+    out = Path(directory)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f'{label}.json'
+    path.write_text(report.model_dump_json(indent=2), encoding='utf-8')
+    return path
+
+
+def maybe_assert_min_rps(throughput_rps: float) -> None:
+    """
+    Опц. soft-порог: если задан ``ANGARION_PERF_MIN_RPS`` и измеренный
+    throughput ниже — поднять ``AssertionError`` (лёгкий regression-сигнал).
+    По умолчанию (переменная не задана) — no-op.
+    """
+    raw = os.environ.get('ANGARION_PERF_MIN_RPS')
+    if not raw:
+        return
+    floor = float(raw)
+    if throughput_rps < floor:
+        msg = (
+            f'throughput {throughput_rps:.1f} rec/s ниже порога '
+            f'ANGARION_PERF_MIN_RPS={floor}'
+        )
+        raise AssertionError(msg)
