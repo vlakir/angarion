@@ -41,7 +41,9 @@ _DEFAULT_DURATION_S = 5.0
 
 
 def _target_rps() -> float:
-    return float(os.environ.get('ANGARION_PERF_SUSTAINED_RPS', str(_DEFAULT_TARGET_RPS)))
+    return float(
+        os.environ.get('ANGARION_PERF_SUSTAINED_RPS', str(_DEFAULT_TARGET_RPS))
+    )
 
 
 def _duration_s() -> float:

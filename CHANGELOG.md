@@ -29,6 +29,26 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Added
 
+- **T044 (фаза C): изоляция узких мест — микро-бенчи, атрибуция,
+  профиль.** Три метода спеки: (a) компонентные микро-бенчи портов в
+  изоляции (`tests/perf/_microbench.py`, `run_microbench` → rec/s по
+  queue/dedup/registry/outbox/analytics); (b) однопоточная атрибуция по
+  этапам (`_harness.run_stage_attribution` → доля ingest/process/deliver
+  во времени обработки одной записи, без фоновых циклов и контеншна);
+  (c) сэмплирующий профиль sqlite-burst через `pyinstrument`
+  (`tests/perf/test_profile.py`). Knobs: `ANGARION_PERF_MICROBENCH_ITERS`,
+  `ANGARION_PERF_ATTRIBUTION_N`, `ANGARION_PERF_PROFILE_N`.
+- **Узкое место M1 локализовано (числа машинозависимы, dev-машина
+  2026-06-20).** Сериализующая точка persistqueue+SQLite — **per-event
+  транзакции SQLite**, не однопоточность. Микро-бенчи sqlite: каждый
+  порт ~950–2600 rec/s изолированно. Атрибуция: e2e ≈ 7.8 ms/rec
+  (≈ 128 rec/s), время равномерно по этапам (ingest ~41% / process ~30%
+  / deliver ~29%) — каждый bound на round-trip к БД. Профиль: время в
+  `greenlet_spawn → aiosqlite` (`SqliteOutbox.put/due/mark_sent`,
+  `SqliteAnalytics.record`, `SqliteRuntimeConfig.load` на каждой записи).
+  Ключ: burst с фоновыми воркерами (~112 rec/s) **ниже** однопоточного
+  (~128 rec/s) — конкуренция за единый write-lock не помогает. Подробно
+  и с выводом для §17.8 — `DECISIONS.md` (2026-06-20, фаза C).
 - **T044 (фаза B): матрица бэкендов, sustained/ramp, отчёты.** Гарнес
   гоняет обе конфигурации из `_harness.BACKENDS` — memory-потолок и
   persistqueue+SQLite. Добавлена open-loop форма `run_sustained` (подача

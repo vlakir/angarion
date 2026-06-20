@@ -482,6 +482,141 @@ async def _drive_sustained(
     return samples, submitted, perf_counter() - start
 
 
+class StageReport(BaseModel):
+    """
+    Атрибуция времени по этапам конвейера (T044, фаза C, метод (b)).
+
+    Конвейер прогоняется **однопоточно вручную** (``emit`` → ``worker.
+    process_one`` → ``delivery.deliver_next``) с потактовыми
+    ``perf_counter``-метками на границах этапов — так видно, какой этап
+    (ingest / process / deliver) доминирует во времени обработки одной
+    записи. В отличие от фоновых циклов ``run_burst``, здесь нет
+    конкуренции за write-lock: это «чистая» стоимость этапа, дополняющая
+    сквозной throughput и компонентные микро-бенчи.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    queue_backend: QueueBackendName
+    storage_backend: StorageBackendName
+    n: int
+    ingest_ms_median: float
+    process_ms_median: float
+    deliver_ms_median: float
+    e2e_ms_median: float
+    ingest_share: float
+    process_share: float
+    deliver_share: float
+
+    def dominant(self) -> str:
+        """Этап с наибольшей долей суммарного времени."""
+        shares = {
+            'ingest': self.ingest_share,
+            'process': self.process_share,
+            'deliver': self.deliver_share,
+        }
+        return max(shares, key=lambda stage: shares[stage])
+
+    def render(self) -> str:
+        """Человекочитаемая атрибуция по этапам (медиана + доля)."""
+        return '\n'.join(
+            (
+                f'атрибуция по этапам: queue={self.queue_backend} '
+                f'storage={self.storage_backend} N={self.n}',
+                f'  ingest:   {self.ingest_ms_median:>8.3f} ms/rec  '
+                f'({self.ingest_share * 100:5.1f}%)',
+                f'  process:  {self.process_ms_median:>8.3f} ms/rec  '
+                f'({self.process_share * 100:5.1f}%)',
+                f'  deliver:  {self.deliver_ms_median:>8.3f} ms/rec  '
+                f'({self.deliver_share * 100:5.1f}%)',
+                f'  e2e:      {self.e2e_ms_median:>8.3f} ms/rec (медиана суммы)',
+                f'  → доминирует: {self.dominant()}',
+            )
+        )
+
+
+async def run_stage_attribution(
+    *,
+    n: int,
+    queue_backend: QueueBackendName = 'memory',
+    storage_backend: StorageBackendName = 'memory',
+    poll_interval: float = 0.001,
+    tmp_path: Path | None = None,
+) -> StageReport:
+    """
+    Однопоточная атрибуция по этапам: для каждой из N записей замерить
+    ``perf_counter`` вокруг ингеста (``emit``), обработки
+    (``worker.process_one``) и доставки (``delivery.deliver_next``).
+
+    Конвейер НЕ стартует фоновые циклы (``app.start()`` не вызывается) —
+    этапы гоняются вручную и строго последовательно, поэтому замеры не
+    смешиваются между записями и не конкурируют за write-lock.
+    """
+    sink = CountingSink()
+    settings = build_perf_settings(
+        queue_backend=queue_backend,
+        storage_backend=storage_backend,
+        poll_interval=poll_interval,
+        tmp_path=tmp_path,
+    )
+    app = build_app(settings, plugins=build_perf_plugins(sink))
+    listener = app.listeners[0]
+    if not isinstance(listener, MemoryListener):
+        msg = 'ожидался MemoryListener в гарнесе'
+        raise TypeError(msg)
+
+    ingest_t: list[float] = []
+    process_t: list[float] = []
+    deliver_t: list[float] = []
+    try:
+        for i in range(n):
+            t0 = perf_counter()
+            await listener.emit(
+                {'address': SRC_CHAT, 'external_id': str(i), 'text': 'x'}
+            )
+            t1 = perf_counter()
+            await app.worker.process_one()
+            t2 = perf_counter()
+            delivered = await app.delivery.deliver_next()
+            t3 = perf_counter()
+            if not delivered:
+                msg = f'запись {i} не доставлена: outbox пуст после обработки'
+                raise RuntimeError(msg)
+            ingest_t.append(t1 - t0)
+            process_t.append(t2 - t1)
+            deliver_t.append(t3 - t2)
+    finally:
+        await app.stop()
+        _close_queue(app.queue)
+
+    sum_ingest = sum(ingest_t)
+    sum_process = sum(process_t)
+    sum_deliver = sum(deliver_t)
+    total = sum_ingest + sum_process + sum_deliver
+    e2e = sorted(
+        i + p + d for i, p, d in zip(ingest_t, process_t, deliver_t, strict=True)
+    )
+    return StageReport(
+        queue_backend=queue_backend,
+        storage_backend=storage_backend,
+        n=n,
+        ingest_ms_median=_percentile(sorted(ingest_t), 0.50) * 1000,
+        process_ms_median=_percentile(sorted(process_t), 0.50) * 1000,
+        deliver_ms_median=_percentile(sorted(deliver_t), 0.50) * 1000,
+        e2e_ms_median=_percentile(e2e, 0.50) * 1000,
+        ingest_share=sum_ingest / total if total > 0 else 0.0,
+        process_share=sum_process / total if total > 0 else 0.0,
+        deliver_share=sum_deliver / total if total > 0 else 0.0,
+    )
+
+
+def _close_queue(queue: object) -> None:
+    """Закрыть соединения persistqueue, если бэкенд их держит (memory — no-op)."""
+    close = getattr(queue, 'close', None)
+    if callable(close):
+        close()
+
+
 def maybe_write_json(report: BaseModel, *, label: str) -> Path | None:
     """
     Если задан ``ANGARION_PERF_JSON_DIR`` — сохранить отчёт JSON-артефактом

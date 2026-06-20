@@ -37,16 +37,38 @@ uv run pytest -m perf --no-cov -s tests/perf
   - `build_perf_settings` / `build_perf_plugins` — сборка app с
     настраиваемыми бэкендами и `CountingSink` вместо `MemorySink`.
   - `PerfReport` / `SustainedReport` — модели отчётов с `.render()`.
+  - `run_stage_attribution(...)` — однопоточная атрибуция по этапам
+    (фаза C, метод (b)): для каждой записи замеряет `perf_counter` вокруг
+    ингеста (`emit`), обработки (`worker.process_one`) и доставки
+    (`delivery.deliver_next`) → доля ingest/process/deliver во времени.
+    `app.start()` НЕ вызывается — этапы гоняются вручную и строго
+    последовательно, без фоновых циклов и конкуренции за write-lock.
   - `maybe_write_json(...)` / `maybe_assert_min_rps(...)` — опц. сохранение
     JSON-артефакта и soft-порог throughput (оба через env, по умолч. выкл).
+- `_microbench.py` — компонентные микро-бенчи портов (фаза C, метод (a),
+  не собирается pytest'ом):
+  - `run_microbench(...)` — каждый driven-порт (queue put/get/ack, dedup,
+    registry, outbox, analytics) гоняется **отдельно**, в тугом цикле,
+    без остального конвейера → rec/s каждого. Локализует сериализующую
+    точку количественно. Входные DTO пред-собираются до старта таймера.
+  - `MicrobenchReport` — модель отчёта с `.render()` и `.slowest()`.
 - `test_burst.py` — burst по матрице бэкендов.
 - `test_sustained.py` — sustained/ramp по матрице бэкендов.
+- `test_microbench.py` — компонентные микро-бенчи портов по матрице.
+- `test_attribution.py` — атрибуция времени по этапам по матрице.
+- `test_profile.py` — сэмплирующий профиль (`pyinstrument`) sqlite-burst:
+  печатает call-tree, называющий сериализующую точку. С
+  `ANGARION_PERF_JSON_DIR` сохраняет HTML-артефакт профиля.
 
 ### Env-knobs
 
 - `ANGARION_PERF_BURST_N` — размер burst-пакета (по умолчанию 2000).
 - `ANGARION_PERF_SUSTAINED_RPS` — целевой темп подачи (по умолчанию 500).
 - `ANGARION_PERF_SUSTAINED_SECONDS` — длительность окна (по умолчанию 5).
+- `ANGARION_PERF_MICROBENCH_ITERS` — итераций на порт в микро-бенче (2000).
+- `ANGARION_PERF_ATTRIBUTION_N` — записей в атрибуции по этапам (500).
+- `ANGARION_PERF_PROFILE_N` — размер burst под профилем (800; меньше
+  обычного — сэмплирование добавляет накладные расходы).
 - `ANGARION_PERF_MIN_RPS` — soft-порог throughput; если задан и измеренное
   значение ниже — perf-тест падает (regression-сигнал, по умолчанию выкл).
 - `ANGARION_PERF_JSON_DIR` — каталог для JSON-артефактов отчётов
@@ -72,5 +94,7 @@ uv run pytest -m perf --no-cov -s tests/perf
 - **A** (готово) — ядро гарнеса + `CountingSink` + pytest-обвязка.
 - **B** (готово) — матрица бэкендов + sustained/ramp-форма + отчёт
   (human + JSON) + soft-порог `ANGARION_PERF_MIN_RPS`.
-- **C** — изоляция узких мест (микро-бенчи портов + `pyinstrument`).
+- **C** (готово) — изоляция узких мест: микро-бенчи портов (метод (a)) +
+  атрибуция по этапам (метод (b)) + `pyinstrument`-профиль (метод (c)).
+  Вывод про сериализующую точку SQLite — `DECISIONS.md` (2026-06-20).
 - **D** — прототип конкурентного воркера за флагом + ADR.
