@@ -9,19 +9,31 @@ from datetime import UTC, datetime
 
 import pytest
 
-from angarion.adapters.memory.storage import MemoryAnalytics, MemoryCommandOutbox
+from angarion.adapters.memory.queue import MemoryQueue
+from angarion.adapters.memory.storage import (
+    MemoryAnalytics,
+    MemoryCommandOutbox,
+    MemoryDeadLetters,
+    MemoryDedupStore,
+    MemoryMessageRegistry,
+)
+from angarion.application.ingest import IngestService
+from angarion.application.manual import ManualEvent, build_manual_record
 from angarion.application.outbox_consumer import (
     COMMAND_FAILED,
     NOTIFY_FAILED,
     OutboxConsumer,
 )
+from angarion.application.router import Router, RouteSpec
 from angarion.domain.models import (
     CommandKind,
     CommandStatus,
     DeliveryReceipt,
     OutboundRecord,
+    Record,
+    RecordKind,
 )
-from angarion.testing.factories import make_outbound
+from angarion.testing.factories import make_endpoint, make_outbound, make_record
 
 pytestmark = pytest.mark.asyncio
 
@@ -41,6 +53,20 @@ class FakeSink:
         return DeliveryReceipt(external_id='ext-1', delivered_at=datetime.now(UTC))
 
 
+class FakeIngest:
+    """``IngestService`` для тестов: собирает записи или падает."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.ingested: list[Record] = []
+        self._fail = fail
+
+    async def ingest(self, record: Record) -> None:
+        if self._fail:
+            msg = 'ingest boom'
+            raise RuntimeError(msg)
+        self.ingested.append(record)
+
+
 def _make_consumer(
     outbox: MemoryCommandOutbox,
     analytics: MemoryAnalytics,
@@ -49,6 +75,7 @@ def _make_consumer(
     catchups: list[str] | None = None,
     catchup_fail: bool = False,
     restarts: list[bool] | None = None,
+    ingest: FakeIngest | None = None,
 ) -> OutboxConsumer:
     async def catchup(source_key: str) -> None:
         if catchup_fail:
@@ -66,6 +93,7 @@ def _make_consumer(
         analytics=analytics,
         catchup=catchup,
         request_restart=request_restart,
+        ingest=(ingest or FakeIngest()).ingest,
         poll_seconds=0.0,
     )
 
@@ -138,6 +166,91 @@ async def test_restart_dispatch_requests_restart_and_marks_done() -> None:
     stored = await outbox.get(command.uid)
     assert stored is not None
     assert stored.status is CommandStatus.DONE
+
+
+async def test_inject_dispatch_calls_ingest_and_marks_done() -> None:
+    outbox, analytics = MemoryCommandOutbox(), MemoryAnalytics()
+    ingest = FakeIngest()
+    record = make_record(origin='manual')
+    command = await outbox.put(
+        CommandKind.INJECT, payload={'record': record.model_dump(mode='json')}
+    )
+    consumer = _make_consumer(outbox, analytics, ingest=ingest)
+    await consumer.poll_once()
+    # Record восстановлен из JSON-payload без потерь (ключи, origin)
+    assert [r.uid for r in ingest.ingested] == [record.uid]
+    assert ingest.ingested[0].dedup_key == record.dedup_key
+    assert ingest.ingested[0].origin == 'manual'
+    stored = await outbox.get(command.uid)
+    assert stored is not None
+    assert stored.status is CommandStatus.DONE
+    assert stored.result == f'injected:{record.uid}'
+
+
+async def test_inject_failure_marks_failed_and_records_command_failed() -> None:
+    outbox, analytics = MemoryCommandOutbox(), MemoryAnalytics()
+    command = await outbox.put(
+        CommandKind.INJECT,
+        payload={'record': make_record().model_dump(mode='json')},
+    )
+    consumer = _make_consumer(outbox, analytics, ingest=FakeIngest(fail=True))
+    await consumer.poll_once()
+    stored = await outbox.get(command.uid)
+    assert stored is not None
+    assert stored.status is CommandStatus.FAILED
+    assert 'ingest boom' in (stored.error or '')
+    failures = await analytics.recent(kind=COMMAND_FAILED)
+    assert failures[0].payload['command_kind'] == 'inject'
+
+
+async def test_inject_idempotency_key_dedups_second_command_at_seam() -> None:
+    # Сквозной стык split-моста: producer-payload → consumer → реальный
+    # IngestService. Два впрыска одного ManualEvent с клиентским ключом
+    # дают одинаковый dedup_key → второй гасится dedup.seen() (FR §3, A2).
+    outbox, analytics = MemoryCommandOutbox(), MemoryAnalytics()
+    queue, dedup = MemoryQueue(), MemoryDedupStore()
+    router = Router(
+        [
+            RouteSpec(
+                pipeline='digest',
+                events=frozenset(RecordKind),
+                sources=(make_endpoint(),),
+            )
+        ]
+    )
+    ingest = IngestService(
+        dedup=dedup,
+        registry=MemoryMessageRegistry(),
+        router=router,
+        queue=queue,
+        analytics=analytics,
+        dead_letters=MemoryDeadLetters(),
+    )
+    event = ManualEvent(
+        source=make_endpoint(), text='manual hi', idempotency_key='ext-key-1'
+    )
+    first, second = build_manual_record(event), build_manual_record(event)
+    assert first.dedup_key == second.dedup_key  # детерминизм по клиентскому ключу
+    for record in (first, second):
+        await outbox.put(
+            CommandKind.INJECT, payload={'record': record.model_dump(mode='json')}
+        )
+    consumer = OutboxConsumer(
+        command_outbox=outbox,
+        sink=FakeSink(),
+        analytics=analytics,
+        catchup=_noop_catchup,
+        request_restart=lambda: None,
+        ingest=ingest.ingest,
+        poll_seconds=0.0,
+    )
+    await consumer.poll_once()
+    # один envelope стейджнут (первый), второй — duplicate
+    assert (await queue.depth()).pending == 1
+
+
+async def _noop_catchup(source_key: str) -> None:
+    """Заглушка catch-up для сборки consumer'а в стыковом тесте."""
 
 
 async def test_poll_once_empty_returns_zero() -> None:

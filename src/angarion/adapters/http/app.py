@@ -32,6 +32,7 @@ from angarion.adapters.http.ops_pages import router_ops
 from angarion.adapters.http.routes import public_router
 from angarion.adapters.http.routes import router as api_v1_router
 from angarion.adapters.http.templating import Page, build_nav, build_templates
+from angarion.adapters.http.trigger import router as trigger_router
 from angarion.adapters.http.ui import router as ui_router
 from angarion.domain.errors import ConfigError
 from angarion.log import get_logger
@@ -108,6 +109,9 @@ def create_app(
         app.include_router(router_admin, dependencies=admin_only)
     app.include_router(api_v1_router, dependencies=protected)
     app.include_router(admin_api_router, dependencies=admin_only)
+    # ручной триггер (T038): авторизация пер-роут через API-ключ
+    # (``api.trigger_token``), не сессия — потому без admin_only/protected
+    app.include_router(trigger_router)
     app.include_router(router_ops, dependencies=admin_only)
     app.include_router(ui_router, dependencies=protected)
     app.mount('/ui/static', StaticFiles(directory=_STATIC_DIR), name='static')

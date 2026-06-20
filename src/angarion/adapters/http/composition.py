@@ -49,6 +49,7 @@ def build_web_deps(
     notifier: SettingsNotifier | None = None,
     auth_sessionmaker: object = None,
     webhook_routers: tuple[Any, ...] = (),
+    ingest: object = None,
 ) -> AngarionDeps:
     """
     Спроецировать порты хранилища и очереди в ``AngarionDeps`` (§12.5).
@@ -57,7 +58,9 @@ def build_web_deps(
     root web-процесса передаёт ``build_settings_notifier()``).
     ``auth_sessionmaker`` при ``api.auth="users"`` и ``None`` выводится из
     ``storage.sessions`` — user store делит ``app.db`` с остальными
-    порталами (ADR §3.1).
+    порталами (ADR §3.1). ``ingest`` — ``IngestService`` ручного триггера
+    (T038): combined передаёт его из ``AngarionApp`` (прямой event-путь),
+    api-роль оставляет ``None`` (event-путь через ``CommandOutbox``).
     """
     if settings.api.auth == 'users' and auth_sessionmaker is None:
         auth_sessionmaker = getattr(storage, 'sessions', None)
@@ -74,4 +77,5 @@ def build_web_deps(
         notifier=notifier,
         webhook_routers=webhook_routers,
         auth_sessionmaker=auth_sessionmaker,
+        ingest=ingest,
     )

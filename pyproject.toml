@@ -161,7 +161,7 @@ target-version = "py312"
 # Каталоги примеров — намеренно НЕ пакеты (одиночные скрипты processor.py /
 # run.py / ext.py без __init__.py): подавляет ложный INP001 на них, не трогая
 # остальное.
-namespace-packages = ["examples/digest", "examples/media", "examples/web"]
+namespace-packages = ["examples/digest", "examples/media", "examples/trigger", "examples/web"]
 exclude = [
     "**/migrations",
     ".git",

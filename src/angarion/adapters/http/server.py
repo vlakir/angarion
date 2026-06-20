@@ -115,7 +115,9 @@ async def serve_combined(settings: AngarionSettings, stop: asyncio.Event) -> Non
     """
     app: AngarionApp = build_app(settings)
     notifier = build_settings_notifier()
-    deps = build_web_deps(settings, app.storage, app.queue, notifier=notifier)
+    deps = build_web_deps(
+        settings, app.storage, app.queue, notifier=notifier, ingest=app.ingest
+    )
     await _bootstrap_admin(deps)
     server = _make_server(deps)
     await app.start()

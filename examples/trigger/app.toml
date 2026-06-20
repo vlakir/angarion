@@ -1,0 +1,58 @@
+# Пример angarion: ручной запуск пайплайна (T038).
+#
+# Тот же passthrough A→B, что в ../forward, но обработку инициирует не
+# живое сообщение в группе A, а РУЧНОЙ ТРИГГЕР — тремя способами:
+#
+#   1) программно   — AngarionApp.submit_event / run_pipeline (см. inject.py);
+#   2) по HTTP      — POST /api/v1/trigger и /api/v1/run/{pipeline} (curl);
+#   3) кнопкой в UI — форма /ui/trigger под admin-сессией.
+#
+# Combined-режим (`angarion run --with-api`): конвейер и Web-адаптер в одном
+# процессе, HTTP-ручка зовёт ingest/очередь напрямую. В split (`--role api`)
+# та же event-ручка кладёт команду в CommandOutbox, исполняет pipeline-процесс
+# (см. docs/guides/web-api.md → «Ручной триггер»).
+#
+# Секреты (api_id/api_hash, API-ключ триггера) — НЕ здесь, а через env
+# (см. README.md). В TOML — только не-секретные параметры.
+
+[accounts.main]
+transport = "telegram"
+# api_id / api_hash подаются через env:
+#   ANGARION_ACCOUNTS__MAIN__API_ID, ANGARION_ACCOUNTS__MAIN__API_HASH
+
+[storage]
+backend = "sqlite"               # обязателен: сюда login кладёт сессию
+path = "angarion-data/app.db"    # рантайм-каталог (git-ignored)
+
+[queue]
+backend = "memory"               # для примера; боевой — persistqueue
+
+# Демо про РУЧНОЙ триггер, поэтому catch-up выключен: иначе на старте
+# слушатель догоняет историю группы A и форвардит её в B, заслоняя ручные
+# события (и набивая очередь доставки). В боевом конфиге catch-up обычно
+# включён (дефолт) — это страховка от пропусков, см. ../forward.
+[catchup]
+enabled = false
+
+[api]
+host = "127.0.0.1"
+port = 8000
+# auth="none" — dev/localhost: UI открыт, /ui/trigger доступна под
+# синтетическим локальным админом без логина (боевой режим — "users").
+# Машинная HTTP-ручка триггера от режима auth НЕ зависит: её защищает
+# отдельный API-ключ (см. ниже trigger_token).
+auth = "none"
+# trigger_token — отдельный API-ключ HTTP-ручек ручного триггера. Секрет,
+# подаётся через env ANGARION_API__TRIGGER_TOKEN (run.sh ставит demo-токен).
+# Пусто → ручки /api/v1/trigger и /api/v1/run/* выключены (запрос → 503).
+
+# --- Пайплайн: пересылка A→B ----------------------------------------------
+# Источник — группа A: ручное событие с этим source маршрутизируется сюда
+# (submit_event / POST /api/v1/trigger). Прямой запуск (run_pipeline /
+# POST /api/v1/run/forward) минует маршрутизацию и ставит запись прямо в
+# этот пайплайн независимо от source.
+[pipelines.forward]
+processor = "passthrough"
+events = ["new"]
+sources = [{ account = "main", address = "-100AAAAAAAAAA" }]
+targets = [{ account = "main", address = "-100BBBBBBBBBB" }]

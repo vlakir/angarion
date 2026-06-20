@@ -8,11 +8,14 @@ Pipeline-процесс фоном опрашивает командный outbo
 (захват/пометка — ``UPDATE ... WHERE status=...``); исполнение здесь
 идемпотентно по построению (отправка/catch-up повторяемы).
 
-Виды команд v1: ``notify`` (отправка через ``SinkPort``),
-``catchup`` (ручной catch-up источника через инъецированный колбэк над
+Виды команд: ``notify`` (отправка через ``SinkPort``), ``catchup``
+(ручной catch-up источника через инъецированный колбэк над
 listener'ами), ``restart_pipeline`` (взвести событие graceful-остановки
-процесса — супервизор поднимет, §3.2). Расширение — новый член
-``CommandKind`` + ветка диспетчеризации, механизм outbox не меняется.
+процесса — супервизор поднимет, §3.2), ``inject`` (T038: ручной впрыск
+события — десериализовать ``Record`` из payload и провести через
+``IngestService.ingest``; split-мост event-пути, ``IngestService`` живёт
+только в pipeline-процессе). Расширение — новый член ``CommandKind`` +
+ветка диспетчеризации, механизм outbox не меняется.
 
 Сбой исполнения → ``mark_failed`` + событие аналитики (``notify_failed``
 для notify, иначе ``command_failed``); команда видна в аудите (разбор
@@ -37,6 +40,7 @@ from angarion.domain.models import (
     CommandKind,
     OutboundRecord,
     OutboxCommand,
+    Record,
 )
 from angarion.domain.ports import AnalyticsPort, CommandOutboxPort, SinkPort
 
@@ -52,6 +56,9 @@ CatchupFn = Callable[[str], Awaitable[None]]
 RestartFn = Callable[[], None]
 """Колбэк graceful-перезапуска (взводит событие остановки процесса)."""
 
+IngestFn = Callable[[Record], Awaitable[None]]
+"""Колбэк впрыска события (``IngestService.ingest``; T038 split event-мост)."""
+
 
 class OutboxConsumer:
     """Фоновый поллинг командного outbox с диспетчеризацией (§12.9)."""
@@ -64,6 +71,7 @@ class OutboxConsumer:
         analytics: AnalyticsPort,
         catchup: CatchupFn,
         request_restart: RestartFn,
+        ingest: IngestFn,
         poll_seconds: float = 5.0,
         take_limit: int = 10,
         log: FilteringBoundLogger | None = None,
@@ -73,6 +81,7 @@ class OutboxConsumer:
         self._analytics = analytics
         self._catchup = catchup
         self._request_restart = request_restart
+        self._ingest = ingest
         self._poll_seconds = poll_seconds
         self._take_limit = take_limit
         self._log: FilteringBoundLogger = (
@@ -125,6 +134,10 @@ class OutboxConsumer:
             await self._outbox.mark_done(command.uid, result='restarting')
             self._request_restart()
             return None
+        if command.kind is CommandKind.INJECT:
+            inbound = Record.model_validate(command.payload['record'])
+            await self._ingest(inbound)
+            return f'injected:{inbound.uid}'
         msg = f'неизвестный вид команды: {command.kind!r}'  # pragma: no cover
         raise ValueError(msg)  # pragma: no cover
 

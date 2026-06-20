@@ -17,6 +17,7 @@ from angarion.adapters.memory.listener import MemoryListener
 from angarion.adapters.memory.plugin import QUEUE_BACKEND, STORAGE_BACKEND
 from angarion.adapters.memory.sink import MemorySink
 from angarion.application import processors
+from angarion.application.manual import ManualEvent, build_manual_record
 from angarion.application.processors import FunctionProcessor
 from angarion.bootstrap import (
     AngarionApp,
@@ -696,3 +697,70 @@ class TestInternalWireBootstrap:
         accounts = _validate_accounts(settings, load_plugins().adapters)
         degraded = _catchup_degradation(settings, accounts)
         assert all('internal' not in key for key in degraded)
+
+
+class TestManualTrigger:
+    """Программный ручной триггер (T038, фаза 1): submit_event / run_pipeline."""
+
+    @staticmethod
+    def _event(**overrides: object) -> ManualEvent:
+        fields: dict[str, object] = {
+            'source': Endpoint(transport='memory', address=SRC_CHAT),
+            'text': 'hi',
+        }
+        fields.update(overrides)
+        return ManualEvent.model_validate(fields)
+
+    async def test_submit_event_routes_and_enqueues(self) -> None:
+        app = build_app(make_settings())
+        await app.submit_event(self._event())
+        assert (await app.queue.depth()).pending == 1
+        item = await app.queue.get()
+        assert item.envelope.pipeline == 'digest'
+        assert item.envelope.record.origin == 'manual'
+        assert item.envelope.record.source.address == SRC_CHAT
+
+    async def test_submit_event_accepts_ready_record(self) -> None:
+        app = build_app(make_settings())
+        record = build_manual_record(self._event())
+        await app.submit_event(record)
+        item = await app.queue.get()
+        assert item.envelope.record.uid == record.uid
+
+    async def test_submit_event_forces_manual_origin_on_ready_record(self) -> None:
+        # готовый Record с чужим origin → ручной путь приводит к 'manual'
+        app = build_app(make_settings())
+        record = build_manual_record(self._event()).model_copy(
+            update={'origin': 'live'}
+        )
+        await app.submit_event(record)
+        item = await app.queue.get()
+        assert item.envelope.record.origin == 'manual'
+
+    async def test_submit_event_idempotency_key_dedups(self) -> None:
+        app = build_app(make_settings())
+        await app.submit_event(self._event(idempotency_key='cli-1'))
+        await app.submit_event(self._event(idempotency_key='cli-1'))
+        assert (await app.queue.depth()).pending == 1
+
+    async def test_submit_event_without_key_processes_each_call(self) -> None:
+        app = build_app(make_settings())
+        await app.submit_event(self._event())
+        await app.submit_event(self._event())
+        assert (await app.queue.depth()).pending == 2
+
+    async def test_run_pipeline_stages_bypassing_router(self) -> None:
+        app = build_app(make_settings())
+        # источник '-999' не совпадает ни с одним маршрутом — но прямой
+        # запуск router минует, поэтому envelope всё равно ставится
+        event = self._event(source=Endpoint(transport='memory', address='-999'))
+        await app.run_pipeline('digest', event)
+        item = await app.queue.get()
+        assert item.envelope.pipeline == 'digest'
+        assert item.envelope.record.origin == 'manual'
+        assert (await app.queue.depth()).pending == 0
+
+    async def test_run_pipeline_unknown_name_raises(self) -> None:
+        app = build_app(make_settings())
+        with pytest.raises(ValueError, match='ghost'):
+            await app.run_pipeline('ghost', self._event())

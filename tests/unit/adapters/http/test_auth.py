@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -78,7 +78,7 @@ async def seed_user(
         await session.commit()
 
 
-def build_app(sessions: async_sessionmaker | None, **api: object) -> object:
+def build_app(sessions: async_sessionmaker | None, **api: object) -> FastAPI:
     settings = make_settings(api=ApiConfig(auth='users', secret=SECRET, **api))
     deps = AngarionDeps(
         queue=MemoryQueue(),
@@ -115,13 +115,13 @@ async def login(client: AsyncClient, login_: str, password: str) -> str | None:
 
 @pytest.mark.asyncio
 async def test_health_is_public_in_users_mode(users_db: async_sessionmaker) -> None:
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         assert (await client.get('/api/v1/health')).status_code == 200
 
 
 @pytest.mark.asyncio
 async def test_diagnostics_requires_auth(users_db: async_sessionmaker) -> None:
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         assert (await client.get('/api/v1/diagnostics')).status_code == 401
 
 
@@ -132,7 +132,7 @@ async def test_viewer_reads_diagnostics_not_admin(
     await seed_user(
         users_db, login='v', password='pw', role=UserRole.VIEWER, is_active=True
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         token = await login(client, 'v', 'pw')
         assert token is not None
         headers = {'Authorization': f'Bearer {token}'}
@@ -145,7 +145,7 @@ async def test_admin_reaches_admin_route(users_db: async_sessionmaker) -> None:
     await seed_user(
         users_db, login='a', password='pw', role=UserRole.ADMIN, is_active=True
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         token = await login(client, 'a', 'pw')
         headers = {'Authorization': f'Bearer {token}'}
         resp = await client.get('/api/v1/admin-check', headers=headers)
@@ -159,7 +159,7 @@ async def test_viewer_denied_admin_ops(users_db: async_sessionmaker) -> None:
     await seed_user(
         users_db, login='v', password='pw', role=UserRole.VIEWER, is_active=True
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         token = await login(client, 'v', 'pw')
         headers = {'Authorization': f'Bearer {token}'}
         assert (await client.post('/api/v1/admin/restart', headers=headers)).status_code == 403
@@ -169,12 +169,24 @@ async def test_viewer_denied_admin_ops(users_db: async_sessionmaker) -> None:
 
 
 @pytest.mark.asyncio
+async def test_viewer_denied_ui_trigger(users_db: async_sessionmaker) -> None:
+    """UI-форма ручного триггера (T038) закрыта для viewer — admin-only (403)."""
+    await seed_user(
+        users_db, login='v', password='pw', role=UserRole.VIEWER, is_active=True
+    )
+    async with asgi_client(build_app(users_db)) as client:
+        token = await login(client, 'v', 'pw')
+        headers = {'Authorization': f'Bearer {token}'}
+        assert (await client.get('/ui/trigger', headers=headers)).status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_admin_reaches_admin_ops(users_db: async_sessionmaker) -> None:
     """Админ ставит restart-команду в outbox — 202."""
     await seed_user(
         users_db, login='a', password='pw', role=UserRole.ADMIN, is_active=True
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         token = await login(client, 'a', 'pw')
         headers = {'Authorization': f'Bearer {token}'}
         resp = await client.post('/api/v1/admin/restart', headers=headers)
@@ -188,7 +200,7 @@ async def test_cookie_token_accepted(users_db: async_sessionmaker) -> None:
     await seed_user(
         users_db, login='c', password='pw', role=UserRole.VIEWER, is_active=True
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         token = await login(client, 'c', 'pw')
         client.cookies.set('angarionauth', token or '')
         assert (await client.get('/api/v1/diagnostics')).status_code == 200
@@ -201,7 +213,7 @@ async def test_cookie_token_accepted(users_db: async_sessionmaker) -> None:
 async def test_register_creates_inactive_and_login_denied(
     users_db: async_sessionmaker,
 ) -> None:
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         reg = await client.post(
             '/api/v1/auth/register', json={'login': 'new', 'password': 'pw'}
         )
@@ -219,7 +231,7 @@ async def test_register_duplicate_login_rejected(
     await seed_user(
         users_db, login='dup', password='pw', role=UserRole.VIEWER, is_active=False
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         resp = await client.post(
             '/api/v1/auth/register', json={'login': 'dup', 'password': 'pw'}
         )
@@ -229,7 +241,7 @@ async def test_register_duplicate_login_rejected(
 @pytest.mark.asyncio
 async def test_registration_can_be_disabled(users_db: async_sessionmaker) -> None:
     app = build_app(users_db, registration_enabled=False)
-    async with asgi_client(app) as client:  # type: ignore[arg-type]
+    async with asgi_client(app) as client:
         resp = await client.post(
             '/api/v1/auth/register', json={'login': 'x', 'password': 'pw'}
         )
@@ -306,7 +318,7 @@ async def test_bootstrap_creates_admin_on_empty_db(
     )
     await ensure_admin(users_db, settings)
     app = build_app(users_db)
-    async with asgi_client(app) as client:  # type: ignore[arg-type]
+    async with asgi_client(app) as client:
         token = await login(client, 'root', 'rootpw')
         assert token is not None
         headers = {'Authorization': f'Bearer {token}'}
@@ -335,7 +347,7 @@ async def test_bootstrap_noop_when_users_exist(
         admin_password='rootpw',
     )
     await ensure_admin(users_db, settings)  # не должен падать и не создаёт root
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         assert await login(client, 'root', 'rootpw') is None
 
 
@@ -375,7 +387,7 @@ async def test_full_registration_approval_login_cycle(
     await seed_user(
         users_db, login='admin', password='pw', role=UserRole.ADMIN, is_active=True
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         # заявка → вход запрещён (не одобрена)
         assert (
             await client.post(
@@ -405,7 +417,7 @@ async def test_users_crud_requires_admin(users_db: async_sessionmaker) -> None:
     await seed_user(
         users_db, login='v', password='pw', role=UserRole.VIEWER, is_active=True
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         viewer = await _bearer(client, 'v', 'pw')
         assert (await client.get('/api/v1/users', headers=viewer)).status_code == 403
 
@@ -413,7 +425,7 @@ async def test_users_crud_requires_admin(users_db: async_sessionmaker) -> None:
 @pytest.mark.asyncio
 async def test_pending_registration_limit(users_db: async_sessionmaker) -> None:
     app = build_app(users_db, max_pending_registrations=1)
-    async with asgi_client(app) as client:  # type: ignore[arg-type]
+    async with asgi_client(app) as client:
         assert (
             await client.post(
                 '/api/v1/auth/register', json={'login': 'a', 'password': 'pw'}
@@ -431,7 +443,7 @@ async def test_admin_create_then_delete_user(users_db: async_sessionmaker) -> No
     await seed_user(
         users_db, login='admin', password='pw', role=UserRole.ADMIN, is_active=True
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         admin = await _bearer(client, 'admin', 'pw')
         created = await client.post(
             '/api/v1/users',
@@ -453,7 +465,7 @@ async def test_cookie_login_and_logout(users_db: async_sessionmaker) -> None:
     await seed_user(
         users_db, login='u', password='pw', role=UserRole.VIEWER, is_active=True
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         assert (await client.get('/ui/login')).status_code == 200
         submit = await client.post(
             '/ui/login', data={'username': 'u', 'password': 'pw'}
@@ -468,7 +480,7 @@ async def test_cookie_login_and_logout(users_db: async_sessionmaker) -> None:
 
 @pytest.mark.asyncio
 async def test_ui_login_rejects_bad_credentials(users_db: async_sessionmaker) -> None:
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         resp = await client.post(
             '/ui/login', data={'username': 'nobody', 'password': 'x'}
         )
@@ -484,7 +496,7 @@ async def test_ui_users_page_and_approve(users_db: async_sessionmaker) -> None:
     await seed_user(
         users_db, login='pend', password='pw', role=UserRole.VIEWER, is_active=False
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         admin = await _bearer(client, 'admin', 'pw')
         page = await client.get('/ui/users', headers=admin)
         assert page.status_code == 200
@@ -506,7 +518,7 @@ async def test_ui_users_page_and_approve(users_db: async_sessionmaker) -> None:
 async def test_ui_register_submit_shows_pending_message(
     users_db: async_sessionmaker,
 ) -> None:
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         assert (await client.get('/ui/register')).status_code == 200
         resp = await client.post(
             '/ui/register', data={'username': 'x', 'password': 'pw'}
@@ -520,7 +532,7 @@ async def test_ui_register_submit_shows_error(users_db: async_sessionmaker) -> N
     await seed_user(
         users_db, login='taken', password='pw', role=UserRole.VIEWER, is_active=False
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         resp = await client.post(
             '/ui/register', data={'username': 'taken', 'password': 'pw'}
         )
@@ -534,7 +546,7 @@ async def test_users_crud_404_on_missing(users_db: async_sessionmaker) -> None:
         users_db, login='admin', password='pw', role=UserRole.ADMIN, is_active=True
     )
     missing = '00000000-0000-0000-0000-0000000000aa'
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         admin = await _bearer(client, 'admin', 'pw')
         assert (
             await client.patch(
@@ -551,7 +563,7 @@ async def test_admin_create_duplicate_rejected(users_db: async_sessionmaker) -> 
     await seed_user(
         users_db, login='admin', password='pw', role=UserRole.ADMIN, is_active=True
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         admin = await _bearer(client, 'admin', 'pw')
         resp = await client.post(
             '/api/v1/users',
@@ -571,7 +583,7 @@ async def test_ui_user_actions_deactivate_delete_create(
     await seed_user(
         users_db, login='live', password='pw', role=UserRole.VIEWER, is_active=True
     )
-    async with asgi_client(build_app(users_db)) as client:  # type: ignore[arg-type]
+    async with asgi_client(build_app(users_db)) as client:
         admin = await _bearer(client, 'admin', 'pw')
         live_id = next(
             u['id']

@@ -14,10 +14,12 @@ from uuid import uuid4
 
 import pytest
 
+from angarion.adapters.http import AngarionDeps
 from angarion.adapters.http.ops import (
     ADMIN_OP,
     record_admin_op,
     request_catchup,
+    request_inject,
     request_restart,
     requeue_dead_letter,
     reset_setting,
@@ -33,7 +35,7 @@ from angarion.adapters.memory.storage import (
 )
 from angarion.application.settings import SettingsNotifier
 from angarion.domain.models import CommandKind, DynamicSettings
-from angarion.testing.factories import make_dead_letter
+from angarion.testing.factories import make_dead_letter, make_record
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -142,6 +144,19 @@ async def test_request_catchup_puts_command_with_source() -> None:
     assert command.payload == {'source_key': 'memory:acc1:-100'}
     op = (await analytics.recent(kind=ADMIN_OP))[0]
     assert op.payload['source_key'] == 'memory:acc1:-100'
+
+
+async def test_request_inject_puts_command_with_serialized_record() -> None:
+    outbox, analytics = MemoryCommandOutbox(), MemoryAnalytics()
+    record = make_record(origin='manual')
+    command = await request_inject(outbox, analytics, record=record, by='a')
+    assert command.kind is CommandKind.INJECT
+    # payload несёт сериализованный Record, восстановимый без потерь
+    assert command.payload['record']['uid'] == str(record.uid)
+    assert await outbox.get(command.uid) is not None
+    op = (await analytics.recent(kind=ADMIN_OP))[0]
+    assert op.payload['operation'] == 'inject'
+    assert op.payload['record_uid'] == str(record.uid)
 
 
 async def test_record_admin_op_shape() -> None:
@@ -258,6 +273,57 @@ async def test_ui_restart_and_catchup(
     assert resp.status_code == 303
     kinds = {c.kind for c in await command_outbox.take(limit=10)}
     assert kinds == {CommandKind.RESTART_PIPELINE, CommandKind.CATCHUP}
+
+
+async def test_ui_trigger_renders(client: AsyncClient) -> None:
+    resp = await client.get('/ui/trigger')
+    assert resp.status_code == 200
+    assert 'Manual trigger' in resp.text
+    assert 'digest' in resp.text  # пайплайн из конфига в выпадайке
+
+
+async def test_ui_trigger_event_split(
+    client: AsyncClient, command_outbox: MemoryCommandOutbox
+) -> None:
+    """Пустой pipeline → event-путь; api-роль (ingest is None) кладёт INJECT."""
+    resp = await client.post(
+        '/ui/trigger',
+        data={'transport': 'memory', 'address': '-100', 'text': 'hi'},
+    )
+    assert resp.status_code == 200
+    assert 'queued' in resp.text
+    commands = await command_outbox.take(limit=10)
+    assert [c.kind for c in commands] == [CommandKind.INJECT]
+    assert commands[0].payload['record']['origin'] == 'manual'
+
+
+async def test_ui_trigger_run_pipeline(
+    client: AsyncClient, deps: AngarionDeps
+) -> None:
+    """Выбранный pipeline → прямой запуск: сырой QueueEnvelope в очередь."""
+    resp = await client.post(
+        '/ui/trigger',
+        data={
+            'transport': 'memory',
+            'address': '-100',
+            'text': 'hi',
+            'pipeline': 'digest',
+        },
+    )
+    assert resp.status_code == 200
+    assert 'staged' in resp.text
+    assert (await deps.queue.depth()).pending == 1
+    item = await deps.queue.get()
+    assert item.envelope.pipeline == 'digest'
+
+
+async def test_ui_trigger_invalid_kind_is_422(client: AsyncClient) -> None:
+    """Неизвестный kind валидируется FastAPI как RecordKind → 422, не 500."""
+    resp = await client.post(
+        '/ui/trigger',
+        data={'transport': 'memory', 'address': '-100', 'kind': 'garbage'},
+    )
+    assert resp.status_code == 422
 
 
 async def test_ui_dlq_renders_and_requeue(

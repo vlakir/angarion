@@ -39,6 +39,7 @@ from angarion.application import processors
 from angarion.application.delivery import DeliveryWorker
 from angarion.application.ingest import IngestService
 from angarion.application.loop_guard import GuardedSource, LoopGuardSink
+from angarion.application.manual import ManualEvent, build_manual_record
 from angarion.application.outbox_consumer import OutboxConsumer
 from angarion.application.router import Router, RouteSpec
 from angarion.application.worker import PipelineBinding, PipelineWorker
@@ -58,6 +59,8 @@ from angarion.domain.models import (
     Endpoint,
     OutboundRecord,
     PipelineContextData,
+    QueueEnvelope,
+    Record,
     RecordKind,
     TargetSpec,
 )
@@ -577,6 +580,48 @@ class AngarionApp(BaseModel):
         self._tasks = []
         await _maybe_dispose(self.storage)
 
+    async def submit_event(self, payload: ManualEvent | Record) -> None:
+        """
+        Ручной впрыск события (T038, event-семантика): через ``IngestService``.
+
+        Запись проходит штатный путь ``dedup → реестр → router → fan-out``: при
+        совпадении ``source`` с источником пайплайна(ов) ставится по envelope на
+        каждый, при наличии клиентского idempotency-ключа повтор гасится dedup.
+        Принимает упрощённый :class:`ManualEvent` (фабрика строит ``Record``)
+        либо готовый ``Record``.
+        """
+        await self.ingest.ingest(self._coerce(payload))
+
+    async def run_pipeline(self, name: str, payload: ManualEvent | Record) -> None:
+        """
+        Прямой запуск именованного пайплайна (T038, pipeline-семантика).
+
+        Сырой ``QueueEnvelope`` прямо в очередь, **минуя** router/dedup/реестр
+        (Q7): изолированный прогон конкретного пайплайна. Имя обязано
+        существовать в конфиге — иначе ``ValueError`` (валидация до постановки).
+        Идемпотентность тут не гарантируется (dedup не проверяется, A2).
+        """
+        if name not in self.settings.pipelines:
+            msg = f'неизвестный пайплайн: {name!r}'
+            raise ValueError(msg)
+        await self.queue.put(QueueEnvelope(pipeline=name, record=self._coerce(payload)))
+
+    @staticmethod
+    def _coerce(payload: ManualEvent | Record) -> Record:
+        """
+        Упрощённый payload — через фабрику; готовый ``Record`` — с
+        форсированным ``origin='manual'``.
+
+        Ручной триггер по контракту помечает событие ``manual`` (аналитика/
+        трасса), поэтому даже готовый ``Record`` приводится к ``manual`` —
+        иначе через ручной путь можно было бы подать ``live``/``internal`` и
+        загрязнить трассировку. ``origin`` не участвует в ключах, перезапись
+        безопасна (``model_copy`` на frozen-модели).
+        """
+        if isinstance(payload, Record):
+            return payload.model_copy(update={'origin': 'manual'})
+        return build_manual_record(payload)
+
     def _make_prune_task(self) -> asyncio.Task[None] | None:
         """Фоновая prune-задача ретеншна §17.3 (``prune_interval`` = 0 → выкл.)."""
         interval = self.settings.worker.prune_interval
@@ -769,6 +814,7 @@ def build_app(
         analytics=storage.analytics,
         catchup=_make_catchup(listeners),
         request_restart=restart_event.set,
+        ingest=ingest.ingest,
         poll_seconds=settings.worker.outbox_poll_seconds,
         log=get_logger('angarion.outbox'),
     )
