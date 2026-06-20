@@ -29,6 +29,13 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Changed
 
+- **Ломающее (сериализация очереди):** `Record` и `OutboundRecord` получили
+  аддитивные поля внутреннего провода (T037) — `Record.trace_id`/`hops`/
+  `origin='internal'`, `OutboundRecord.trace_id`/`hops`. Формат `QueueEnvelope`
+  в `queue.db` изменился: старые записи в очереди несовместимы. Чистый разрыв
+  без data-миграции (pre-alpha, релиза с цепочками не было) — при апгрейде
+  очередь очистить; storage (sqlite) не затронут, catch-up доберёт. Схема БД
+  не меняется. ADR 2026-06-20.
 - **Ломающее (формат ключей):** инъективная escape-кодировка составных ключей
   идемпотентности (T043). `make_source_key`/`make_dedup_key`/
   `make_idempotency_key` экранируют разделитель `:` (и сам escape-символ `\`)
@@ -45,6 +52,23 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Added
 
+- Внутренний провод цепочек пайплайнов — транспорт `internal` (T037): выход
+  одного пайплайна напрямую становится входом другого, **минуя реальную
+  платформу**. Объявляется обычным `[accounts.*]` с `transport = "internal"`;
+  ребро цепочки = совпадение `(transport=internal, address)` у `target` одного
+  пайплайна и `source` другого. Sink-only `AdapterPlugin`: его sink не
+  доставляет наружу, а преобразует `OutboundRecord` обратно в `Record(kind=new)`
+  и подаёт в ingest (re-ingestion через штатный конвейер ingest → очередь →
+  worker → outbox → delivery, в т.ч. кросс-процессно в split-деплое). Ключи
+  стыка детерминированы из `idempotency_key` (at-least-once без дублей).
+  Защита от циклов двухуровневая: fail-fast DAG-валидация рёбер на старте +
+  рантайм-лимит `[chains] max_hops` (дефолт 10, → DLQ при превышении).
+  Capability — только `new` (edited/deleted сквозь ребро вне MVP). Сквозная
+  трассировка: `Record.trace_id`/`hops`, `origin='internal'`. Топология цепочек
+  в `/ui/pipelines` — внутреннее ребро pipeline→pipeline отличимо от обычных
+  source/target. `make_listener` плагина стал опциональным (`… | None`,
+  sink-only). Спека `specs/T037-internal-wire/`, ADR 2026-06-20. Пример —
+  `examples/chain/` (цепочка нормализатор → провод → оформитель).
 - Telegram-сессия из env/конфига (T042): `[accounts.*]` получил опциональное
   поле `session` — уже авторизованная `StringSession`, обычно из env
   `ANGARION_ACCOUNTS__<NAME>__SESSION`. Если задана, рантайм подключает

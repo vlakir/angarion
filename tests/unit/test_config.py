@@ -8,13 +8,16 @@ import pytest
 from pydantic import ValidationError
 
 from angarion.config import (
+    AccountConfig,
     AngarionSettings,
+    ChainsConfig,
     EndpointConfig,
     MediaConfig,
     PipelineConfig,
     QueueConfig,
     StorageConfig,
     WorkerConfig,
+    find_internal_cycle,
     load_settings,
 )
 from angarion.domain.errors import ConfigError
@@ -385,6 +388,210 @@ def test_api_secret_and_admin_from_env(
     assert settings.api.secret == 'jwt-secret'
     assert settings.admin_login == 'root'
     assert settings.admin_password == 'pw'
+
+
+# --- T037: внутренний транспорт, [chains] max_hops, DAG-валидация рёбер ---
+
+
+def test_chains_defaults() -> None:
+    """[chains] max_hops — рантайм-backstop циклов (T037, дефолт 10)."""
+    assert AngarionSettings().chains.max_hops == 10
+
+
+def test_chains_max_hops_parsed_from_toml(tmp_path: Path) -> None:
+    """[chains] max_hops разбирается из TOML."""
+    settings = load_settings(write_toml(tmp_path, '[chains]\nmax_hops = 3\n'))
+    assert settings.chains.max_hops == 3
+
+
+def test_chains_max_hops_must_be_positive() -> None:
+    """max_hops ≥ 1 — нулевой лимит бессмысленен (ни одного прыжка)."""
+    assert ChainsConfig(max_hops=1).max_hops == 1
+    with pytest.raises(ValidationError, match='max_hops'):
+        ChainsConfig(max_hops=0)
+
+
+def test_internal_account_parses(tmp_path: Path) -> None:
+    """Внутренний транспорт объявляется обычным [accounts.*] (T037, A10)."""
+    settings = load_settings(
+        write_toml(tmp_path, '[accounts.wire]\ntransport = "internal"\n')
+    )
+    assert settings.accounts['wire'].transport == 'internal'
+
+
+def _pipeline(
+    sources: list[dict[str, str]], targets: list[dict[str, str]]
+) -> PipelineConfig:
+    return PipelineConfig.model_validate(
+        {
+            'processor': 'passthrough',
+            'events': ['new'],
+            'sources': sources,
+            'targets': targets,
+        }
+    )
+
+
+WIRE_ACCOUNTS = {
+    'wire': AccountConfig(transport='internal'),
+    'tg': AccountConfig(transport='telegram'),
+}
+
+
+class TestFindInternalCycle:
+    """Производный граф внутренних рёбер: ацикличность fail-fast (T037, Q2)."""
+
+    def test_linear_chain_is_acyclic(self) -> None:
+        """P1→stage1→P2→stage2→P3 — линейная цепочка, цикла нет."""
+        pipelines = {
+            'p1': _pipeline(
+                [{'account': 'tg', 'address': 'src'}],
+                [{'account': 'wire', 'address': 'stage1'}],
+            ),
+            'p2': _pipeline(
+                [{'account': 'wire', 'address': 'stage1'}],
+                [{'account': 'wire', 'address': 'stage2'}],
+            ),
+            'p3': _pipeline(
+                [{'account': 'wire', 'address': 'stage2'}],
+                [{'account': 'tg', 'address': 'dst'}],
+            ),
+        }
+        assert find_internal_cycle(pipelines, WIRE_ACCOUNTS) is None
+
+    def test_self_loop_detected(self) -> None:
+        """P пишет и слушает один внутренний канал — петля P→P."""
+        pipelines = {
+            'p': _pipeline(
+                [{'account': 'wire', 'address': 'x'}],
+                [{'account': 'wire', 'address': 'x'}],
+            ),
+        }
+        cycle = find_internal_cycle(pipelines, WIRE_ACCOUNTS)
+        assert cycle == ['p', 'p']
+
+    def test_two_cycle_detected(self) -> None:
+        """P1→P2→P1 через внутренние каналы — цикл (главный кейс BACKLOG)."""
+        pipelines = {
+            'p1': _pipeline(
+                [{'account': 'wire', 'address': 'b'}],
+                [{'account': 'wire', 'address': 'a'}],
+            ),
+            'p2': _pipeline(
+                [{'account': 'wire', 'address': 'a'}],
+                [{'account': 'wire', 'address': 'b'}],
+            ),
+        }
+        cycle = find_internal_cycle(pipelines, WIRE_ACCOUNTS)
+        assert cycle is not None
+        assert cycle[0] == cycle[-1]
+        assert set(cycle) == {'p1', 'p2'}
+
+    def test_fan_out_is_acyclic(self) -> None:
+        """Выход P1 в два канала → P2 и P3 — fan-out, не цикл (A6)."""
+        pipelines = {
+            'p1': _pipeline(
+                [{'account': 'tg', 'address': 'src'}],
+                [
+                    {'account': 'wire', 'address': 's2'},
+                    {'account': 'wire', 'address': 's3'},
+                ],
+            ),
+            'p2': _pipeline(
+                [{'account': 'wire', 'address': 's2'}],
+                [{'account': 'tg', 'address': 'd2'}],
+            ),
+            'p3': _pipeline(
+                [{'account': 'wire', 'address': 's3'}],
+                [{'account': 'tg', 'address': 'd3'}],
+            ),
+        }
+        assert find_internal_cycle(pipelines, WIRE_ACCOUNTS) is None
+
+    def test_fan_in_is_acyclic(self) -> None:
+        """Два пайплайна пишут в один канал → P3 — fan-in, не цикл."""
+        pipelines = {
+            'p1': _pipeline(
+                [{'account': 'tg', 'address': 's1'}],
+                [{'account': 'wire', 'address': 'merge'}],
+            ),
+            'p2': _pipeline(
+                [{'account': 'tg', 'address': 's2'}],
+                [{'account': 'wire', 'address': 'merge'}],
+            ),
+            'p3': _pipeline(
+                [{'account': 'wire', 'address': 'merge'}],
+                [{'account': 'tg', 'address': 'd'}],
+            ),
+        }
+        assert find_internal_cycle(pipelines, WIRE_ACCOUNTS) is None
+
+    def test_external_self_target_is_not_internal_cycle(self) -> None:
+        """source==target на реальном транспорте — забота loop-guard, не DAG."""
+        pipelines = {
+            'p': _pipeline(
+                [{'account': 'tg', 'address': 'x'}],
+                [{'account': 'tg', 'address': 'x'}],
+            ),
+        }
+        assert find_internal_cycle(pipelines, WIRE_ACCOUNTS) is None
+
+    def test_unknown_account_ignored(self) -> None:
+        """Несуществующий аккаунт — забота bootstrap, DAG его молча пропускает."""
+        pipelines = {
+            'p': _pipeline(
+                [{'account': 'ghost', 'address': 'x'}],
+                [{'account': 'wire', 'address': 'y'}],
+            ),
+        }
+        assert find_internal_cycle(pipelines, WIRE_ACCOUNTS) is None
+
+
+def test_cyclic_chain_rejected_on_load(tmp_path: Path) -> None:
+    """Циклическая цепочка внутренних рёбер — ConfigError fail-fast (Q2, SC)."""
+    toml = """
+[accounts.wire]
+transport = "internal"
+
+[pipelines.p1]
+processor = "passthrough"
+events = ["new"]
+sources = [{ account = "wire", address = "b" }]
+targets = [{ account = "wire", address = "a" }]
+
+[pipelines.p2]
+processor = "passthrough"
+events = ["new"]
+sources = [{ account = "wire", address = "a" }]
+targets = [{ account = "wire", address = "b" }]
+"""
+    with pytest.raises(ConfigError, match='цикл'):
+        load_settings(write_toml(tmp_path, toml))
+
+
+def test_acyclic_chain_loads(tmp_path: Path) -> None:
+    """Ацикличная цепочка проходит стартовую валидацию."""
+    toml = """
+[accounts.wire]
+transport = "internal"
+
+[accounts.tg]
+transport = "telegram"
+
+[pipelines.p1]
+processor = "passthrough"
+events = ["new"]
+sources = [{ account = "tg", address = "src" }]
+targets = [{ account = "wire", address = "stage1" }]
+
+[pipelines.p2]
+processor = "passthrough"
+events = ["new"]
+sources = [{ account = "wire", address = "stage1" }]
+targets = [{ account = "tg", address = "dst" }]
+"""
+    settings = load_settings(write_toml(tmp_path, toml))
+    assert find_internal_cycle(settings.pipelines, settings.accounts) is None
 
 
 def test_api_rejects_unknown_auth_mode(tmp_path: Path) -> None:

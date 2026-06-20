@@ -6,15 +6,30 @@
   <p>
     <small>Queue: <strong>pending {{ graph.depth_pending }}</strong>,
     unacked {{ graph.depth_unacked }}. Pipeline node colour = status
-    (green active, yellow paused, red failed within the hour).{% if is_admin %}
+    (green active, yellow paused, red failed within the hour). A dashed
+    purple arrow is an internal chain edge (one pipeline feeds another
+    without leaving the platform).{% if is_admin %}
     Click a pipeline to pause/resume.{% endif %}</small>
   </p>
   <svg viewBox="0 0 {{ graph.width }} {{ graph.height }}"
        width="100%" role="img" aria-label="Pipeline topology"
        style="max-width:{{ graph.width }}px;font-family:sans-serif">
+    <defs>
+      <marker id="chain-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#8e24aa"/>
+      </marker>
+    </defs>
     {% for e in graph.edges %}
+    {% if e.internal %}
+    <path d="M {{ e.x1 }} {{ e.y1 }} Q {{ e.cx }} {{ e.cy }} {{ e.x2 }} {{ e.y2 }}"
+          fill="none" stroke="#8e24aa" stroke-width="1.5"
+          stroke-dasharray="5 3" data-role="chain-edge"
+          marker-end="url(#chain-arrow)"/>
+    {% else %}
     <line x1="{{ e.x1 }}" y1="{{ e.y1 }}" x2="{{ e.x2 }}" y2="{{ e.y2 }}"
           stroke="#90a4ae" stroke-width="1.5"/>
+    {% endif %}
     {% endfor %}
     {% for n in graph.sources %}
     {% set cx = n.x + n.width // 2 %}

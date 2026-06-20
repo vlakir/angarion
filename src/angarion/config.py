@@ -13,6 +13,7 @@
 pydantic-моделей вычисляются в runtime.
 """
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal, Self
 
@@ -25,7 +26,7 @@ from pydantic_settings import (
 )
 
 from angarion.domain.errors import ConfigError
-from angarion.domain.models import MediaRef, RecordKind, Transport
+from angarion.domain.models import INTERNAL_TRANSPORT, MediaRef, RecordKind, Transport
 
 
 class AccountConfig(BaseModel):
@@ -186,6 +187,24 @@ class WorkerConfig(BaseModel):
     0``. Дефолт 300 с — заведомо больше нормального исполнения команды
     (notify/catchup/restart), чтобы не реклеймить ещё живой захват.
     """
+
+
+class ChainsConfig(BaseModel):
+    """
+    Секция ``[chains]`` (T037): параметры внутреннего провода цепочек.
+
+    ``max_hops`` — рантайм-лимит прыжков записи по внутренним рёбрам (Q2):
+    при превышении re-ingested запись уходит в DLQ с пометкой
+    ``hop_limit_exceeded``. Универсальный backstop поверх стартовой
+    DAG-валидации: ловит и циклы, замкнутые через **реальную** платформу
+    (P1→internal→P2→группа X, P1 слушает X), которые стартовая проверка
+    статически увидеть не может. Дефолт 10 — заведомо больше реальных
+    цепочек, ``ge=1`` (нулевой лимит запретил бы любой прыжок).
+    """
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
+
+    max_hops: int = Field(default=10, ge=1)
 
 
 class CatchupConfig(BaseModel):
@@ -377,6 +396,92 @@ class PipelineConfig(BaseModel):
     """
 
 
+def _internal_channel(ep: EndpointConfig) -> tuple[str, str | None]:
+    """Канал внутреннего ребра — ``(address, thread_id)`` (идентичность Endpoint)."""
+    return (ep.address, ep.thread_id)
+
+
+def internal_edges(
+    pipelines: Mapping[str, PipelineConfig],
+    accounts: Mapping[str, AccountConfig],
+) -> dict[str, set[str]]:
+    """
+    Орграф рёбер pipeline→pipeline по внутренним каналам (T037).
+
+    Ребро ``P→Q`` — если P пишет в внутренний канал (``target`` на транспорте
+    ``internal``), а Q его слушает (``source`` на том же канале). Аккаунты с
+    неизвестным/не-``internal`` транспортом игнорируются (внешние рёбра графом
+    цепочек не считаются; отсутствующий аккаунт отвергнет bootstrap).
+
+    Публичная (используется и стартовой DAG-валидацией ``find_internal_cycle``,
+    и web-viz ``/ui/pipelines`` — единый источник топологии цепочек, T037 фаза 3).
+    """
+    producers: dict[tuple[str, str | None], set[str]] = {}
+    consumers: dict[tuple[str, str | None], set[str]] = {}
+    for name, cfg in pipelines.items():
+        for ep in cfg.targets:
+            account = accounts.get(ep.account)
+            if account is not None and account.transport == INTERNAL_TRANSPORT:
+                producers.setdefault(_internal_channel(ep), set()).add(name)
+        for ep in cfg.sources:
+            account = accounts.get(ep.account)
+            if account is not None and account.transport == INTERNAL_TRANSPORT:
+                consumers.setdefault(_internal_channel(ep), set()).add(name)
+    edges: dict[str, set[str]] = {}
+    for channel, channel_producers in producers.items():
+        for producer in channel_producers:
+            edges.setdefault(producer, set()).update(consumers.get(channel, set()))
+    return edges
+
+
+def _first_cycle(edges: Mapping[str, set[str]]) -> list[str] | None:
+    """
+    DFS-поиск первого цикла в орграфе; путь с замыканием либо ``None``.
+
+    ``visiting``: нет ключа — узел не посещён (white); ``True`` — в текущем
+    стеке (gray, ребро назад = цикл); ``False`` — полностью обойдён (black).
+    Сортировка для детерминированного (воспроизводимого) пути в сообщении.
+    """
+    visiting: dict[str, bool] = {}
+    stack: list[str] = []
+
+    def visit(node: str) -> list[str] | None:
+        visiting[node] = True
+        stack.append(node)
+        for nxt in sorted(edges.get(node, set())):
+            if visiting.get(nxt):
+                return [*stack[stack.index(nxt) :], nxt]
+            if nxt not in visiting:
+                found = visit(nxt)
+                if found is not None:
+                    return found
+        stack.pop()
+        visiting[node] = False
+        return None
+
+    for node in sorted(edges):
+        if node not in visiting:
+            found = visit(node)
+            if found is not None:
+                return found
+    return None
+
+
+def find_internal_cycle(
+    pipelines: Mapping[str, PipelineConfig],
+    accounts: Mapping[str, AccountConfig],
+) -> list[str] | None:
+    """
+    Цикл в графе внутренних рёбер либо ``None``, если граф ацикличен (T037, Q2).
+
+    Возвращает имена пайплайнов цикла с замыканием (``['p1', 'p2', 'p1']``),
+    включая self-loop ``['p', 'p']`` (пайплайн пишет и слушает один канал).
+    fan-out/fan-in циклами не являются. Граф производен от конфига — не
+    доменная сущность (спека §5, НЕ ДОЛЖНА вводить граф в домен).
+    """
+    return _first_cycle(internal_edges(pipelines, accounts))
+
+
 class AngarionSettings(BaseSettings):
     """
     Корень конфигурации (§11, объём C-4). Источники: init-данные (TOML
@@ -395,6 +500,7 @@ class AngarionSettings(BaseSettings):
     media: MediaConfig = MediaConfig()
     queue: QueueConfig = QueueConfig()
     worker: WorkerConfig = WorkerConfig()
+    chains: ChainsConfig = ChainsConfig()
     catchup: CatchupConfig = CatchupConfig()
     telegram: TelegramConfig = TelegramConfig()
     matrix: MatrixConfig = MatrixConfig()
@@ -415,6 +521,23 @@ class AngarionSettings(BaseSettings):
     админ; при ``api.auth="users"`` и отсутствии этих env — fail-fast в
     bootstrap (реализация — T023, фаза 2).
     """
+
+    @model_validator(mode='after')
+    def _reject_internal_cycles(self) -> Self:
+        """
+        Цепочка внутренних рёбер обязана быть ацикличной (T037, Q2, SC).
+
+        Fail-fast при старте (как прочие стартовые инварианты конфига §12.10):
+        статически выразимый цикл внутренних рёбер — детерминированная понятная
+        ошибка вместо бесконечной петли. Рантайм-backstop (``[chains] max_hops``)
+        ловит то, что статически не видно (цикл через реальную платформу).
+        """
+        cycle = find_internal_cycle(self.pipelines, self.accounts)
+        if cycle is not None:
+            path = ' → '.join(cycle)
+            msg = f'циклическая цепочка внутренних пайплайнов: {path}'
+            raise ValueError(msg)
+        return self
 
     @classmethod
     def settings_customise_sources(

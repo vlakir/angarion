@@ -184,11 +184,16 @@ class PipelineWorker:
         result = await binding.processor.process(envelope.record, binding.ctx, svc)
         if result.verdict is Verdict.DELIVER:
             for out in result.outbound:
-                staged = (
-                    out
-                    if binding.forward_media or not out.media
-                    else out.model_copy(update={'media': []})
-                )
+                # сквозные носители провода цепочек (T037, A3): trace_id корня и
+                # hops входной Record едут в OutboundRecord — InternalSink читает
+                # их при re-ingestion (для не-internal целей поля едут вхолостую)
+                update: dict[str, Any] = {
+                    'trace_id': envelope.record.trace_id,
+                    'hops': envelope.record.hops,
+                }
+                if not binding.forward_media and out.media:
+                    update['media'] = []
+                staged = out.model_copy(update=update)
                 await self._outbox.put(
                     staged,
                     pipeline=envelope.pipeline,

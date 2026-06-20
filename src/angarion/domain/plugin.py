@@ -109,7 +109,14 @@ class AdapterPlugin(BaseModel):
     capabilities: AdapterCapabilities
     account_config_model: type[BaseModel]
     """Pydantic-схема секции ``[accounts.*]`` этой платформы."""
-    make_listener: ListenerFactory
+    make_listener: ListenerFactory | None = None
+    """
+    Фабрика driving-listener'а платформы. ``None`` — **sink-only** транспорт
+    без внешнего источника (T037 internal-провод): «вход» приёмника наполняет
+    сам sink через re-ingestion, listener'а нет. Прочие адаптеры (Telegram,
+    Matrix, memory) задают фабрику обязательно — у них есть платформенный
+    источник live-событий.
+    """
     make_sender: SenderFactory
     make_login: LoginFactory | None = None
     """

@@ -66,6 +66,28 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
 
+- **T037** — «Внутренний провод»: прямое соединение пайплайнов в цепочку без
+  выхода на платформу [closed 2026-06-20, текущий PR]. Внутренний транспорт
+  `internal` — sink-only `AdapterPlugin`, sink преобразует `OutboundRecord` →
+  `Record(kind=new)` и подаёт в `IngestService.ingest` (re-ingestion через
+  штатный конвейер), поверх транспорт-агностичной модели T041. Ребро цепочки =
+  совпадение `(transport=internal, address)` у `target` одного пайплайна и
+  `source` другого; граф производен от конфига (не доменная сущность). Ключи
+  стыка детерминированы из `idempotency_key` (at-least-once без дублей); защита
+  от циклов двухуровневая (fail-fast DAG-валидация на старте + рантайм-лимит
+  `[chains] max_hops`); capability `{new}`; сквозная трассировка `trace_id` +
+  `origin='internal'`. `make_listener` стал опциональным (sink-only, A2);
+  `internal` исключён из loop-guard (A1) и catchup-деградации (A8). Реализовано
+  4 фазами: модель+конфиг+DAG → адаптер+re-ingestion+защиты → web-viz цепочек →
+  пример `examples/chain/`+доки+ADR. Чистый разрыв сериализации `queue.db`
+  (аддитивные поля `Record`/`OutboundRecord`, pre-alpha). ADR 2026-06-20,
+  спека `specs/T037-internal-wire/`. Acceptance (§4 Success Criteria) выполнен:
+  e2e P1→P2 без реального транспорта зелёный, цикл отклоняется fail-fast, viz
+  рисует pipeline→pipeline ребро, at-least-once стык, trace-проброс; `mypy
+  --strict` чист, 1178 passed, coverage 96.56%; **живой прогон на реальном
+  Telegram зелёный** (catch-up, recent_poll без рестарта, настоящий live через
+  бота).
+
 - **T043** — Collision-safe ключи: инъективная escape-кодировка составных
   ключей идемпотентности [closed 2026-06-20, текущий PR]. Долг из ревью
   CodeRabbit на PR #41 (T041), пред-существующий. `domain/keys.py` строил ключи

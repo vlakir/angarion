@@ -19,9 +19,16 @@ from uuid import uuid4
 import pytest
 
 from angarion.adapters.http import create_app
-from angarion.domain.models import AnalyticsEvent, DynamicSettings
+from angarion.adapters.http.viz import build_pipeline_graph
+from angarion.config import (
+    AccountConfig,
+    AngarionSettings,
+    EndpointConfig,
+    PipelineConfig,
+)
+from angarion.domain.models import AnalyticsEvent, DynamicSettings, RecordKind
 
-from conftest import asgi_client
+from conftest import asgi_client, make_settings
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -206,3 +213,79 @@ async def test_pipelines_fragment_polling_endpoint(client: AsyncClient) -> None:
     assert '<html' not in body.lower()
     assert 'id="pipeline-graph"' in body
     assert '<svg' in body
+
+
+# --- T037 фаза 3: визуализация внутренних цепочек ---
+
+
+def _chain_settings() -> AngarionSettings:
+    """``first`` (mem:-100 → wire:ch1) ⇒ ``second`` (wire:ch1 → mem:-200)."""
+    return make_settings(
+        accounts={
+            'mem': AccountConfig(transport='memory'),
+            'wire': AccountConfig(transport='internal'),
+        },
+        pipelines={
+            'first': PipelineConfig(
+                processor='passthrough',
+                events=frozenset({RecordKind.NEW}),
+                sources=(EndpointConfig(account='mem', address='-100'),),
+                targets=(EndpointConfig(account='wire', address='ch1'),),
+            ),
+            'second': PipelineConfig(
+                processor='passthrough',
+                events=frozenset({RecordKind.NEW}),
+                sources=(EndpointConfig(account='wire', address='ch1'),),
+                targets=(EndpointConfig(account='mem', address='-200'),),
+            ),
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_internal_channel_collapses_to_edge(deps: AngarionDeps) -> None:
+    """Внутренний канал не висит коробкой — схлопнут в одно ребро цепочки."""
+    graph = await build_pipeline_graph(
+        deps.model_copy(update={'settings': _chain_settings()})
+    )
+    # колонки несут только внешние эндпоинты (mem:-100 / mem:-200), не канал
+    assert len(graph.sources) == 1
+    assert len(graph.targets) == 1
+    labels = [n.label for n in (*graph.sources, *graph.targets)]
+    assert not any(lbl.startswith('internal:') for lbl in labels)
+    # ровно одно внутреннее ребро поверх двух внешних (source→first, second→target)
+    internal = [e for e in graph.edges if e.internal]
+    assert len(internal) == 1
+    assert sum(1 for e in graph.edges if not e.internal) == 2
+
+
+@pytest.mark.asyncio
+async def test_internal_edge_connects_pipeline_nodes(deps: AngarionDeps) -> None:
+    """Внутреннее ребро соединяет узлы-пайплайны (producer→consumer), не коробки."""
+    graph = await build_pipeline_graph(
+        deps.model_copy(update={'settings': _chain_settings()})
+    )
+    nodes = {n.key: n for n in graph.pipelines}
+    first, second = nodes['first'], nodes['second']
+    (edge,) = [e for e in graph.edges if e.internal]
+    # оба конца — в колонке пайплайнов, на центрах узлов producer/consumer
+    assert edge.x1 == first.x == edge.x2 == second.x
+    assert edge.y1 == first.y + first.height // 2
+    assert edge.y2 == second.y + second.height // 2
+    # кривая выгибается влево — визуально отличимая маршрутизация
+    assert edge.cx < edge.x1
+
+
+@pytest.mark.asyncio
+async def test_chain_edge_rendered_distinctly(deps: AngarionDeps) -> None:
+    """SVG рисует ребро цепочки пунктиром со стрелкой направления."""
+    chain_deps = deps.model_copy(update={'settings': _chain_settings()})
+    async with asgi_client(create_app(chain_deps)) as client:
+        body = (await client.get('/ui/pipelines')).text
+    assert 'data-role="chain-edge"' in body
+    assert 'stroke-dasharray' in body
+    assert 'marker-end="url(#chain-arrow)"' in body
+    # оба пайплайна — узлы; внутренний канал коробкой не висит
+    assert '>first<' in body
+    assert '>second<' in body
+    assert 'internal:' not in body

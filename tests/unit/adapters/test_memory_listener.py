@@ -16,6 +16,7 @@ from angarion.adapters.memory.listener import MemoryListener
 from angarion.adapters.memory.queue import MemoryQueue
 from angarion.adapters.memory.storage import (
     MemoryAnalytics,
+    MemoryDeadLetters,
     MemoryDedupStore,
     MemoryMessageRegistry,
 )
@@ -47,6 +48,7 @@ def make_ingest() -> tuple[IngestService, MemoryQueue, MemoryAnalytics]:
         router=router,
         queue=queue,
         analytics=analytics,
+        dead_letters=MemoryDeadLetters(),
     )
     return ingest, queue, analytics
 

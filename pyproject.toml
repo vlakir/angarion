@@ -97,6 +97,7 @@ angarion_testing = "angarion._testing_plugin"
 memory = "angarion.adapters.memory.plugin:PLUGIN"
 telegram = "angarion.adapters.telegram.plugin:PLUGIN"
 matrix = "angarion.adapters.matrix.plugin:PLUGIN"
+internal = "angarion.adapters.internal.plugin:PLUGIN"
 
 [project.entry-points."angarion.queues"]
 memory = "angarion.adapters.memory.plugin:QUEUE_BACKEND"

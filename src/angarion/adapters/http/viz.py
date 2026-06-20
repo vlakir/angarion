@@ -9,6 +9,11 @@
 вычисляется здесь, а SVG рисуется Jinja-шаблоном из готовой модели —
 графический слой остаётся серверным, без JS-библиотек.
 
+Внутренние каналы цепочек (T037, ``transport=internal``) не рисуются
+отдельными узлами-коробками: канал схлопывается в ребро ``pipeline→pipeline``
+(``GraphEdge.internal=True``) поверх той же трёхдольной раскладки — единый
+источник топологии цепочек с DAG-валидацией (``config.internal_edges``).
+
 Без ``from __future__ import annotations`` не обойтись для строковых
 аннотаций ``AngarionDeps`` в сигнатуре — модели ниже самодостаточны.
 """
@@ -20,7 +25,9 @@ from typing import TYPE_CHECKING, Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from angarion.config import internal_edges
 from angarion.domain.keys import make_source_key
+from angarion.domain.models import INTERNAL_TRANSPORT
 
 if TYPE_CHECKING:
     from angarion.adapters.http.deps import AngarionDeps
@@ -69,7 +76,15 @@ class GraphNode(BaseModel):
 
 
 class GraphEdge(BaseModel):
-    """Ребро графа: прямая от правого края левого узла к левому краю правого."""
+    """
+    Ребро графа.
+
+    Внешнее (``internal=False``) — прямая от правого края левого узла к левому
+    краю правого. Внутреннее ребро цепочки (``internal=True``, T037) соединяет
+    два узла-пайплайна квадратичной кривой Безье через контрольную точку
+    ``(cx, cy)`` и рисуется отличимым стилем (пунктир + стрелка направления):
+    внутренний канал схлопнут в ребро ``pipeline→pipeline``, без узлов-коробок.
+    """
 
     model_config = ConfigDict(frozen=True, extra='forbid')
 
@@ -77,6 +92,9 @@ class GraphEdge(BaseModel):
     y1: int
     x2: int
     y2: int
+    internal: bool = False
+    cx: int = 0
+    cy: int = 0
 
 
 class PipelineGraph(BaseModel):
@@ -94,10 +112,15 @@ class PipelineGraph(BaseModel):
     depth_unacked: int
 
 
-def _endpoint_key(settings: AngarionSettings, ep: EndpointConfig) -> str | None:
-    """Ключ эндпоинта (источник/цель) или ``None``, если аккаунт не описан."""
+def _external_key(settings: AngarionSettings, ep: EndpointConfig) -> str | None:
+    """
+    Ключ внешнего эндпоинта-коробки или ``None`` — если аккаунт не описан
+    (ссылочная целостность — забота bootstrap) ИЛИ транспорт ``internal``:
+    внутренний канал не висит отдельной коробкой, а схлопывается в ребро
+    ``pipeline→pipeline`` (T037 фаза 3).
+    """
     account = settings.accounts.get(ep.account)
-    if account is None:  # ссылочная целостность — забота bootstrap
+    if account is None or account.transport == INTERNAL_TRANSPORT:
         return None
     return make_source_key(account.transport, ep.account, ep.address, ep.thread_id)
 
@@ -146,8 +169,8 @@ async def build_pipeline_graph(deps: AngarionDeps) -> PipelineGraph:
     pipeline_targets: dict[str, list[str]] = {}
     for name in names:
         cfg = settings.pipelines[name]
-        srcs = [k for ep in cfg.sources if (k := _endpoint_key(settings, ep))]
-        tgts = [k for ep in cfg.targets if (k := _endpoint_key(settings, ep))]
+        srcs = [k for ep in cfg.sources if (k := _external_key(settings, ep))]
+        tgts = [k for ep in cfg.targets if (k := _external_key(settings, ep))]
         pipeline_sources[name] = srcs
         pipeline_targets[name] = tgts
         for k in srcs:
@@ -213,6 +236,24 @@ async def build_pipeline_graph(deps: AngarionDeps) -> PipelineGraph:
             GraphEdge(x1=col1_x + _NODE_W, y1=py, x2=col2_x, y2=tgt_cy[k])
             for k in pipeline_targets[name]
         )
+
+    # внутренние рёбра цепочки (T037): схлопнутый канал producer→consumer
+    chain = internal_edges(settings.pipelines, settings.accounts)
+    for producer in sorted(chain):
+        py1 = pipe_cy[producer]
+        for consumer in sorted(chain[producer]):
+            py2 = pipe_cy[consumer]
+            edges.append(
+                GraphEdge(
+                    x1=col1_x,
+                    y1=py1,
+                    x2=col1_x,
+                    y2=py2,
+                    cx=col1_x - _COL_GAP // 2,
+                    cy=(py1 + py2) // 2,
+                    internal=True,
+                )
+            )
 
     depth = await deps.queue.depth()
     return PipelineGraph(

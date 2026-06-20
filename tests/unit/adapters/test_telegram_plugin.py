@@ -43,6 +43,7 @@ def _deps(settings: AngarionSettings | None = None) -> AdapterDeps:
         router=Router([]),
         queue=MemoryQueue(),
         analytics=storage.analytics,
+        dead_letters=storage.dead_letters,
     )
     return AdapterDeps(
         ingest=ingest, storage=storage, settings=settings or AngarionSettings()
