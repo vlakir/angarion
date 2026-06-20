@@ -40,6 +40,37 @@ class TestMakeSourceKey:
         key = make_source_key('telegram', 'acc1', '-1003385167603', thread_id='55')
         assert key == 'telegram:acc1:-1003385167603:55'
 
+    def test_matrix_room_id_no_thread_collision(self) -> None:
+        """T043: room-id с ':' не должен схлопываться с парой address+thread.
+
+        Старая colon-concat-кодировка давала ''matrix:acc:!room:server'' для
+        обоих кортежей — коллизия реестра/курсоров разных источников.
+        """
+        with_colon_address = make_source_key('matrix', 'acc', '!room:server')
+        split_into_thread = make_source_key('matrix', 'acc', '!room', thread_id='server')
+        assert with_colon_address != split_into_thread
+
+    def test_colon_in_address_is_injective(self) -> None:
+        """Разные address с ':' дают разные ключи (где старо было неоднозначно)."""
+        a = make_source_key('matrix', 'acc', '!a:b:c')
+        b = make_source_key('matrix', 'acc', '!a:b', thread_id='c')
+        c = make_source_key('matrix', 'acc', '!a', thread_id='b:c')
+        assert len({a, b, c}) == 3
+
+    def test_escape_char_in_component_is_injective(self) -> None:
+        r"""Сам escape-символ '\' в компоненте не ломает инъективность."""
+        a = make_source_key('matrix', 'acc', r'x\:y')
+        b = make_source_key('matrix', 'acc', 'x', thread_id='y')
+        assert a != b
+
+    def test_colon_free_components_keep_legacy_format(self) -> None:
+        """Byte-compat: без ':'/'\\' кодировка совпадает со старой colon-concat."""
+        assert make_source_key('telegram', 'acc1', '-100') == 'telegram:acc1:-100'
+        assert (
+            make_source_key('telegram', 'acc1', '-100', thread_id='55')
+            == 'telegram:acc1:-100:55'
+        )
+
 
 class TestNormalizeAndHash:
     """Контракт нормализации: NFC + переводы строк → \\n, больше ничего."""
@@ -167,6 +198,14 @@ class TestMakeDedupKey:
         with pytest.raises(ValueError, match='content_hash'):
             make_dedup_key(RecordKind.EDITED, SOURCE_KEY, '42')
 
+    def test_colon_in_external_id_is_injective(self) -> None:
+        """T043: external_id с ':' (Matrix event-id старых версий комнат)
+        не должен схлопывать разные сообщения в один dedup-ключ."""
+        a = make_dedup_key(RecordKind.NEW, SOURCE_KEY, '$evt:server')
+        b = make_dedup_key(RecordKind.NEW, SOURCE_KEY, '$evt')
+        c = make_dedup_key(RecordKind.NEW, f'{SOURCE_KEY}:$evt', 'server')
+        assert len({a, b, c}) == 3
+
 
 class TestMakeMediaHash:
     def test_empty_is_none(self) -> None:
@@ -227,3 +266,19 @@ class TestMakeIdempotencyKey:
         assert factory(event, target, 1) == make_idempotency_key(
             'digest', event, target, 1
         )
+
+    def test_colon_in_target_address_is_injective(self) -> None:
+        """T043: target.address с ':' (Matrix-комната) не должен схлопывать
+        разные адреса доставки в один ключ идемпотентности."""
+        event = _event(f'{SOURCE_KEY}:42:new')
+        a = make_idempotency_key('digest', event, Endpoint(transport='matrix', address='!r:srv'), 0)
+        b = make_idempotency_key('digest', event, Endpoint(transport='matrix', address='!r'), 0)
+        assert a != b
+
+    def test_colon_in_pipeline_is_injective(self) -> None:
+        """Имя пайплайна с ':' не должно сливаться с адресом цели."""
+        event = _event(f'{SOURCE_KEY}:42:new')
+        target = Endpoint(transport='telegram', address='-100999')
+        a = make_idempotency_key('a:b', event, target, 0)
+        b = make_idempotency_key('a', event, Endpoint(transport='telegram', address='b:-100999'), 0)
+        assert a != b

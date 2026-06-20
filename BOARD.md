@@ -66,6 +66,24 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
 
+- **T043** — Collision-safe ключи: инъективная escape-кодировка составных
+  ключей идемпотентности [closed 2026-06-20, текущий PR]. Долг из ревью
+  CodeRabbit на PR #41 (T041), пред-существующий. `domain/keys.py` строил ключи
+  простым colon-concat — не инъективно при `:` в компоненте (Matrix room-id
+  `!room:server`, event-id `$id:server`, Matrix-комната как `target.address`):
+  разные кортежи давали один ключ и схлопывали реестр/курсоры/дедуп/outbound.
+  Фикс: общий `_escape` (`\`→`\\`, `:`→`\:`) в `make_source_key`/
+  `make_dedup_key`/`make_idempotency_key` (терминальные компоненты — slot, n —
+  не экранируются). **Scope расширен** с исходного «только make_source_key» до
+  всего класса ключей (согласовано с Разработчиком, ADR). Чистый разрыв формата
+  без data-миграции (pre-alpha, релиза с Matrix не было, старый формат
+  неоднозначен → точная миграция невозможна); схема БД не меняется, Telegram-
+  ключи байт-в-байт прежние (escape — no-op для colon-free), осиротевшие
+  Matrix-курсоры регенерируются одним catch-up. ADR 2026-06-20. Acceptance
+  выполнен: тесты на коллизии Matrix-room-id/event-id/target-address зелёные,
+  Telegram golden байт-в-байт сохранены; `mypy --strict` чист, coverage 96.51%,
+  1123 теста зелёные. Ветка `T043-collision-safe-source-key`.
+
 - **T042** — Сессия из env/конфига: авторизованная `StringSession` напрямую,
   без `login`/`seed` для dev-прогонов (ветка `T042-session-from-env`)
   [closed 2026-06-20, текущий PR]. `TelegramAccountConfig` получил
