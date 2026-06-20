@@ -67,6 +67,10 @@ class AngarionDeps(BaseModel):
     notifier: Any = None
     webhook_routers: tuple[Any, ...] = ()
     auth_sessionmaker: Any = None
+    ingest: Any = None
+    """``IngestService`` ручного триггера (T038): combined несёт его из
+    собранного ``AngarionApp``, api-роль — ``None`` (конвейера нет, event-путь
+    идёт через ``CommandOutbox``). Роут диспетчеризует по наличию (A8)."""
 
 
 def get_deps(request: Request) -> AngarionDeps:
@@ -119,6 +123,7 @@ def get_notifier(request: Request) -> SettingsNotifier | None:
     return cast('SettingsNotifier | None', get_deps(request).notifier)
 
 
+DepsDep = Annotated[AngarionDeps, Depends(get_deps)]
 AnalyticsDep = Annotated[AnalyticsPort, Depends(get_analytics)]
 RegistryDep = Annotated[MessageRegistryPort, Depends(get_registry)]
 StateDep = Annotated[StateStorePort, Depends(get_state)]

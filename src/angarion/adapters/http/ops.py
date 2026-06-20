@@ -41,6 +41,7 @@ from angarion.domain.models import (
     DeadLetter,
     DynamicSettings,
     OutboxCommand,
+    Record,
 )
 from angarion.domain.ports import (
     AnalyticsPort,
@@ -207,6 +208,34 @@ async def request_catchup(
         operation='catchup',
         by=by,
         details={'source_key': source_key, 'command_uid': str(command.uid)},
+    )
+    return command
+
+
+async def request_inject(
+    command_outbox: CommandOutboxPort,
+    analytics: AnalyticsPort,
+    *,
+    record: Record,
+    by: str,
+) -> OutboxCommand:
+    """
+    Поставить команду ручного впрыска события (T038, split event-мост).
+
+    ``Record`` сериализуется в payload команды; consumer pipeline-процесса
+    десериализует и проводит через ``IngestService.ingest`` (router/dedup/
+    реестр/fan-out). Используется только в split (``--role api``): в combined
+    ручка зовёт ``ingest`` напрямую, минуя outbox (меньше латентность, A8/A1).
+    """
+    command = await command_outbox.put(
+        CommandKind.INJECT, payload={'record': record.model_dump(mode='json')}
+    )
+    await record_admin_op(
+        analytics,
+        operation='inject',
+        by=by,
+        pipeline=None,
+        details={'record_uid': str(record.uid), 'command_uid': str(command.uid)},
     )
     return command
 

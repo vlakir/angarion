@@ -40,6 +40,8 @@ auth = "users"          # "none" — открыто (dev/localhost); "users" —
 | `GET /ui/pipelines` | граф топологии «источники → пайплайны → получатели» (серверный SVG) | защищённый |
 | `GET /ui/events` | журнал аналитики (SSR) | защищённый |
 | `/api/v1/admin/*`, `/ui/settings`, `/ui/dlq`, `/ui/users` | админ-операции (пауза/resume, requeue DLQ, динамика, пользователи) | admin-only |
+| `POST /api/v1/trigger`, `POST /api/v1/run/{pipeline}` | ручной триггер: впрыск события / прямой запуск пайплайна (write) | API-ключ |
+| `GET/POST /ui/trigger` | UI-форма ручного триггера | admin-only |
 | `/api/v1/auth/*`, `/ui/login`, `/ui/register` | аутентификация | публичный |
 
 Граф `/ui/pipelines` рендерится **на сервере** (Jinja, без JS-библиотек):
@@ -186,6 +188,88 @@ point обязан загружаться в `Page` — иначе `ConfigError`
 выбранный режим `auth`: при `auth = "none"` они открыты (локальный
 синтетический админ), при `auth = "users"` — требуют аутентификации
 (`public=True` оставляет страницу открытой и в этом режиме).
+
+## Ручной триггер (T038)
+
+Первое штатное **write**-расширение встроенного API помимо admin-
+управления (§12.5): ручной запуск обработки без живого события источника.
+Две ручки под `/api/v1`, обе принимают тело `{"event": …}` (упрощённый
+payload) **или** `{"record": …}` (готовый `Record`) — ровно одно из двух:
+
+| Путь | Семантика | Доступ |
+|---|---|---|
+| `POST /api/v1/trigger` | **event** — впрыск через `IngestService` → router/dedup/реестр/fan-out | API-ключ |
+| `POST /api/v1/run/{pipeline}` | **pipeline** — сырой `QueueEnvelope` в очередь, минуя router/dedup | API-ключ |
+
+Ручные события помечаются `origin='manual'` (аналитика/трасса, `/ui/events`).
+Ответ — `202` с `record_uid` и `mode`: `ingested` (combined event), `queued`
+(split event через outbox) или `staged` (прямой запуск пайплайна).
+
+### Авторизация — отдельный API-ключ
+
+Write-ручка защищена **не** admin-сессией fastapi-users, а отдельным
+**API-ключом** — машинный путь для служб/CI (ключ переиспользуем, в отличие
+от сессии). Ключ — секрет `[api].trigger_token`, подаётся через env
+`ANGARION_API__TRIGGER_TOKEN` (не в TOML), проверяется на каждый запрос в
+заголовке `X-API-Key` (сравнение постоянного времени):
+
+- пустой `trigger_token` → ручки выключены (`503`);
+- нет заголовка → `401`; неверный ключ → `403`.
+
+Авторизация ключом **не зависит** от режима `[api].auth` — машинная ручка
+работает и при `auth = "none"`, и при `auth = "users"`.
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/api/v1/trigger \
+  -H "X-API-Key: $ANGARION_API__TRIGGER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"event": {"source": {"transport": "telegram", "address": "-100…"},
+                 "text": "manual event"}}'
+```
+
+### Combined vs split
+
+- **combined** (`run --with-api`): event-ручка зовёт `ingest` напрямую
+  (меньше латентность), прямой запуск — `queue.put`.
+- **split** (`run --role api`): у api-процесса нет конвейера, поэтому
+  event-ручка кладёт команду `INJECT` в `CommandOutbox` — исполняет
+  consumer pipeline-процесса (мост §12.9, как `restart`/`catchup`). Прямой
+  запуск пайплайна идёт через **общую очередь** в обоих режимах (api-процесс
+  уже пишет в общий `queue.db`, как requeue из DLQ) — отдельной команды не
+  требует. Инвариант «api-процесс без конвейера» сохранён.
+
+### Идемпотентность
+
+Опциональный клиентский `idempotency_key` в payload → детерминированный
+`dedup_key`: повтор гасится штатным `dedup.seen()`. Это **свойство
+event-пути** — прямой запуск пайплайна минует dedup, там повтор всегда
+обрабатывается заново. Без ключа каждый вызов уникален (свежий `uid`).
+
+### UI-форма
+
+Под admin-сессией доступна форма `/ui/trigger` (htmx): source, текст, kind,
+выбор пайплайна (пусто = впрыск события по source; имя = прямой запуск). В
+отличие от машинной ручки, UI-кнопка завязана на admin-сессию, поэтому
+требует `auth = "users"` (либо `auth = "none"` для dev — синтетический
+локальный админ). Программный путь и ключ-ручка от режима auth независимы.
+
+### Программный API
+
+Те же два пути — без HTTP, прямо в коде, на `AngarionApp`:
+
+```python
+from angarion import ManualEvent
+from angarion.domain.models import Endpoint
+
+source = Endpoint(transport="telegram", address="-100…")
+await app.submit_event(ManualEvent(source=source, text="event"))      # по source
+await app.run_pipeline("forward", ManualEvent(source=source, text="direct"))
+```
+
+Публичная фабрика `build_manual_record(ManualEvent(...))` строит валидный
+`Record` (ключи, `origin='manual'`) без ручной сборки; экспортируется из
+пакета `angarion` вместе с `ManualEvent`. Рабочий пример обеих поверхностей
+— каталог [`examples/trigger/`](https://github.com/vlakir/angarion/tree/main/examples).
 
 ## Контейнер портов
 

@@ -136,7 +136,7 @@ class Record(DomainModel):
     uid: UUID
     kind: RecordKind
     dedup_key: str
-    origin: Literal['live', 'catchup', 'internal']
+    origin: Literal['live', 'catchup', 'internal', 'manual']
     source: Endpoint
     received_by: AccountRef
     external_id: str
@@ -426,14 +426,17 @@ class CommandKind(StrEnum):
     ``notify`` — уведомление через ``SinkPort`` (заявка на
     регистрацию §12.7); ``catchup`` — ручной catch-up источника
     (``payload['source_key']``); ``restart_pipeline`` — graceful
-    перезапуск pipeline-процесса. Расширение — новый член enum'а;
-    механизм outbox при этом не меняется (диспетчеризацию по виду
-    делает consumer).
+    перезапуск pipeline-процесса; ``inject`` — ручной впрыск события
+    (T038, split-мост event-пути: ``payload['record']`` — сериализованный
+    ``Record``, consumer зовёт ``IngestService.ingest``). Расширение —
+    новый член enum'а; механизм outbox при этом не меняется
+    (диспетчеризацию по виду делает consumer).
     """
 
     NOTIFY = 'notify'
     CATCHUP = 'catchup'
     RESTART_PIPELINE = 'restart_pipeline'
+    INJECT = 'inject'
 
 
 class CommandStatus(StrEnum):

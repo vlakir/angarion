@@ -21,6 +21,7 @@
         </li>
         {% endfor %}
         {% if current_user and current_user.role == 'admin' %}
+        <li><a href="/ui/trigger">Trigger</a></li>
         <li><a href="/ui/settings">Settings</a></li>
         <li><a href="/ui/dlq">DLQ</a></li>
         {% endif %}

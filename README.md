@@ -289,6 +289,41 @@ targets = [{ account = "main", address = "-100BBBBBBBBBB" }]
 (выход → входы нескольких) и fan-in следуют из модели бесплатно
 (`sources`/`targets` множественные). Полный пример — [`examples/chain/`](examples/chain/README.md).
 
+## Ручной триггер (T038)
+
+Кроме живых событий источников, обработку можно инициировать **вручную** —
+тремя поверхностями одной фичи:
+
+- **Программный API** — публичные методы `AngarionApp` поверх документированной
+  фабрики `Record`:
+
+  ```python
+  from angarion import ManualEvent
+  from angarion.domain.models import Endpoint
+
+  source = Endpoint(transport="telegram", address="-100…")
+  # event-семантика: маршрутизация по source → dedup → router → fan-out
+  await app.submit_event(ManualEvent(source=source, text="привет"))
+  # pipeline-семантика: прямо в именованный пайплайн, минуя router/dedup
+  await app.run_pipeline("forward", ManualEvent(source=source, text="прямо"))
+  ```
+
+  `ManualEvent` и фабрика `build_manual_record` экспортируются из пакета
+  `angarion` — `Record` собирается без ручной сборки ключей.
+
+- **HTTP-ручка** — `POST /api/v1/trigger` (событие) и
+  `POST /api/v1/run/{pipeline}` (прямой запуск) под отдельным **API-ключом**
+  (заголовок `X-API-Key`, секрет `[api].trigger_token` из env) — машинный путь
+  для служб/CI, независимый от режима `auth`. Работает в combined и split
+  (`--role api` кладёт event через `CommandOutbox`).
+
+- **UI-кнопка** — форма `/ui/trigger` под admin-сессией (для оператора).
+
+Ручные события несут `origin='manual'` (видно в `/ui/events`); опциональный
+`idempotency_key` гасит повтор на event-пути (штатный dedup). Подробно —
+[`docs/guides/web-api.md`](docs/guides/web-api.md) → «Ручной триггер»; полный
+пример — [`examples/trigger/`](examples/trigger/README.md).
+
 ## Разработка
 
 Менеджер зависимостей и окружения — [`uv`](https://docs.astral.sh/uv/):

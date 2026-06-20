@@ -66,6 +66,20 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
 
+- **T038** — Ручной запуск пайплайна: программный API + веб-API
+  (`specs/T038-manual-trigger/`, ветка `T038-manual-trigger`)
+  [closed 2026-06-20, текущий PR]. Публичный документированный триггер тремя
+  поверхностями: программный API (`AngarionApp.submit_event`/`run_pipeline` +
+  фабрика `build_manual_record`/`ManualEvent`), HTTP write-ручки
+  `POST /api/v1/trigger` и `/api/v1/run/{pipeline}` под отдельным API-ключом
+  (`X-API-Key`/`[api].trigger_token`), UI-форма `/ui/trigger`. event-путь —
+  через `IngestService` (router/dedup/fan-out); pipeline-путь — сырой
+  `QueueEnvelope` в очередь. combined зовёт `ingest` напрямую, split
+  (`--role api`) — через `CommandOutbox` (`CommandKind.INJECT`).
+  `origin='manual'`, опц. `idempotency_key` (dedup на event-пути). Спека
+  Analyzed, 5 фаз; ADR 2026-06-20. Пример `examples/trigger/`. Acceptance
+  (§4 Success Criteria) выполнен: 1218 тестов зелёные, coverage 93.3%, 4
+  pre-push проверки чисты, `mypy --strict` чист.
 - **T037** — «Внутренний провод»: прямое соединение пайплайнов в цепочку без
   выхода на платформу [closed 2026-06-20, текущий PR]. Внутренний транспорт
   `internal` — sink-only `AdapterPlugin`, sink преобразует `OutboundRecord` →

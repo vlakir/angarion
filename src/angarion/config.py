@@ -335,6 +335,10 @@ class ApiConfig(BaseModel):
     ``cookie_secure`` — флаг ``Secure`` cookie UI (включить за TLS-прокси).
     ``registration_enabled`` — саморегистрация; ``max_pending_registrations``
     — лимит заявок, ждущих одобрения (защита от замусоривания).
+    ``trigger_token`` — отдельный API-ключ HTTP-ручек ручного триггера
+    (T038, §12.5): секрет, кладётся из env ``ANGARION_API__TRIGGER_TOKEN``
+    (не в TOML); пусто → ручки ручного триггера отключены (запрос →
+    ``503``). Независим от ``auth``-режима (машинная авторизация, не сессия).
     """
 
     model_config = ConfigDict(frozen=True, extra='forbid')
@@ -347,6 +351,7 @@ class ApiConfig(BaseModel):
     cookie_secure: bool = False
     registration_enabled: bool = True
     max_pending_registrations: int = Field(default=20, ge=1)
+    trigger_token: str = ''
     notify: NotifyConfig = NotifyConfig()
     """Цель уведомления о заявке на регистрацию (``[api.notify]``, §12.9)."""
 

@@ -1,0 +1,48 @@
+{% extends "angarion/base.html" %}
+{% block title %}angarion — manual trigger{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Manual trigger</h2>
+  <p>Inject a test event into the running pipeline (routed by source), or run a
+     named pipeline directly (bypassing routing). Marked <code>origin=manual</code>
+     (T038, §12.5).</p>
+</hgroup>
+
+<article>
+  <form hx-post="/ui/trigger" hx-target="#trigger-result" hx-swap="innerHTML">
+    <div class="grid">
+      <label>transport
+        <input type="text" name="transport" placeholder="e.g. telegram" required>
+      </label>
+      <label>address
+        <input type="text" name="address" placeholder="chat/topic locator" required>
+      </label>
+      <label>thread_id
+        <input type="text" name="thread_id" placeholder="optional">
+      </label>
+    </div>
+    <label>text
+      <textarea name="text" placeholder="event text (optional)"></textarea>
+    </label>
+    <div class="grid">
+      <label>kind
+        <select name="kind">
+          {% for k in kinds %}
+          <option value="{{ k }}">{{ k }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>pipeline
+        <select name="pipeline">
+          <option value="">(inject as event — route by source)</option>
+          {% for p in pipelines %}
+          <option value="{{ p }}">{{ p }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <button type="submit">Trigger</button>
+  </form>
+  <div id="trigger-result"></div>
+</article>
+{% endblock %}

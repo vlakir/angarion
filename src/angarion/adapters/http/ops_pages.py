@@ -32,9 +32,11 @@ from angarion.adapters.http.ops import (
     save_settings,
     set_pause,
 )
+from angarion.adapters.http.trigger import run_pipeline, submit_event
 from angarion.adapters.http.ui import render_pipelines_fragment
+from angarion.application.manual import ManualEvent, build_manual_record
 from angarion.config import AngarionSettings
-from angarion.domain.models import DynamicSettings
+from angarion.domain.models import DynamicSettings, Endpoint, Record, RecordKind
 
 router_ops = APIRouter(prefix='/ui', tags=['ui-ops'])
 
@@ -237,6 +239,65 @@ async def catchup_action(
         by=_current_login(request),
     )
     return RedirectResponse('/ui/settings', status_code=303)
+
+
+@router_ops.get('/trigger', response_class=HTMLResponse)
+async def trigger_page(request: Request) -> HTMLResponse:
+    """Форма ручного триггера: впрыск события / запуск пайплайна (admin, T038)."""
+    deps = get_deps(request)
+    context = {
+        'pipelines': sorted(deps.settings.pipelines),
+        'kinds': [k.value for k in RecordKind],
+    }
+    return _templates(request).TemplateResponse(
+        request, 'angarion/trigger.html', context
+    )
+
+
+def _trigger_result(request: Request, *, record: Record, mode: str) -> HTMLResponse:
+    """htmx-фрагмент подтверждения: uid записи + режим (ingested/queued/staged)."""
+    return _templates(request).TemplateResponse(
+        request,
+        'angarion/fragments/trigger_result.html',
+        {'record_uid': str(record.uid), 'mode': mode},
+    )
+
+
+@router_ops.post('/trigger', response_class=HTMLResponse)
+async def trigger_submit(
+    request: Request,
+    transport: Annotated[str, Form()],
+    address: Annotated[str, Form()],
+    thread_id: Annotated[str, Form()] = '',
+    text: Annotated[str, Form()] = '',
+    kind: Annotated[RecordKind, Form()] = RecordKind.NEW,
+    pipeline: Annotated[str, Form()] = '',
+) -> HTMLResponse:
+    """
+    Собрать ``ManualEvent`` из формы и впрыснуть (admin, T038).
+
+    Пустой ``pipeline`` → event-семантика (через ``submit_event``: combined
+    прямой ingest / split команда INJECT); выбранный пайплайн → прямой запуск
+    (``run_pipeline``). Переиспользует op-функции HTTP-ручки (фаза 3); ответ —
+    htmx-фрагмент с uid и режимом. ``kind`` валидируется FastAPI как
+    ``RecordKind`` (неизвестное значение → ``422``, не ``500``).
+    """
+    deps = get_deps(request)
+    event = ManualEvent(
+        source=Endpoint(
+            transport=transport, address=address, thread_id=thread_id or None
+        ),
+        text=text or None,
+        kind=kind,
+    )
+    record = build_manual_record(event)
+    by = _current_login(request)
+    if pipeline:
+        await run_pipeline(deps, pipeline=pipeline, record=record, by=by)
+        mode = 'staged'
+    else:
+        mode = await submit_event(deps, record=record, by=by)
+    return _trigger_result(request, record=record, mode=mode)
 
 
 @router_ops.get('/dlq', response_class=HTMLResponse)

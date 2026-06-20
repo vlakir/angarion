@@ -29,6 +29,12 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Changed
 
+- **Ломающее (модель/сериализация):** ручной триггер (T038) добавил
+  `Record.origin = 'manual'` (рядом с `live`/`catchup`/`internal`) и новый член
+  `CommandKind.INJECT` для split-моста event-пути. Payload команды `INJECT`
+  несёт сериализованный `Record` (JSON, аддитивно). Чистый разрыв без
+  data-миграции (pre-alpha, как T037 A4): при апгрейде командный outbox/очередь
+  очистить; схема БД не меняется. ADR 2026-06-20.
 - **Ломающее (сериализация очереди):** `Record` и `OutboundRecord` получили
   аддитивные поля внутреннего провода (T037) — `Record.trace_id`/`hops`/
   `origin='internal'`, `OutboundRecord.trace_id`/`hops`. Формат `QueueEnvelope`
@@ -52,6 +58,26 @@ T-ID между релизами — `CHANGELOG.md` единственное per
 
 ### Added
 
+- Ручной запуск пайплайна — публичный документированный триггер (T038), три
+  поверхности одной фичи. **(1) Программный API:** публичная фабрика
+  `build_manual_record(ManualEvent(...))` (упрощённый payload → валидный
+  `Record`, `origin='manual'`, ключи/idempotency — без ручной сборки) +
+  методы `AngarionApp.submit_event` (event-семантика: `IngestService` →
+  router/dedup/реестр/fan-out) и `AngarionApp.run_pipeline` (pipeline-
+  семантика: сырой `QueueEnvelope` в очередь, минуя router/dedup). `ManualEvent`
+  и фабрика экспортируются из пакета `angarion`. **(2) HTTP write-ручка:**
+  `POST /api/v1/trigger` (event) и `POST /api/v1/run/{pipeline}` (pipeline) —
+  первое штатное write-расширение API помимо admin (§12.5). Тело — упрощённый
+  `event` или готовый `record`. Защита — **отдельный API-ключ** (заголовок
+  `X-API-Key`, секрет `[api].trigger_token` из env; пусто → `503`, нет → `401`,
+  неверный → `403`), независимый от режима `auth`. Combined зовёт `ingest`/
+  очередь напрямую; split (`--role api`) кладёт event через `CommandOutbox`
+  (`INJECT`), прямой запуск пайплайна — через общую очередь в обоих режимах.
+  **(3) UI-форма** `/ui/trigger` под admin-сессией (htmx). Идемпотентность:
+  опц. клиентский `idempotency_key` → детерминированный `dedup_key` (гасит
+  повтор на event-пути; pipeline-путь dedup минует). Ручные события —
+  `origin='manual'` в аналитике. Спека `specs/T038-manual-trigger/`, ADR
+  2026-06-20. Пример — `examples/trigger/` (программный впрыск + curl + UI).
 - Внутренний провод цепочек пайплайнов — транспорт `internal` (T037): выход
   одного пайплайна напрямую становится входом другого, **минуя реальную
   платформу**. Объявляется обычным `[accounts.*]` с `transport = "internal"`;
