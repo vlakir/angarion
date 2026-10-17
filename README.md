@@ -431,7 +431,7 @@ scripts/publish.sh --test               # то же на TestPyPI (PYPI_TEST_TOK
 - `BOARD.md` / `BACKLOG.md` — kanban-доска и парковка идей.
 - `CHANGELOG.md` — журнал изменений (Keep a Changelog).
 - `specs/` — спецификации крупных фич.
-- `CLAUDE.md` — проектные правила для Claude (Claude Code).
+- `AGENTS.md` — действующие проектные правила для OpenCode/Ensemble.
 
 ## Методика работы
 
@@ -440,6 +440,14 @@ scripts/publish.sh --test               # то же на TestPyPI (PYPI_TEST_TOK
 discipline, ритуал spec/clarify/analyze для крупных фич, обязательный
 code review каждого PR, pre-push контроль качества. Подробности — в
 репозитории шаблона.
+
+Ручная сверка с installed `dreamteam-cli 2.0.0` (T046) выполняется поверх
+незавершённой WIP-цепочки T044/T045, не через main. Активные роли —
+`.opencode/agents/`, командная методика — `.opencode/team-roles.md`;
+клиенты подключаются к одному существующему серверу на devbox (4096).
+Python3.12/TDD/coverage90 и действующие CI/dependencies не заменяются generic
+шаблоном. [Инвентаризация и evidence T046](docs/migrations/T046/proposal.md)
+отличают ручной результат от CLI-success и source activation от task continuation.
 
 ## Лицензия
 

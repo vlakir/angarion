@@ -1,0 +1,152 @@
+{
+  "protected_byte_hashes_pass": 264,
+  "T044_T045_original_blocks_preserved": true,
+  "nine_role_static_controls_pass": true,
+  "narrow_native_stability_pass": true,
+  "native_control_hashes": {
+    ".opencode/agents/architect.md": "36b2a1a628a928576a2b9a7e9baf54913bdc681c48475c8f2842f68a3b76256f",
+    ".opencode/agents/backend.md": "87e51f06c60d19211752d07fc6abf8bbba2a215d6daabf1d9015ff296385e9b0",
+    ".opencode/agents/designer.md": "d272cdba871bb8b75f67c748fcbc9eb0e23cdb9a22be989f287f666c169b4902",
+    ".opencode/agents/devops.md": "c5abd3fd0a4a92f34e62de15aa1abd96766ac3970243a096fc5a4e9150b8321e",
+    ".opencode/agents/frontend.md": "7bc6d6470e388610e83daeb8e5300f1297988606bd2d1257e9ed6608f83c366f",
+    ".opencode/agents/mobile.md": "8b9e32bd100c2da2c5a293055c7d04bf7938e99b8ff56faffeecf416c8ef829e",
+    ".opencode/agents/reviewer.md": "b4cdcc6f676c175f59b8f409dd328194ffe44f93b0449742dc21c192af7735d6",
+    ".opencode/agents/tech-lead.md": "b569cb9f51ad405bb56c146c25b72dbb4ab501ba95324468822d5c2c35753270",
+    ".opencode/agents/tester.md": "9f8cfd8140712ec4592a1ca34cbabcb6de44609e2d7e1ba0b591bd45d3362ab3",
+    "AGENTS.md": "ac1fe99eca2761fd31654c6cd5f6000162fe30fa41a63cd3f4b871fa941920bf",
+    "opencode.json": "25220cab4ee3fc5ca3ec921a6dc689599e3b052c69d6b89fec6d4961f1a9713c",
+    ".opencode/ensemble.json": "daa87257367bee5013956c94a716137cb32c16995f9bc338593ea4f0a372fadb",
+    ".opencode/team-roles.md": "92232f12fb5a0f436ede319b214bddc8c2264b0d5ad5b51afd00f2feedb6e0e8"
+  },
+  "ordinary_repeat": {
+    "command": "dreamteam update . --dry-run",
+    "returncode": 0,
+    "stdout_lines": 16,
+    "stderr_lines": 0,
+    "conflict_marker_count": 0,
+    "known_path_mentions": [
+      ".copier-answers.yml",
+      "scripts/pytest-guard.sh",
+      "src/main.py",
+      "tests/test_main.py"
+    ],
+    "raw_output_persisted": false,
+    "path_categories": {
+      ".copier-answers.yml": [],
+      "scripts/pytest-guard.sh": [],
+      "src/main.py": [],
+      "tests/test_main.py": []
+    },
+    "lexical_token_counts_disclaimer": "Case-normalized textual occurrences only; NOT operation counts or conflict counts. Use actual summary_counts and outcome.md path assessment for the full ordinary plan.",
+    "lexical_token_counts": {
+      "ADD": 1,
+      "MODIFY": 0,
+      "DELETE": 0,
+      "CONFLICT": 1,
+      "CREATE": 0,
+      "UPDATE": 1,
+      "UNCHANGED": 1,
+      "NEW": 0,
+      "PRESERVE": 0,
+      "SKIP": 0
+    },
+    "path_markers": {
+      ".copier-answers.yml": [
+        "---",
+        "+++"
+      ],
+      "scripts/pytest-guard.sh": [
+        "+++"
+      ],
+      "src/main.py": [
+        "+++"
+      ],
+      "tests/test_main.py": [
+        "+++"
+      ]
+    },
+    "summary_counts": [
+      [
+        "24",
+        "unchanged"
+      ],
+      [
+        "3",
+        "added"
+      ],
+      [
+        "0",
+        "removed"
+      ],
+      [
+        "0",
+        "conflicts"
+      ]
+    ],
+    "summary_counts_label_first": [],
+    "metadata_diff_categories": [
+      {
+        "operation": "remove",
+        "category": "comment"
+      },
+      {
+        "operation": "remove",
+        "category": "comment"
+      }
+    ]
+  },
+  "root_after": {
+    ".copier-answers.yml": {
+      "present": true,
+      "sha256": "87ede9d73fbbcf425fc2c7ca6d9a080777db41701e973815104c3f9bf231dd4c"
+    },
+    "AGENTS.md": {
+      "present": true,
+      "sha256": "ac1fe99eca2761fd31654c6cd5f6000162fe30fa41a63cd3f4b871fa941920bf"
+    },
+    "CLAUDE.md": {
+      "present": false,
+      "sha256": null
+    },
+    "README.md": {
+      "present": true,
+      "sha256": "58f7740534bbeb3846bfbb66fcfd6f2130d537fa07bd886343273cdf5160e764"
+    },
+    "BOARD.md": {
+      "present": true,
+      "sha256": "587043da51b7a92b7e29d0f113182948451be7b64183e7636238c18e5ae99685"
+    },
+    "BACKLOG.md": {
+      "present": true,
+      "sha256": "3ae8b7b9bf46d80f96c85c457799a74331121ba0679dcf98cb3f9fec71e03510"
+    },
+    "CHANGELOG.md": {
+      "present": true,
+      "sha256": "4e35eb4825f584cdc4db962d2abd18d5940970d1b36482e7eb16e5eeb4b168fc"
+    },
+    "DECISIONS.md": {
+      "present": true,
+      "sha256": "59ac29ed569530839e0102e3a4391fbb7682a7124b6395f8c6610c7ecc8a6ebc"
+    },
+    "CONCEPT.md": {
+      "present": true,
+      "sha256": "aa075e5e4be29cf145b99f399ba4c8409823b12a1e0a3a98ecdbb59f0aaf8463"
+    },
+    "pyproject.toml": {
+      "present": true,
+      "sha256": "52657c79011f6166a16ab0ab65cf00cb33f646d5c33b1313ba4103ef032083b6"
+    },
+    "uv.lock": {
+      "present": true,
+      "sha256": "59c2afbd70e0964107ed477b64287937e13bd5bb0d17fcf64fd604c750f087d0"
+    },
+    "opencode.json": {
+      "present": true,
+      "sha256": "25220cab4ee3fc5ca3ec921a6dc689599e3b052c69d6b89fec6d4961f1a9713c"
+    },
+    ".gitignore": {
+      "present": true,
+      "sha256": "adbabe769d98ec33c4e5917f98d89944634526e9a563db7b0bd376958fb8cb4a"
+    }
+  }
+}

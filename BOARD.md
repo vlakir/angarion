@@ -86,6 +86,17 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 
 ## Done
 
+- **T046** — Ручная сверка методики WIP с dreamteam 2.0.0 принята локально.
+  Base `1f1430fc91d874d8ec91cbc8b1c241ee84a5c60e`; continuation
+  `T046-dreamteam-200-wip`. Execution `project-dt200-wip` /
+  `task_mvcj1jkc_014o_vefzll`; independent review `task_mvcj1jkn_014p_bjek1z`.
+  Acceptance выполнена: inventory28, private originals, PRE/FINAL review,
+  native controls, protected264 hashes, canonical integrated Python3.12 gates
+  (1229 passed,20 deselected,93.35%). Evidence: `docs/migrations/T046/`.
+  Это FULL MANUAL, не automatic CLI success/ordinary no-op/T171 AC10.
+  Source activation pending ownercoord; T044/T045 остаются Doing.
+  Доставка только собственной continuation, без PR/mainmerge/rebase.
+
 <!-- Закрытые задачи, ждущие переноса в CHANGELOG.md при следующем
      релизе или значимой точке. После переноса — очищаем. -->
 
@@ -100,4 +111,3 @@ ID уже даёт идентификацию). Имя PR: `T<NNN>: <title>`. С
 <!-- T009, T010, T012, T016, T027, T028, T029, T030, T031, T032, T033,
      T034, T035, T036, T037, T038, T041, T042, T043 перенесены в
      CHANGELOG.md [0.4.0] — 2026-06-20. -->
-
